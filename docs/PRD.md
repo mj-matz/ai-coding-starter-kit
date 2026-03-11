@@ -1,29 +1,45 @@
 # Product Requirements Document
 
 ## Vision
-_Describe what you are building and why._
+A personal web-based backtesting platform for systematic trading strategies. The tool allows a solo trader to test rule-based strategies on historical market data with high accuracy and reliability, and to understand results through clear analytics and visualizations.
 
 ## Target Users
-_Who will use this product? Describe their needs and pain points._
+**Primary User: Solo Trader / Quant Enthusiast**
+- Develops and validates trading strategies before risking real capital
+- Needs confidence that the backtesting engine executes rules exactly as defined (no look-ahead bias, correct order simulation)
+- Wants to understand performance deeply, not just see a final return number
+- Tests across multiple asset classes: DAX (GER30), Gold (XAUUSD), Forex pairs, and stocks
 
 ## Core Features (Roadmap)
 
 | Priority | Feature | Status |
 |----------|---------|--------|
-| P0 (MVP) | _Feature 1_ | Planned |
-| P0 (MVP) | _Feature 2_ | Planned |
-| P1 | _Feature 3_ | Planned |
-| P2 | _Feature 4_ | Planned |
+| P0 (MVP) | Data Fetcher (Dukascopy + yfinance) | Planned |
+| P0 (MVP) | Backtesting Engine | Planned |
+| P0 (MVP) | Breakout Strategy | Planned |
+| P0 (MVP) | Performance Analytics | Planned |
+| P0 (MVP) | Backtest UI (Configuration + Results) | Planned |
+| P0 (MVP) | Authentication (Admin Login) | Planned |
+| P0 (MVP) | Backtest History (per User) | Planned |
+| P1 | Strategy Library (Plugin System) | Planned |
+| P1 | Trade Journal (Manual) | Planned |
 
 ## Success Metrics
-_How will you measure success? (e.g., user signups, retention, task completion rate)_
+- Backtesting engine produces identical results on repeated runs (deterministic)
+- Breakout strategy results are manually verifiable on a sample of trades
+- Performance metrics match industry-standard calculations (Sharpe, CAGR, Max Drawdown)
+- A full backtest on 1 year of 1-minute data completes in under 60 seconds
 
 ## Constraints
-_Budget, timeline, technical limitations, team size._
+- Authentication required: Admin login from day one (Supabase Auth); extensible for additional users later
+- Python backend (strategy logic, data fetching, calculations)
+- Next.js frontend (configuration UI, results display)
+- Data sources: Dukascopy (intraday tick data) + yfinance (daily stock/ETF data)
+- Quality over speed — correctness is more important than feature count
 
 ## Non-Goals
-_What are you explicitly NOT building in this version?_
-
----
-
-Use `/requirements` to create detailed feature specifications for each item in the roadmap above.
+- Live trading / order execution (no broker API integration in MVP)
+- Real-time data streaming
+- Portfolio optimization / position sizing algorithms
+- Billing / subscription management
+- Mobile app
