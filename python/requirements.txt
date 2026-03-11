@@ -1,0 +1,10 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+duka==0.2.0
+yfinance==0.2.50
+pandas==2.2.3
+pyarrow==17.0.0
+supabase==2.10.0
+python-dotenv==1.0.1
+pydantic==2.9.2
+python-jose[cryptography]==3.3.0

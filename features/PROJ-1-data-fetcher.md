@@ -1,6 +1,6 @@
 # PROJ-1: Data Fetcher
 
-## Status: In Progress
+## Status: In Review
 **Created:** 2026-03-09
 **Last Updated:** 2026-03-11
 
@@ -173,7 +173,59 @@ Data Fetcher System
 - Existing auth system (PROJ-8) reused as-is for all API routes
 
 ## QA Test Results
-_To be added by /qa_
+
+**Last tested:** 2026-03-11 (Round 2) | **Tester:** QA Engineer (AI) | **Status:** In Review
+
+### Acceptance Criteria: 8/8 passed
+
+| AC | Description | Result |
+|----|-------------|--------|
+| AC-1 | Dukascopy fetch for XAUUSD, GER30, Forex pairs | PASS |
+| AC-2 | yfinance fetch for any valid ticker at daily resolution | PASS |
+| AC-3 | Parquet cache storage | PASS (minor: naming deviates from spec, BUG-6 open) |
+| AC-4 | OHLCV DataFrame with correct columns | PASS |
+| AC-5 | UTC-aware, monotonically increasing datetime | PASS |
+| AC-6 | Resampling with correct OHLCV aggregation | PASS |
+| AC-7 | Clear errors for invalid symbols/ranges | PASS |
+| AC-8 | Cache invalidation via force_refresh and DELETE | PASS |
+
+### Edge Cases: 4/5 passed
+
+| EC | Description | Result |
+|----|-------------|--------|
+| EC-1 | Weekend/holiday filtering | PASS |
+| EC-2 | Start date before available history | PASS (BUG-7 fixed) |
+| EC-3 | Network timeout handling | PARTIAL — timeout returns error, not partial data (BUG-15) |
+| EC-4 | Adjusted close for yfinance | PASS |
+| EC-5 | Timezone handling | PASS |
+
+### Bug Tracker
+
+| ID | Severity | Description | Status |
+|----|----------|-------------|--------|
+| BUG-1 | CRITICAL | Service role key committed in `python/services/.env` (not gitignored) | **Fixed by dev** |
+| BUG-2 | CRITICAL | FastAPI has no JWT auth — any caller can spoof X-User-Id | **Fixed** |
+| BUG-3 | HIGH | `file_path` (server path) leaked in API responses to browser | **Fixed** |
+| BUG-4 | HIGH | FastAPI DELETE `/cache/{id}` has no auth | **Fixed** |
+| BUG-5 | MEDIUM | Next.js accepted any timeframe string; no enum validation | **Fixed** |
+| BUG-6 | LOW | Parquet naming convention deviates from spec (`{source}/{symbol}/{timeframe}/` dirs vs flat file name) | Open |
+| BUG-7 | MEDIUM | No range warning when requested start date is before available history | **Fixed** |
+| BUG-8 | MEDIUM | No network timeout on Dukascopy or yfinance fetches | **Fixed** |
+| BUG-9 | MEDIUM | No rate limiting on `/api/data/available` and `/api/data/cache` routes | **Fixed** |
+| BUG-10 | MEDIUM | No rate limiting on FastAPI endpoints | Deferred (local only) |
+| BUG-11 | HIGH | Admin check used `user_metadata` (client-writable); should use `app_metadata` | **Fixed** |
+| BUG-12 | MEDIUM | Delete order wrong: DB row deleted before Parquet file → orphaned files on partial failure | **Fixed** |
+| BUG-13 | LOW | DELETE endpoint returned 200 even when cache entry not found | **Fixed** |
+| BUG-14 | HIGH | `cache_service.py` uses service role key, bypassing RLS; `created_by` forgeable | **Fixed** (JWT sub used as verified user ID) |
+| BUG-15 | LOW | On timeout, spec says return partial data; implementation returns error with no data | Open |
+| BUG-16 | HIGH | RLS DELETE policy used `user_metadata` — any user could self-escalate via `supabase.auth.updateUser()` | **Fixed** |
+| BUG-17 | MEDIUM | Symbol field allowed path traversal characters used in Parquet file paths | **Fixed** |
+| BUG-18 | — | `python/services/.env` has real credentials on disk — expected for local dev, gitignored | Not a bug |
+| BUG-25 | MEDIUM | FastAPI bound to `0.0.0.0`, exposing unauthenticated service to entire LAN | **Fixed** |
+
+### Production Readiness
+
+All critical and high severity bugs resolved. Remaining open items (BUG-6, BUG-15) are low severity and do not block deployment.
 
 ## Deployment
 _To be added by /deploy_
