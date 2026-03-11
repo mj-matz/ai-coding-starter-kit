@@ -74,7 +74,76 @@
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /architecture_
+
+**Added:** 2026-03-11
+
+### Overview
+Pure Python backend feature. No new UI, no new database tables, no new API routes. The strategy is a signal generator that plugs into the existing PROJ-2 Backtesting Engine.
+
+### Component Structure
+```
+python/
++-- strategies/              (new folder)
+|   +-- __init__.py
+|   +-- base.py              Abstract base class (foundation for PROJ-6 Strategy Library)
+|   +-- breakout.py          BreakoutStrategy — main signal generator
+python/tests/
++-- test_breakout.py         (new) Unit tests, isolated from engine
+```
+
+### Data Flow
+```
+OHLCV DataFrame (from PROJ-1)
+        |
+        v
+BreakoutStrategy.generate_signals(params, df)
+        |
+        +-- For each trading day:
+        |     1. Extract bars in [range_start, range_end)
+        |     2. Calculate Range High + Range Low
+        |     3. Skip if no bars, or if High == Low (flat range)
+        |     4. Emit Buy Stop @ Range High + 1 pip  (if direction != Short only)
+        |        Emit Sell Stop @ Range Low - 1 pip  (if direction != Long only)
+        |
+        v
+List of DaySignal objects (entry, SL, TP, deadline, trail params)
+        |
+        v
+BacktestEngine.run(signals, df, params)   ← existing PROJ-2 engine
+```
+
+### Data Model (plain language)
+**BreakoutParams** — holds all user settings for one backtest run:
+- Time window: range_start, range_end, trigger_deadline, time_exit
+- Price offsets: stop_loss_pips, take_profit_pips
+- Direction: Long only / Short only / Both
+- Position sizing: mode (risk_percent or fixed_lot), risk_percent, lot_size
+- Costs: commission_pips, slippage_pips
+- Optional trail: trail_trigger_pips, trail_lock_pips
+- Period: start_date, end_date
+
+**DaySignal** — one per valid trading day:
+- Date, Buy Stop price (or None), Sell Stop price (or None)
+- SL offset, TP offset, trigger deadline, trail parameters
+
+Stored in: Memory only — pure function, no side effects, no database.
+
+### Timezone Handling
+User times (e.g. "14:30") are in local exchange time. Converted to UTC once at validation:
+- XAUUSD, GER30/GER40 → CET/CEST (UTC+1/+2)
+- Forex pairs → UTC (no conversion)
+Uses Python standard library `zoneinfo` (Python 3.9+, no new packages).
+
+### Tech Decisions
+| Decision | Why |
+|---|---|
+| Pure Python, no framework | Matches PROJ-2 principle — full rule transparency |
+| Strategy decoupled from engine | Engine is reusable across all future strategies |
+| Abstract BaseStrategy class | Minimal cost now; required for PROJ-6 Strategy Library plugin interface |
+| Isolated unit tests | Spec requires strategy testable without full backtest |
+
+### Dependencies
+No new packages. Uses `pandas` (already installed) and `zoneinfo` (Python stdlib).
 
 ## QA Test Results
 _To be added by /qa_
