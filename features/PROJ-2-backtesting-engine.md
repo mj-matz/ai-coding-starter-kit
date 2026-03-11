@@ -1,8 +1,8 @@
 # PROJ-2: Backtesting Engine
 
-## Status: Planned
+## Status: In Progress
 **Created:** 2026-03-09
-**Last Updated:** 2026-03-09
+**Last Updated:** 2026-03-11
 
 ## Dependencies
 - Requires: PROJ-1 (Data Fetcher) — engine consumes OHLCV DataFrames produced by the fetcher
@@ -28,7 +28,11 @@
 - [ ] Maximum 1 open position enforced; new entry signals are ignored while a position is open
 - [ ] Position sizing mode supported: "fixed lot" (user specifies lot size directly) or "risk percent" (engine calculates lot size from account balance × risk % / (SL pips × pip value per lot))
 - [ ] In "risk percent" mode, lot size is recalculated for each trade based on the account balance at trade entry (compounding)
-- [ ] Engine output includes a trade log: entry time, entry price, exit time, exit price, exit reason (SL/TP/Time), lot size used, PnL in pips and in account currency, initial risk in pips (= entry price − initial SL price), initial risk in account currency (initial risk in pips × pip value × lot size)
+- [ ] Engine output includes a trade log: entry time, entry price, exit time, exit price, exit reason (SL / SL_TRAILED / TP / TIME), lot size used, PnL in pips and in account currency, initial risk in pips (= entry price − initial SL price), initial risk in account currency (initial risk in pips × pip value × lot size)
+  - `SL` — stopped out at the original, unmodified stop loss
+  - `SL_TRAILED` — stopped out after the SL was moved by the conditional SL step (trail trigger was reached)
+  - `TP` — take profit hit
+  - `TIME` — position force-closed at configured time exit
 - [ ] Engine output includes an equity curve: time series of account balance after each closed trade
 - [ ] Engine is callable as a pure Python function — no side effects, fully testable in isolation
 - [ ] Conditional SL step supported: if `trail_trigger_pips` is set and open trade profit reaches that level, SL is moved to `trail_lock_pips` above/below entry price (long/short respectively) — this adjustment happens exactly once per trade
@@ -55,7 +59,88 @@
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /architecture_
+
+### Build Order Note
+PROJ-3 (Breakout Strategy) is a **consumer** of the engine, not a prerequisite. PROJ-2 is built and tested first using synthetic/hardcoded test signals. PROJ-3 then plugs its signal output into the same engine function.
+
+### Module Structure
+
+```
+backend/engine/
++-- engine.py            Core simulator — public entry point: run_backtest()
++-- order_manager.py     Tracks pending orders; evaluates SL/TP/OCO per bar
++-- position_tracker.py  Manages the single open position + SL step logic
++-- sizing.py            Position sizing (fixed lot vs. risk percent)
++-- models.py            Data classes: BacktestConfig, Trade, BacktestResult
++-- pip_utils.py         Pip/point value calculations per instrument
+```
+
+Called by:
+```
+PROJ-3 (Breakout Strategy)   → passes OHLCV + entry/exit signals
+PROJ-5 (Backtest UI)         → POST /api/backtest/run → calls run_backtest()
+```
+
+### Data Model (Plain Language)
+
+**Input — BacktestConfig**
+- Initial account balance (e.g. $10,000)
+- Position sizing mode: "fixed lot" or "risk percent"
+- Commission: fixed cost per trade (default 0)
+- Slippage: fixed offset on entry and exit price
+- Time exit: clock time to force-close any open position (e.g. "21:00")
+- Instrument config: pip size + pip value per lot
+- Conditional SL step (optional): trail trigger pips + trail lock pips
+
+**Input — Signals** (produced by PROJ-3, or synthetic test data for PROJ-2 development)
+- Per bar: Direction (Long / Short / None), entry price, Stop Loss price, Take Profit price
+
+**Output — Trade Record (per closed trade)**
+- Entry time and price
+- Exit time and price
+- Exit reason: `SL` / `SL_TRAILED` / `TP` / `TIME`
+  - `SL` — stopped out at the original, unmodified stop loss
+  - `SL_TRAILED` — stopped out after the SL was moved by the conditional SL step
+  - `TP` — take profit hit
+  - `TIME` — force-closed at configured time exit
+- Lot size used
+- PnL in pips and in account currency
+- Initial risk in pips and account currency
+
+**Output — BacktestResult**
+- List of all trade records (trade log)
+- Equity curve: account balance after each closed trade
+- Final account balance
+
+### Simulation Logic (per bar)
+
+1. **Position open:** Check SL step trigger → move SL if reached (once per trade). Then check SL/TP hit using bar High/Low. If both hit: assume SL (worst case). Check time exit.
+2. **No position:** Check for entry signal → open trade if present (apply slippage, deduct commission).
+3. **End of data:** Close any remaining open position at last bar close.
+
+### Tech Decisions
+
+| Decision | Why |
+|---|---|
+| Pure Python, no backtesting framework | Full transparency of rules; no hidden 3rd-party behavior |
+| `dataclass` for models | Type-safe, easily serializable to JSON |
+| pandas DataFrame for OHLCV | Consistent with PROJ-1 output; no conversion needed |
+| Single function entry point `run_backtest()` | Stateless, testable in isolation, no side effects |
+| NumPy for price comparisons where safe | Meets 60-second performance target on 1 year of 1-min data |
+
+### Dependencies
+
+| Package | Purpose |
+|---|---|
+| `pandas` | Already installed — OHLCV data handling |
+| `numpy` | Already installed — vectorized price comparisons |
+| `dataclasses` | Built-in Python — structured data models |
+| `pytest` | Testing — verify determinism and all edge cases |
+
+No new packages required.
+
+### API Route (for PROJ-5)
+`POST /api/backtest/run` — accepts BacktestConfig + signals as JSON, returns BacktestResult as JSON.
 
 ## QA Test Results
 _To be added by /qa_
