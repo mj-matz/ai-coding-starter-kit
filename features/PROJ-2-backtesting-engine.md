@@ -1,8 +1,8 @@
 # PROJ-2: Backtesting Engine
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-03-09
-**Last Updated:** 2026-03-11 (QA complete — 7 bugs fixed, 27 tests passing)
+**Last Updated:** 2026-03-12 (Deployed to production)
 
 ## Dependencies
 - Requires: PROJ-1 (Data Fetcher) — engine consumes OHLCV DataFrames produced by the fetcher
@@ -217,4 +217,9 @@ All documented edge cases handled correctly.
 **Final test count: 27/27 passed.**
 
 ## Deployment
-_To be added by /deploy_
+
+**Deployed:** 2026-03-12
+**Commit:** `8cb5517`
+**Tag:** `v1.2.0-PROJ-2`
+**Service:** Python FastAPI (Railway) + Next.js API route (`/api/backtest/run`) on Vercel
+**Entry point:** `run_backtest()` in `python/engine/engine.py`
