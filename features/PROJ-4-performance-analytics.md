@@ -171,4 +171,7 @@ PROJ-1, PROJ-2, PROJ-3, PROJ-8 — no modifications.
 ### Verdict: **READY FOR DEPLOYMENT**
 
 ## Deployment
-_To be added by /deploy_
+
+**Production URL:** https://trading-backtester-omega.vercel.app/
+**Deployed:** 2026-03-13
+**Commit:** 272c3c7
