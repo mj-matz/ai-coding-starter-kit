@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { checkRateLimit } from "@/lib/rate-limit";
-
 const FASTAPI_URL = process.env.FASTAPI_URL;
 const RATE_LIMIT_MAX = 30;
-const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const RATE_LIMIT_WINDOW_SECONDS = 60;
 
 // ── Zod schemas ──────────────────────────────────────────────────────────────
 
@@ -87,24 +85,32 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Rate limiting (per user)
-  const rateLimit = checkRateLimit(
-    `backtest-run:${user.id}`,
-    RATE_LIMIT_MAX,
-    RATE_LIMIT_WINDOW_MS
-  );
-
-  if (!rateLimit.allowed) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded. Try again later." },
+  // Rate limiting via Supabase (persistent across serverless instances)
+  try {
+    const { data: allowed, error: rlError } = await supabase.rpc(
+      "check_rate_limit",
       {
-        status: 429,
-        headers: {
-          "Retry-After": String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)),
-          "X-RateLimit-Remaining": "0",
-        },
+        p_key: `backtest-run:${user.id}`,
+        p_max_requests: RATE_LIMIT_MAX,
+        p_window_seconds: RATE_LIMIT_WINDOW_SECONDS,
       }
     );
+
+    if (rlError) {
+      // Fail open: log but don't block the user if the DB check fails
+      console.error("Rate limit check failed:", rlError.message);
+    } else if (!allowed) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Try again later." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(RATE_LIMIT_WINDOW_SECONDS) },
+        }
+      );
+    }
+  } catch (err) {
+    // Fail open
+    console.error("Rate limit check threw:", err);
   }
 
   // Parse body
@@ -137,24 +143,24 @@ export async function POST(request: NextRequest) {
       data: { session },
     } = await supabase.auth.getSession();
 
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "X-User-Id": user.id,
+    };
+
+    if (session?.access_token) {
+      headers["Authorization"] = `Bearer ${session.access_token}`;
+    }
+
     const response = await fetch(`${FASTAPI_URL}/backtest/run`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session?.access_token ?? ""}`,
-        "X-User-Id": user.id,
-      },
+      headers,
       body: JSON.stringify(parsed.data),
     });
 
     const data = await response.json();
 
-    return NextResponse.json(data, {
-      status: response.status,
-      headers: {
-        "X-RateLimit-Remaining": String(rateLimit.remaining),
-      },
-    });
+    return NextResponse.json(data, { status: response.status });
   } catch (error) {
     console.error("FastAPI proxy error:", error);
     return NextResponse.json(

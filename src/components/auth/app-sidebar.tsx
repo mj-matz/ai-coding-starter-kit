@@ -40,7 +40,7 @@ interface AppSidebarProps {
 
 const navigationItems = [
   { title: "Dashboard", href: "/", icon: Home },
-  { title: "Backtests", href: "/backtests", icon: BarChart2 },
+  { title: "Backtests", href: "/backtest", icon: BarChart2 },
   { title: "Data", href: "/data", icon: Database },
   { title: "Strategies", href: "/strategies", icon: Zap },
   { title: "Journal", href: "/journal", icon: BookOpen },

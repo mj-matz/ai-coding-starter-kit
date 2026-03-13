@@ -7,7 +7,7 @@ backtests against cached data sets.
 import logging
 import threading
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import List, Literal, Optional
 
@@ -27,6 +27,7 @@ from engine import run_backtest
 from engine.models import BacktestConfig, InstrumentConfig
 from analytics import calculate_analytics
 from analytics.trade_metrics import r_multiple as compute_r_multiple
+from strategies.breakout import BreakoutStrategy, BreakoutParams
 
 # Configure logging
 logging.basicConfig(
@@ -575,6 +576,378 @@ async def backtest_run(
         final_balance=result.final_balance,
         initial_balance=result.initial_balance,
         analytics=analytics_out,
+    )
+
+
+_DIRECTION_MAP = {"long": "long_only", "short": "short_only", "both": "both"}
+
+
+# ── Asset list models + endpoint ──────────────────────────────────────────────
+
+class AssetOut(BaseModel):
+    symbol: str
+    name: str
+    category: str
+
+
+@app.get("/assets", response_model=List[AssetOut])
+async def list_assets(token: dict = Depends(verify_jwt)):
+    """
+    Return the full list of instruments supported by the platform.
+
+    Reads from the Supabase `instruments` table — add new assets via the
+    Supabase dashboard without redeploying the service.
+    """
+    from services.cache_service import _get_supabase_client
+
+    try:
+        client = _get_supabase_client()
+        resp = (
+            client.table("instruments")
+            .select("symbol, name, category")
+            .order("category")
+            .order("symbol")
+            .execute()
+        )
+    except Exception as e:
+        logger.error(f"Failed to fetch instruments: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="Failed to load instrument list.")
+
+    return resp.data or []
+
+
+async def _resolve_instrument(symbol: str) -> dict:
+    """
+    Look up an instrument's engine config (pip_size, pip_value_per_lot) from
+    the Supabase `instruments` table.
+
+    Raises HTTPException 400 if the symbol is not in the database.
+    """
+    from services.cache_service import _get_supabase_client
+
+    try:
+        client = _get_supabase_client()
+        resp = (
+            client.table("instruments")
+            .select("pip_size, pip_value_per_lot")
+            .eq("symbol", symbol)
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        logger.error(f"Instrument lookup failed for {symbol}: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail="Failed to validate instrument.")
+
+    if not resp.data:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Symbol '{symbol}' is not supported. "
+                "See the asset list at GET /assets for supported instruments."
+            ),
+        )
+
+    return resp.data
+
+
+# ── Orchestration request / response models ───────────────────────────────────
+
+class BacktestOrchestrationRequest(BaseModel):
+    strategy: str
+    symbol: str = Field(min_length=1)
+    timeframe: str
+    startDate: str
+    endDate: str
+    rangeStart: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    rangeEnd: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    triggerDeadline: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    timeExit: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    stopLoss: float = Field(gt=0)
+    takeProfit: float = Field(gt=0)
+    direction: Literal["long", "short", "both"]
+    commission: float = Field(default=0.0, ge=0)
+    slippage: float = Field(default=0.0, ge=0)
+    initialCapital: float = Field(gt=0)
+    sizingMode: Literal["risk_percent", "fixed_lot"]
+    riskPercent: Optional[float] = Field(default=None, gt=0, le=100)
+    fixedLot: Optional[float] = Field(default=None, gt=0)
+
+
+class BacktestMetricsOut(BaseModel):
+    total_return_pct: float
+    cagr_pct: float
+    sharpe_ratio: float
+    sortino_ratio: float
+    max_drawdown_pct: float
+    calmar_ratio: float
+    longest_drawdown_days: float
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    win_rate_pct: float
+    avg_win_pips: float
+    avg_loss_pips: float
+    profit_factor: float
+    avg_r_multiple: float
+    expectancy_pips: float
+    final_balance: float
+
+
+class EquityCurveOut(BaseModel):
+    date: str
+    balance: float
+
+
+class DrawdownCurveOut(BaseModel):
+    date: str
+    drawdown_pct: float
+
+
+class TradeDetailOut(BaseModel):
+    id: int
+    entry_time: str
+    exit_time: str
+    direction: str
+    entry_price: float
+    exit_price: float
+    lot_size: float
+    pnl_pips: float
+    pnl_currency: float
+    r_multiple: float
+    exit_reason: str
+    duration_minutes: int
+
+
+class BacktestOrchestrationResponse(BaseModel):
+    metrics: BacktestMetricsOut
+    equity_curve: List[EquityCurveOut]
+    drawdown_curve: List[DrawdownCurveOut]
+    trades: List[TradeDetailOut]
+
+
+# ── /backtest orchestration endpoint ─────────────────────────────────────────
+
+@app.post("/backtest", response_model=BacktestOrchestrationResponse)
+async def backtest_orchestrate(
+    request: BacktestOrchestrationRequest,
+    token: dict = Depends(verify_jwt),
+):
+    """
+    Full orchestration: fetch data → generate signals → run engine → analytics.
+
+    Accepts a user-friendly configuration object from the frontend UI and
+    returns a complete result ready for display (metrics, equity curve,
+    drawdown curve, trade list).
+
+    Rate limit: 30 requests / minute per user (shared with /backtest/run).
+    Any authenticated user may call this endpoint.
+    """
+    user_id: str = token["sub"]
+
+    if not _check_backtest_rate_limit(user_id):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded: max 30 backtest requests per minute.",
+        )
+
+    # ── 1. Validate strategy ──────────────────────────────────────────────────
+    if request.strategy != "time_range_breakout":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown strategy '{request.strategy}'. Supported: time_range_breakout",
+        )
+
+    symbol = request.symbol.upper()
+
+    # ── 2. Resolve instrument config from Supabase (validates symbol) ─────────
+    instrument = await _resolve_instrument(symbol)
+
+    # ── 3. Parse and validate date range ──────────────────────────────────────
+    try:
+        date_from = date.fromisoformat(request.startDate)
+        date_to = date.fromisoformat(request.endDate)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date: {e}")
+
+    _validate_date_range(date_from, date_to)
+    _validate_timeframe("dukascopy", request.timeframe)
+
+    # ── 4. Fetch / load cached data ───────────────────────────────────────────
+    df = None
+    cached = find_cached_entry(symbol, "dukascopy", request.timeframe, date_from, date_to)
+    if cached:
+        try:
+            df = load_cached_data(cached["file_path"])
+        except Exception as e:
+            logger.warning(f"Cache load failed for {symbol}, re-fetching: {e}")
+            df = None
+
+    if df is None:
+        try:
+            base_df = fetch_dukascopy(symbol, date_from, date_to)
+            df = resample_ohlcv(base_df, request.timeframe) if request.timeframe != "1m" else base_df
+        except TimeoutError as e:
+            raise HTTPException(status_code=504, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.error(f"Fetch error for {symbol}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to fetch data for {symbol}: {e}",
+            )
+
+        if df.empty:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No data available for {symbol} between {date_from} and {date_to}",
+            )
+
+        try:
+            save_to_cache(df, symbol, "dukascopy", request.timeframe, date_from, date_to, user_id)
+        except Exception as e:
+            logger.warning(f"Cache save failed (non-fatal): {e}")
+
+    # Normalize to DatetimeIndex
+    if "datetime" in df.columns:
+        df = df.set_index("datetime")
+    df.index = pd.to_datetime(df.index, utc=True)
+    df.columns = [c.lower() for c in df.columns]
+
+    required_cols = {"open", "high", "low", "close"}
+    if not required_cols.issubset(set(df.columns)):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Data is missing required columns: {required_cols - set(df.columns)}",
+        )
+
+    # ── 5. Generate breakout signals ──────────────────────────────────────────
+    breakout_params = BreakoutParams(
+        asset=symbol,
+        range_start=time.fromisoformat(request.rangeStart),
+        range_end=time.fromisoformat(request.rangeEnd),
+        trigger_deadline=time.fromisoformat(request.triggerDeadline),
+        stop_loss_pips=request.stopLoss,
+        take_profit_pips=request.takeProfit,
+        pip_size=instrument["pip_size"],
+        timezone="UTC",
+        direction_filter=_DIRECTION_MAP[request.direction],
+    )
+
+    strategy = BreakoutStrategy()
+    try:
+        signals_df = strategy.generate_signals(df, breakout_params)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # ── 6. Run backtesting engine ─────────────────────────────────────────────
+    engine_config = BacktestConfig(
+        initial_balance=request.initialCapital,
+        sizing_mode=request.sizingMode,
+        instrument=InstrumentConfig(
+            pip_size=instrument["pip_size"],
+            pip_value_per_lot=instrument["pip_value_per_lot"],
+        ),
+        fixed_lot=request.fixedLot,
+        risk_percent=request.riskPercent,
+        commission=request.commission,
+        slippage_pips=request.slippage,
+        time_exit=request.timeExit,
+        timezone="UTC",
+    )
+
+    try:
+        result = run_backtest(df, signals_df, engine_config)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Backtest engine error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal engine error.")
+
+    # ── 7. Calculate analytics ────────────────────────────────────────────────
+    try:
+        analytics_result = calculate_analytics(result)
+    except Exception as e:
+        logger.error(f"Analytics error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Analytics calculation failed.")
+
+    # ── 8. Build response ─────────────────────────────────────────────────────
+    m = {metric.name: metric.value for metric in analytics_result.summary}
+
+    def _f(v, default: float = 0.0) -> float:
+        """Coerce None / inf / NaN to a safe float default."""
+        if v is None:
+            return default
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return default
+        return default if (f != f or f == float("inf")) else f  # NaN or +inf → default
+
+    cagr_val = _f(m.get("CAGR"))
+    dd_val = _f(m.get("Max Drawdown"))
+    calmar_val = round(cagr_val / abs(dd_val), 2) if dd_val != 0.0 else 0.0
+
+    metrics_out = BacktestMetricsOut(
+        total_return_pct=_f(m.get("Total Return")),
+        cagr_pct=cagr_val,
+        sharpe_ratio=_f(m.get("Sharpe Ratio")),
+        sortino_ratio=_f(m.get("Sortino Ratio")),
+        max_drawdown_pct=dd_val,
+        calmar_ratio=calmar_val,
+        longest_drawdown_days=_f(m.get("Max Drawdown Duration")),
+        total_trades=int(m.get("Total Trades") or 0),
+        winning_trades=int(m.get("Winning Trades") or 0),
+        losing_trades=int(m.get("Losing Trades") or 0),
+        win_rate_pct=_f(m.get("Win Rate")),
+        avg_win_pips=_f(m.get("Avg Win (Pips)")),
+        avg_loss_pips=_f(m.get("Avg Loss (Pips)")),
+        profit_factor=_f(m.get("Profit Factor (Pips)")),
+        avg_r_multiple=_f(m.get("Avg R per Trade")),
+        expectancy_pips=_f(m.get("Expectancy (Pips)")),
+        final_balance=result.final_balance,
+    )
+
+    # Equity curve: rename "time" → "date" to match the frontend type
+    equity_curve_out = [
+        EquityCurveOut(date=pt["time"], balance=pt["balance"])
+        for pt in result.equity_curve
+    ]
+
+    # Drawdown curve: compute running-peak drawdown from the equity curve
+    peak = result.initial_balance
+    drawdown_curve_out: list[DrawdownCurveOut] = []
+    for pt in result.equity_curve:
+        bal = pt["balance"]
+        if bal > peak:
+            peak = bal
+        dd_pct = round((bal - peak) / peak * 100, 4) if peak > 0 else 0.0
+        drawdown_curve_out.append(DrawdownCurveOut(date=pt["time"], drawdown_pct=dd_pct))
+
+    # Trades
+    trades_out: list[TradeDetailOut] = []
+    for i, t in enumerate(result.trades):
+        duration_minutes = int((t.exit_time - t.entry_time).total_seconds() / 60)
+        trades_out.append(TradeDetailOut(
+            id=i + 1,
+            entry_time=t.entry_time.isoformat(),
+            exit_time=t.exit_time.isoformat(),
+            direction=t.direction,
+            entry_price=t.entry_price,
+            exit_price=t.exit_price,
+            lot_size=t.lot_size,
+            pnl_pips=t.pnl_pips,
+            pnl_currency=t.pnl_currency,
+            r_multiple=_f(compute_r_multiple(t)),
+            exit_reason=t.exit_reason,
+            duration_minutes=duration_minutes,
+        ))
+
+    return BacktestOrchestrationResponse(
+        metrics=metrics_out,
+        equity_curve=equity_curve_out,
+        drawdown_curve=drawdown_curve_out,
+        trades=trades_out,
     )
 
 

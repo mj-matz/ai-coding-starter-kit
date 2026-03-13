@@ -1,8 +1,8 @@
 # PROJ-5: Backtest UI (Configuration + Results)
 
-## Status: Planned
+## Status: In Review
 **Created:** 2026-03-09
-**Last Updated:** 2026-03-09
+**Last Updated:** 2026-03-13
 
 ## Dependencies
 - Requires: PROJ-1 (Data Fetcher) — UI triggers data download
@@ -26,7 +26,7 @@
 
 ### Configuration Form
 - [ ] Strategy template selector (initially only "Time-Range Breakout"; extensible for future strategies)
-- [ ] Asset input field with validation (e.g. XAUUSD, GER30)
+- [ ] Asset selector: Shadcn Combobox (Popover + Command) that loads the instrument list from `GET /api/data/assets`; searchable by symbol and name; shows "Recent Assets" (up to 5, from localStorage) when no search query is active; assets are grouped by category (Forex, Indices, Commodities, …)
 - [ ] Timeframe selector: 1m, 5m, 15m, 1h, 1d
 - [ ] Date range picker: start date and end date
 - [ ] Strategy-specific parameter fields rendered dynamically based on selected template:
@@ -83,6 +83,7 @@
 ### Existing Infrastructure
 - `POST /api/backtest/run` — low-level engine endpoint; requires pre-computed signals (not used directly by the UI)
 - `GET /api/data/*` — data fetch, cache, and availability endpoints
+- `GET /api/data/assets` — auth-protected proxy to FastAPI `/assets`; returns `[{ symbol, name, category }]`; cached 5 minutes via `next: { revalidate: 300 }`; consumed by `AssetCombobox` on first popover open
 - Dashboard shell at `/(dashboard)/` with sidebar + auth-protected layout
 - All required shadcn/ui components already installed
 
@@ -94,7 +95,8 @@ src/app/(dashboard)/backtest/page.tsx   ← NEW route
     |
     +-- [Left Column] ConfigurationPanel
     |   +-- StrategySelector (Select: "Time-Range Breakout" + future strategies)
-    |   +-- AssetInput (Input: e.g. XAUUSD, GER30)
+    |   +-- AssetCombobox (Popover+Command; loads from GET /api/data/assets;
+    |   |                  search by symbol+name; Recent Assets via localStorage)
     |   +-- TimeframeSelector (Select: 1m / 5m / 15m / 1h / 1d)
     |   +-- DateRangePicker (two date Input fields: Start / End)
     |   +-- StrategyParamsSection (rendered dynamically per selected strategy)
@@ -193,8 +195,185 @@ If FastAPI processing regularly exceeds 30 seconds (e.g. large date ranges or ti
 
 (react-hook-form and Zod are already installed)
 
-## QA Test Results
-_To be added by /qa_
+## QA Test Results (Re-test)
+
+**Tested:** 2026-03-13
+**Build:** PASS (production build succeeds, 0 errors)
+**Tester:** QA Engineer (AI)
+**Production Ready:** YES (conditional -- see remaining Low-severity items)
+
+### Previous Bug Fix Verification
+
+Bugs from the first QA pass on 2026-03-13 have been re-verified:
+
+| Bug | Status | Evidence |
+|-----|--------|----------|
+| BUG-3 (Charts Zoom/Pan) | FIXED | Both `equity-curve-chart.tsx` and `drawdown-chart.tsx` now import and render the Recharts `Brush` component for pan/zoom on the time axis. |
+| BUG-6 (In-Memory Rate Limiter) | FIXED | `POST /api/backtest` now uses `supabase.rpc("check_rate_limit")` for persistent, serverless-safe rate limiting. |
+| BUG-9 (defaultValue vs value) | FIXED | `configuration-panel.tsx` and `strategy-params.tsx` now use `value={field.value}` on all Select and RadioGroup components. |
+| BUG-10 (Hardcoded 10000) | FIXED | `metrics-summary-card.tsx` now receives `initialCapital` prop and uses `pctColor(metrics.final_balance - initialCapital)`. |
+| BUG-5 (Tabs not used) | FIXED | `results-panel.tsx` now uses shadcn Tabs component to switch between Charts and Trades views. |
+| BUG-2 (Config only saved on submit) | FIXED | `configuration-panel.tsx` now auto-saves via `form.watch()` subscription and `beforeunload` handler. |
+| BUG-8 (Symbol validation) | FIXED | AssetCombobox enforces selection from validated instrument list; `POST /api/backtest` validates symbol via regex server-side. |
+
+### Acceptance Criteria Status: 22/23 PASSED
+
+#### Configuration Form
+- [x] AC-1: Strategy template selector -- Select component with "Time-Range Breakout"; extensible via `STRATEGIES` array and `StrategyParams` switch
+- [x] AC-2: Asset selector -- Combobox (Popover + Command) loads from `GET /api/data/assets`; searchable by symbol+name; shows "Recent Assets" from localStorage; grouped by category
+- [x] AC-3: Timeframe selector -- Select with 1m, 5m, 15m, 1h, 1d options
+- [x] AC-4: Date range picker -- Two date Input fields (start + end)
+- [x] AC-5: Strategy-specific parameter fields -- Rendered dynamically via `StrategyParams` component with switch/case per strategy; all required fields present (Range Start/End, Trigger Deadline, Time Exit, SL, TP, Direction, Commission, Slippage)
+- [x] AC-6: Initial Capital field -- Present with default 10,000
+- [x] AC-7: Position sizing mode -- RadioGroup with "Risk %" and "Fixed Lot"; conditional input for risk % or lot size displayed based on selection
+- [x] AC-8: "Run Backtest" button -- Disabled while `isRunning` is true; shows spinner with "Running..." text
+- [x] AC-9: Form validation -- Zod schema validates all required fields, time format (HH:MM), SL > 0, TP > 0, end date > start date, risk % between 0.1-100 (see BUG-11 note below)
+- [x] AC-10: Config persisted in localStorage -- Auto-saved on every field change via `form.watch()`; restored on page load via `loadConfigFromStorage()`; also saved on `beforeunload`
+
+#### Results Dashboard
+- [x] AC-11: Loading state -- Spinner + "Running backtest..." message shown while status is "loading"
+- [x] AC-12: Error state -- Alert with error message shown; form stays intact (status=error does not clear form)
+- [x] AC-13: Empty state (no trades) -- "No Trades Found" message with suggestion to adjust parameters
+- [x] AC-14: Equity Curve chart -- Recharts LineChart, x=date, y=balance with proper axis formatting
+- [x] AC-15: Drawdown chart -- Recharts AreaChart below equity curve, shows drawdown % over time
+- [x] AC-16: Metrics summary card -- Grouped into Overview (Total Return, CAGR, Sharpe, Sortino, Final Balance), Trade Stats (Total Trades, Win Rate, W/L, Avg Win, Avg Loss, Profit Factor, Avg R-Multiple, Expectancy), Risk (Max Drawdown, Calmar, Longest Drawdown)
+- [x] AC-17: Trade list table -- Columns: #, Date, Direction, Entry, Exit, Lot Size, PnL (pips), PnL ($), R-Multiple, Exit Reason, Duration; sortable by date, PnL, duration
+- [x] AC-18: Pagination -- 50 trades per page with Previous/Next buttons and page counter
+- [x] AC-19: Charts interactive -- Hover tooltips show exact values; Brush component enables zoom/pan on time axis
+- [x] AC-20: "Save Run" button -- Placeholder with "Coming Soon" badge; disabled; wrapped in Tooltip explaining future availability
+- [ ] AC-21: Mobile responsive (375px) -- PARTIAL: see BUG-4 below
+- [x] AC-22: No horizontal scrolling on desktop -- Two-column grid layout with `xl:grid-cols-[400px_1fr]`; trade table uses `overflow-x-auto` within its container
+- [x] AC-23: All shadcn/ui components used -- Button, Input, Select, Card, Table, Tabs, RadioGroup, Badge, Popover, Command, Tooltip, Alert, Form, Separator, Label all used
+
+### Edge Cases Status
+
+- [x] EC-1: Backtest > 30 seconds -- `useBacktest` sets `isTimedOut` after 30s; LoadingState shows warning with cancel button
+- [x] EC-2: Backend error -- Error state shows user-friendly message; form stays intact for parameter adjustment
+- [x] EC-3: Zero trades returned -- NoTradesState component rendered when `result.trades.length === 0`
+- [x] EC-4: User changes parameters while results displayed -- Results remain visible until new backtest is explicitly run (status stays "success" until next submit)
+
+### Security Audit Results
+
+- [x] Authentication: Triple-layered protection (Middleware redirect + Dashboard Layout server-side check + API Route `getUser()` check)
+- [x] Authorization: User ID passed via `X-User-Id` header to FastAPI; session-based auth prevents cross-user access
+- [x] Input validation (server-side): Comprehensive Zod schema in `POST /api/backtest` validates all fields; symbol regex `/^[A-Z0-9.]+$/i` prevents injection
+- [x] Input validation (client-side): Matching Zod schema with react-hook-form; client validation is NOT trusted alone
+- [x] XSS: No `dangerouslySetInnerHTML`; all values rendered through React JSX escaping; exit_reason displayed in Badge (escaped)
+- [x] Rate limiting: `POST /api/backtest` uses Supabase RPC (`check_rate_limit`) -- persistent across serverless instances; fails open with logged error
+- [x] SSRF: Symbol is regex-validated; FASTAPI_URL is server-only env var (no `NEXT_PUBLIC_` prefix); user cannot control the upstream URL
+- [x] Secrets: `FASTAPI_URL` is server-only; `NEXT_PUBLIC_` vars are limited to Supabase URL and anon key (safe for client exposure)
+- [ ] SEC-1: Empty Authorization header sent by `GET /api/data/assets` when no session (see BUG-7 below)
+- [ ] SEC-2: `POST /api/backtest/run` (older endpoint from PROJ-2) still uses in-memory rate limiter (see BUG-12)
+- [x] CORS: Next.js API routes are same-origin; no additional CORS headers exposed
+- [x] Timeout: `AbortSignal.timeout(60_000)` on upstream FastAPI call prevents indefinite hangs
+
+### Bugs Found
+
+#### BUG-4: Strategy parameter inputs cramped at 375px mobile
+- **Severity:** Low
+- **Status:** Open (carried from previous QA pass)
+- **Steps to Reproduce:**
+  1. Open `/backtest` at 375px viewport width
+  2. Look at the Strategy Parameters section (time inputs grid)
+  3. Expected: Inputs stack or resize to fit comfortably
+  4. Actual: 2-column grid (`grid-cols-2`) remains at 375px; time inputs with clock icon and padding (`pl-9`) leave very little space for the time value
+- **File:** `src/components/backtest/strategy-params.tsx` line 49: `grid grid-cols-2 gap-4`
+- **Suggested Fix:** Use `grid-cols-1 sm:grid-cols-2` for the time inputs grid
+- **Priority:** Fix in next sprint
+- **Skill:** `/frontend`
+
+#### BUG-7: Empty Authorization header sent by assets endpoint
+- **Severity:** Low
+- **Status:** Open (carried from previous QA pass, partially fixed)
+- **Steps to Reproduce:**
+  1. In a scenario where `session?.access_token` is falsy
+  2. `GET /api/data/assets` sends `Authorization: ""`
+  3. Expected: Header should be omitted entirely when no token is available
+  4. Actual: Empty string sent as Authorization value
+- **File:** `src/app/api/data/assets/route.ts` lines 32-34
+- **Note:** The newer `POST /api/backtest` correctly uses a conditional: `if (session?.access_token) { headers["Authorization"] = ... }`. The assets route was not updated to match.
+- **Priority:** Fix in next sprint
+- **Skill:** `/backend`
+
+#### BUG-11: Client-side riskPercent minimum (0.1) differs from server-side minimum (0.01)
+- **Severity:** Low
+- **Status:** New
+- **Steps to Reproduce:**
+  1. The spec says "risk % between 0.01 and 100"
+  2. Client Zod schema in `backtest-types.ts` line 39: `.min(0.1, "Risk must be >= 0.1%")`
+  3. Server Zod schema in `api/backtest/route.ts` line 28: `.min(0.01)`
+  4. Expected: Both schemas should agree and match the spec (0.01 minimum)
+  5. Actual: Client rejects values between 0.01 and 0.09; server would accept them
+- **File:** `src/lib/backtest-types.ts` line 39
+- **Priority:** Fix in next sprint
+- **Skill:** `/frontend`
+
+#### BUG-12: `POST /api/backtest/run` (PROJ-2 endpoint) still uses in-memory rate limiter
+- **Severity:** Low
+- **Status:** New
+- **Steps to Reproduce:**
+  1. The main `POST /api/backtest` endpoint was upgraded to use Supabase RPC rate limiting (BUG-6 fix)
+  2. However, `POST /api/backtest/run` (from PROJ-2) still imports and uses `checkRateLimit` from `src/lib/rate-limit.ts` (in-memory store)
+  3. Expected: All API routes should use the same persistent rate limiting approach
+  4. Actual: In-memory rate limiter resets on every serverless cold start; different instances have separate counters
+- **File:** `src/app/api/backtest/run/route.ts` lines 4, 91-108
+- **Note:** This is a PROJ-2 endpoint, not PROJ-5. Noting for completeness since the in-memory `rate-limit.ts` file still exists and is imported. This does not block PROJ-5 deployment.
+- **Priority:** Fix in next sprint
+- **Skill:** `/backend`
+
+#### BUG-1: Strategy params not dynamically rendered from a registry (carried forward, still Low)
+- **Severity:** Low
+- **Status:** Open (design limitation, not a bug per se)
+- **Notes:** The `StrategyParams` component uses a switch/case pattern. This is adequate for the current single-strategy setup. When PROJ-6 (Strategy Library) is implemented, this should be refactored to a registry-based approach.
+- **Priority:** Nice to have (address during PROJ-6)
+- **Skill:** `/frontend`
+
+### Cross-Browser Compatibility
+
+Testing is code-review based (no live browser testing possible in this environment). Assessment:
+
+- **Chrome/Edge:** All components use standard HTML5 inputs (date, time, number), Recharts SVG rendering, and shadcn/ui Radix primitives. Expected to work fully.
+- **Firefox:** HTML5 date/time inputs are supported. Recharts SVG rendering is standard. Radix components are cross-browser tested. Expected to work fully.
+- **Safari:** HTML5 `type="time"` inputs with `[&::-webkit-calendar-picker-indicator]:hidden` -- this webkit pseudo-element selector will not affect Firefox/Safari native pickers. The time inputs use a clock icon via Lucide which is always visible. Minor visual difference possible but functional. Recharts and Radix are Safari-compatible.
+
+### Responsive Design Assessment
+
+- **1440px (Desktop):** Two-column layout via `xl:grid-cols-[400px_1fr]`. Config panel sticky-positioned. Results panel uses full remaining width. Trade table has `overflow-x-auto`. PASS.
+- **768px (Tablet):** Falls back to single-column stacked layout (`grid-cols-1`). All content fits. Form fields use `sm:grid-cols-2` and `sm:grid-cols-3` for reasonable grouping. PASS.
+- **375px (Mobile):** Single-column layout. Strategy param time inputs are cramped in 2-column grid (BUG-4). All other elements stack properly. PARTIAL PASS.
+
+### Regression Check (Deployed Features)
+
+- **PROJ-1 (Data Fetcher):** `GET /api/data/assets` endpoint added in PROJ-5 uses the same auth pattern and FastAPI proxy approach as existing data endpoints. No regressions expected.
+- **PROJ-2 (Backtesting Engine):** `POST /api/backtest/run` endpoint unchanged. New `POST /api/backtest` is a separate orchestration endpoint. No regressions.
+- **PROJ-3 (Time-Range Breakout Strategy):** Strategy parameters in the UI match the expected parameters from the strategy spec. No regressions.
+- **PROJ-4 (Performance Analytics):** All metrics from PROJ-4 are displayed in `MetricsSummaryCard`. No regressions.
+- **PROJ-8 (Authentication):** Dashboard layout auth check, middleware redirect, and API auth checks all remain intact. Sidebar component modified to add Backtest nav item -- changes are additive only. No regressions.
+
+### Summary
+
+- **Acceptance Criteria:** 22/23 passed (1 partial: mobile responsive at 375px)
+- **Edge Cases:** 4/4 passed
+- **Bugs Found:** 5 remaining (0 Critical, 0 High, 0 Medium, 5 Low)
+- **Previous Bugs Fixed:** 7/10 verified fixed (BUG-2, BUG-3, BUG-5, BUG-6, BUG-8, BUG-9, BUG-10)
+- **Security Audit:** PASS (no Critical or High security issues; 2 Low-severity findings noted)
+- **Production Ready:** YES
+
+### Recommendation
+
+All Critical and Medium bugs from the previous QA pass have been fixed. The remaining 5 bugs are all Low severity and do not block deployment. Recommended action:
+
+1. **Deploy now** -- the feature is production-ready
+2. **Track remaining Low bugs** for the next sprint:
+   - BUG-4: Mobile cramped inputs (`/frontend`)
+   - BUG-7: Empty Authorization header in assets route (`/backend`)
+   - BUG-11: Client/server riskPercent min mismatch (`/frontend`)
+   - BUG-12: In-memory rate limiter on PROJ-2 endpoint (`/backend`)
+   - BUG-1: Strategy params registry pattern (`/frontend`, defer to PROJ-6)
 
 ## Deployment
-_To be added by /deploy_
+
+**Deployed:** 2026-03-13
+**Production URL:** https://your-app.vercel.app/backtest
+**Build:** PASS (0 errors, 0 lint errors)
+**Lint Fix:** `asset-combobox.tsx` — replaced `useEffect` + `setRecentSymbols` with lazy `useState` initialization to satisfy `react-hooks/set-state-in-effect` rule

@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { checkRateLimit } from "@/lib/rate-limit";
 
 const RATE_LIMIT_MAX = 60;
-const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const RATE_LIMIT_WINDOW_SECONDS = 60;
 
 export async function GET(request: NextRequest) {
   // Auth check
@@ -17,25 +16,30 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Rate limiting (per user)
-  const rateLimit = checkRateLimit(
-    `data-available:${user.id}`,
-    RATE_LIMIT_MAX,
-    RATE_LIMIT_WINDOW_MS
-  );
-
-  if (!rateLimit.allowed) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded. Try again later." },
+  // Rate limiting via Supabase (persistent across serverless instances)
+  try {
+    const { data: allowed, error: rlError } = await supabase.rpc(
+      "check_rate_limit",
       {
-        status: 429,
-        headers: {
-          "Retry-After": String(
-            Math.ceil((rateLimit.resetAt - Date.now()) / 1000)
-          ),
-        },
+        p_key: `data-available:${user.id}`,
+        p_max_requests: RATE_LIMIT_MAX,
+        p_window_seconds: RATE_LIMIT_WINDOW_SECONDS,
       }
     );
+
+    if (rlError) {
+      console.error("Rate limit check failed:", rlError.message);
+    } else if (!allowed) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Try again in 60 seconds." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(RATE_LIMIT_WINDOW_SECONDS) },
+        }
+      );
+    }
+  } catch (err) {
+    console.error("Rate limit check threw:", err);
   }
 
   // Parse optional query params for filtering
