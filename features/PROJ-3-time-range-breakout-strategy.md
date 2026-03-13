@@ -1,6 +1,6 @@
 # PROJ-3: Time-Range Breakout Strategy
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-03-09
 **Last Updated:** 2026-03-12 (Round 3 QA complete — production ready, 1 low-severity open bug)
 
@@ -393,4 +393,13 @@ No vulnerabilities found. Key security controls verified:
 ---
 
 ## Deployment
-_To be added by /deploy_
+
+**Deployed:** 2026-03-13
+**Production URL:** https://trading-backtester.vercel.app
+**Git Tag:** v1.3.0-PROJ-3
+
+### Deployment Notes
+- Pure Python backend feature — no new Next.js routes or database migrations
+- Strategy files deployed as part of the FastAPI service (Railway)
+- Lint infrastructure updated: `next lint` → `eslint src` + ESLint 9 flat config (`eslint.config.js`)
+- BUG-10 (Low, Windows-only timezone KeyError) left open as nice-to-have
