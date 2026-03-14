@@ -1,8 +1,8 @@
 # PROJ-5: Backtest UI (Configuration + Results)
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-03-09
-**Last Updated:** 2026-03-13
+**Last Updated:** 2026-03-14
 
 ## Dependencies
 - Requires: PROJ-1 (Data Fetcher) — UI triggers data download
@@ -443,7 +443,6 @@ All bugs resolved except BUG-1 (strategy params registry pattern — deferred to
 
 ## Deployment
 
-**Deployed:** 2026-03-13
+**Deployed:** 2026-03-14 (re-deploy with trade list improvements)
 **Production URL:** https://your-app.vercel.app/backtest
 **Build:** PASS (0 errors, 0 lint errors)
-**Lint Fix:** `asset-combobox.tsx` — replaced `useEffect` + `setRecentSymbols` with lazy `useState` initialization to satisfy `react-hooks/set-state-in-effect` rule
