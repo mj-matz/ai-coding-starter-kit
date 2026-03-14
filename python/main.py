@@ -848,7 +848,7 @@ async def backtest_orchestrate(
     # Keep only bars within [hour_from, hour_to]. This covers both the range-
     # formation window (rangeStart..rangeEnd) and the trade window (..timeExit),
     # with a ±1h DST buffer applied when hour_from/hour_to were derived above.
-    df = df[df.index.hour.between(hour_from, hour_to)]
+    df = df[(df.index.hour >= hour_from) & (df.index.hour <= hour_to)]
     if df.empty:
         raise HTTPException(
             status_code=404,
