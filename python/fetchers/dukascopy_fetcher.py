@@ -177,13 +177,15 @@ def fetch_dukascopy(
     duka_symbol = resolve_symbol(symbol)
     point = POINT_VALUES.get(duka_symbol, 100000)
 
-    # Generate all hours in [date_from, date_to] inclusive
+    # Generate all hours in [date_from, date_to] inclusive, skipping weekends
+    # (Dukascopy has no weekend data for Forex/metals/indices)
     start = datetime(date_from.year, date_from.month, date_from.day, tzinfo=timezone.utc)
     end = datetime(date_to.year, date_to.month, date_to.day, 23, tzinfo=timezone.utc)
     hours = []
     cur = start
     while cur <= end:
-        hours.append(cur)
+        if cur.weekday() < 5:  # 0=Mon … 4=Fri, skip Sat/Sun
+            hours.append(cur)
         cur += timedelta(hours=1)
 
     logger.info(
@@ -195,7 +197,7 @@ def fetch_dukascopy(
 
     frames: list[pd.DataFrame] = []
     with httpx.Client(follow_redirects=True) as client:
-        with ThreadPoolExecutor(max_workers=12) as executor:
+        with ThreadPoolExecutor(max_workers=24) as executor:
             future_map = {
                 executor.submit(_download_hour, duka_symbol, h, point, client): h
                 for h in hours
