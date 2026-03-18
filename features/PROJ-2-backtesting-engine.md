@@ -294,3 +294,8 @@ Keine kritischen oder hohen Bugs. BUG-NEW-2 (Error-Leak) und BUG-NEW-3 (CORS) si
 **Tag:** `v1.2.0-PROJ-2`
 **Service:** Python FastAPI (Railway) + Next.js API route (`/api/backtest/run`) auf Vercel
 **Entry point:** `run_backtest()` in `python/engine/engine.py`
+
+**Patch Re-Deployed:** 2026-03-18
+**Commit:** `e3721e4`
+**Tag:** `v1.2.1-PROJ-2`
+**Fixes:** BUG-8 (Entry Gap Fill), BUG-NEW-1–3, BUG-NEW-5–6 (QA Re-Test 2026-03-18)
