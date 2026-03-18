@@ -194,7 +194,7 @@ function TimeRangeBreakoutParams({
           render={({ field }) => (
             <FormItem>
               <FormLabel className="text-gray-300">
-                Commission (account currency)
+                Commission (per lot)
               </FormLabel>
               <FormControl>
                 <Input
@@ -265,7 +265,7 @@ function TimeRangeBreakoutParams({
           render={({ field }) => (
             <FormItem>
               <FormLabel className="text-gray-300">
-                Trail Trigger (pips, optional)
+                Trail Trigger (pips)
               </FormLabel>
               <FormControl>
                 <Input
@@ -295,7 +295,7 @@ function TimeRangeBreakoutParams({
           render={({ field }) => (
             <FormItem>
               <FormLabel className="text-gray-300">
-                Trail Lock (pips, optional)
+                Trail Lock (pips)
               </FormLabel>
               <FormControl>
                 <Input
