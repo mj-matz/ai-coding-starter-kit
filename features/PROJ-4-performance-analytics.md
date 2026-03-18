@@ -1,8 +1,8 @@
 # PROJ-4: Performance Analytics
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-03-09
-**Last Updated:** 2026-03-12
+**Last Updated:** 2026-03-18
 
 ## Dependencies
 - Requires: PROJ-2 (Backtesting Engine) — analytics consumes the trade log and equity curve produced by the engine
@@ -200,8 +200,8 @@ PROJ-1, PROJ-2, PROJ-3, PROJ-8 — no modifications.
 
 | ID | Severity | Description | Location |
 |----|----------|-------------|----------|
-| BUG-9 | Medium | UI shows only 15 of 33 computed metrics — 18 missing (Gross Profit/Loss, Best/Worst Trade, Consecutive Wins/Losses, Total R, Avg R per Month, Avg Trade Duration, currency Avg Win/Loss, Avg Win/Loss Ratio) | `src/components/backtest/metrics-summary-card.tsx` |
-| BUG-10 | Medium | `monthly_r` computed but not included in orchestration API response (`BacktestOrchestrationResponse`) or TypeScript types — never shown in UI | `python/main.py`, `src/lib/backtest-types.ts` |
+| BUG-9 | Medium | ~~UI shows only 15 of 33 computed metrics — 18 missing~~ | **Fixed** in `e3721e4` — all 33 metrics now shown in `metrics-summary-card.tsx` |
+| BUG-10 | Medium | ~~`monthly_r` not included in API response or TypeScript types~~ | **Fixed** in `e3721e4`/`2ad7c09` — `MonthlyR[]` added to `BacktestResult` and rendered in UI |
 | BUG-7 | Low | R-Multiple for SL exits hardcoded to -1.0, ignoring gap slippage | `python/analytics/trade_metrics.py:239` |
 | BUG-8 | Low | Calmar Ratio computed ad-hoc in API layer, not in analytics module | `python/main.py:1030` |
 | BUG-11 | Low | Avg Trade Duration computed but not in orchestration API response | `python/main.py` |
