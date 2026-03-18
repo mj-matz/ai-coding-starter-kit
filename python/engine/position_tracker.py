@@ -19,6 +19,7 @@ class OpenPosition:
     tp_price: Optional[float]
     lot_size: float
     initial_sl_price: float  # frozen at entry; used for initial-risk reporting
+    entry_gap_pips: float = 0.0  # pips gapped past stop level on entry
     trail_applied: bool = False
     trail_trigger_pips: Optional[float] = None  # per-signal override; falls back to BacktestConfig
     trail_lock_pips: Optional[float] = None     # per-signal override; falls back to BacktestConfig
@@ -102,6 +103,7 @@ def close_position(
     exit_price: float,
     exit_reason: Literal["SL", "SL_TRAILED", "TP", "TIME"],
     config: BacktestConfig,
+    exit_gap: bool = False,
 ) -> Trade:
     """
     Close a position and return the completed Trade record.
@@ -125,6 +127,8 @@ def close_position(
         - config.commission
     )
 
+    # price_diff_to_pips applies abs() internally, so this is correct for
+    # both long (entry > sl → positive diff) and short (entry < sl → negative diff).
     initial_risk_pips = price_diff_to_pips(
         position.entry_price - position.initial_sl_price, pip_size
     )
@@ -144,4 +148,6 @@ def close_position(
         pnl_currency=round(pnl_currency, 2),
         initial_risk_pips=round(initial_risk_pips, 1),
         initial_risk_currency=round(initial_risk_currency, 2),
+        entry_gap_pips=position.entry_gap_pips,
+        exit_gap=exit_gap,
     )

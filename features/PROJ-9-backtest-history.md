@@ -44,7 +44,85 @@
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /architecture_
+
+### Ausgangslage
+
+Bestehende Bausteine, auf denen aufgebaut wird:
+- **PROJ-5 (Backtest UI):** `results-panel`, `metrics-summary-card`, `equity-curve-chart`, `trade-list-table` – werden wiederverwendet, nicht neu gebaut.
+- **PROJ-8 (Auth):** Benutzer ist eingeloggt, `user_id` ist bekannt.
+- **API:** `/api/backtest/run` gibt bereits Ergebnisse zurück – das Speichern wird daran angehängt.
+
+### Komponenten-Struktur
+
+```
+App (Sidebar bereits vorhanden)
+│
+├── /backtest            (bestehende Seite – PROJ-5)
+│   ├── ConfigurationPanel   (bestehend)
+│   └── ResultsPanel         (bestehend)
+│       └── [NEU] "Run speichern"-Button
+│           └── SaveRunDialog
+│               ├── Eingabefeld: Name
+│               └── Buttons: Speichern / Abbrechen
+│
+└── /history             [NEU – Seite]
+    ├── HistoryHeader
+    │   └── Titel + Beschreibung
+    ├── HistoryTable         [NEU]
+    │   ├── Zeilen: Name, Asset, Strategie, Zeitraum,
+    │   │          Trades, Win Rate, Total R, erstellt am
+    │   ├── InlineRenameInput (pro Zeile)
+    │   ├── DeleteButton + Bestätigungs-Dialog
+    │   └── "Config laden"-Button
+    ├── RunDetailView        [NEU]  ← öffnet sich bei Klick auf Zeile
+    │   ├── MetricsSummaryCard   (wiederverwendet von PROJ-5)
+    │   ├── EquityCurveChart     (wiederverwendet von PROJ-5)
+    │   ├── DrawdownChart        (wiederverwendet von PROJ-5)
+    │   └── TradeListTable       (wiederverwendet von PROJ-5)
+    └── EmptyState           (keine gespeicherten Runs)
+```
+
+### Datenmodell
+
+Datenbank-Tabelle `backtest_runs` in Supabase:
+
+| Feld | Inhalt |
+|------|--------|
+| `id` | Eindeutige ID (automatisch) |
+| `user_id` | Welcher Benutzer hat diesen Run gespeichert |
+| `name` | Frei wählbarer Name, z.B. "XAUUSD 3.5R TP" |
+| `asset` | Das gehandelte Asset (z.B. "XAUUSD") |
+| `strategy` | Strategie-Name (z.B. "TimeRangeBreakout") |
+| `config` | Alle Einstellungen als kompaktes JSON-Objekt |
+| `summary` | Kennzahlen (Win Rate, Total R usw.) als JSON |
+| `trade_log` | Alle Einzeltrades als JSON-Liste |
+| `created_at` | Zeitstempel der Speicherung |
+
+**Sicherheit:** RLS stellt sicher, dass jeder Benutzer ausschließlich seine eigenen Runs lesen, schreiben und löschen kann.
+
+### API-Endpunkte (neue Routen)
+
+| Endpunkt | Zweck |
+|----------|-------|
+| `GET /api/backtest/runs` | Liste aller eigenen Runs (neueste zuerst) |
+| `POST /api/backtest/runs` | Neuen Run speichern |
+| `GET /api/backtest/runs/[id]` | Einen Run vollständig laden |
+| `DELETE /api/backtest/runs/[id]` | Run permanent löschen |
+| `PATCH /api/backtest/runs/[id]` | Run umbenennen |
+
+### Tech-Entscheidungen
+
+| Entscheidung | Warum |
+|---|---|
+| **Supabase JSONB für config/results** | Schema bleibt stabil wenn neue Metriken hinzukommen – keine Migration nötig |
+| **Bestehende Chart-/Tabellen-Komponenten wiederverwenden** | Kein Doppel-Code; Ergebnisansicht sieht identisch aus wie nach einem Live-Run |
+| **Inline-Umbenennung statt separatem Dialog** | Weniger Klicks für häufige Aktion |
+| **Bestätigungs-Dialog vor Löschen** | Löschen ist irreversibel |
+| **"Config laden" mit Bestätigung** | Schützt vor versehentlichem Überschreiben eines laufenden Konfigurations-Entwurfs |
+
+### Neue Abhängigkeiten
+
+Keine neuen Pakete nötig – alle benötigten shadcn/ui-Komponenten (`Table`, `Dialog`, `Button`, `Input`, `Badge`) sind bereits installiert.
 
 ## QA Test Results
 _To be added by /qa_

@@ -49,6 +49,8 @@ class Trade:
     pnl_currency: float
     initial_risk_pips: float
     initial_risk_currency: float
+    entry_gap_pips: float = 0.0  # > 0 when bar opened past the stop level (BUG-8)
+    exit_gap: bool = False        # True when bar opened past SL/TP level (BUG-15)
 
 
 @dataclass

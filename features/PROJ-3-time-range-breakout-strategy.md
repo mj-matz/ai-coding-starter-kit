@@ -53,6 +53,7 @@
 | `slippage_pips` | float | 0.2 | 0.5 |
 | `trail_trigger_pips` | float (optional) | 100 (= 2R) | 60 (= 2R) |
 | `trail_lock_pips` | float (optional) | 50 (= 1R) | 30 (= 1R) |
+| `entry_delay_bars` | int (default: 1) | 0 = sofort ab Range End, 1 = 1 Bar danach | 0 = sofort ab Range End |
 | `start_date` | date | 2022-01-01 | 2022-01-01 |
 | `end_date` | date | 2024-12-31 | 2024-12-31 |
 
@@ -370,7 +371,7 @@ This is a pure Python backend feature with no new API routes, no new database ta
 - **Description:** The Pydantic validator catches only `ZoneInfoNotFoundError`, but on Windows without the `tzdata` package, `ZoneInfo()` can raise `KeyError` instead. The strategy-level `validate_params` (`breakout.py` line 90) correctly catches both exceptions, but the API layer does not. This causes a 500 instead of 400 on Windows for invalid timezone strings that trigger `KeyError`.
 - **Impact:** Poor error reporting on Windows only. No security issue. Engine-level validation still catches it downstream.
 - **Fix:** Change `except ZoneInfoNotFoundError:` to `except (ZoneInfoNotFoundError, KeyError):` at line 322.
-- **Status:** Open (nice to have)
+- **Status:** Fixed (2026-03-18) — `python/main.py:326` now catches `(ZoneInfoNotFoundError, KeyError)`.
 
 ### New Bugs Found (Post-Deployment)
 
@@ -398,7 +399,7 @@ This is a pure Python backend feature with no new API routes, no new database ta
       reason: str   # one of the reason codes above
   ```
 - **Backward compatibility:** The caller in `main.py` must be updated to unpack the tuple. The existing `signals_df` usage is unchanged.
-- **Status:** Open
+- **Status:** Fixed — `generate_signals` returns `tuple[pd.DataFrame, list[SkippedDay]]` with reason codes `NO_BARS`, `NO_RANGE_BARS`, `FLAT_RANGE`, `NO_SIGNAL_BAR`, `DEADLINE_MISSED`. `main.py` unpacks the tuple and includes `skipped_days` in the response.
 
 ### Security Audit Highlights
 
@@ -426,6 +427,89 @@ No vulnerabilities found. Key security controls verified:
 - **Fix:** Calculate the effective range duration in minutes (handling the midnight wrap for overnight ranges). Raise `ValueError` if duration exceeds 12 hours (`MAX_RANGE_MINUTES = 720`). Valid overnight range 22:00–02:00 = 4h passes; invalid 10:00–08:00 = 22h is rejected.
 - **Tests added:** `test_validate_params_valid_overnight_range` (22:00–02:00 must not raise), existing `test_validate_params_invalid_range` now passes again.
 - **Status:** Fixed (2026-03-14)
+
+#### BUG-14 — HIGH: Timezone wird nicht korrekt übergeben → falsche Range, falscher Entry, falsche Direction
+
+- **Dateien:** `python/main.py` (BacktestConfigRequest), `src/app/api/backtest/route.ts`, Frontend-Formular
+- **Gefunden:** 2026-03-17
+- **Symptom:** Trade am 01.09.2025 — Range 14:30–15:30 konfiguriert, TradingView zeigt Breakout nach oben um 15:32 CEST. Engine zeigt: Short-Entry um 17:39. Beide Werte sind falsch.
+- **Root Cause (Hypothese):** Das `timezone`-Feld wird vom Frontend nicht oder als `"UTC"` gesendet. Der Default in `BacktestConfigRequest` und `BreakoutParams` ist `"UTC"`. Dadurch behandelt `generate_signals` die Range-Zeiten als UTC statt als Europe/Berlin:
+  - Konfiguriert: 14:30–15:30 Europe/Berlin (CEST = UTC+2) → korrekt wäre 12:30–13:30 UTC
+  - Tatsächlich verwendet: 14:30–15:30 UTC = **16:30–17:30 CEST**
+  - Signal-Bar = erster Bar nach 15:30 UTC = ~17:30 CEST → Entry um 17:39 CEST
+  - Der echte Breakout um 15:32 CEST (13:32 UTC) fiel in das falsch berechnete Range-Fenster; innerhalb 16:30–17:30 CEST war der Kurs fallend → Sell Stop triggert → **Short statt Long**
+- **Fix:**
+  1. Frontend: Timezone-Feld aus Asset-Konfiguration oder fest als `"Europe/Berlin"` für XAUUSD/GER40 an die API senden
+  2. Backend/API: Sicherstellen, dass `timezone` aus dem Request korrekt an `BreakoutParams` und `BacktestConfig` weitergegeben wird und nicht auf `"UTC"` fällt
+  3. Debugging: `generate_signals` sollte timezone und UTC-konvertierte Zeiten im Log ausgeben, damit falsche Konfiguration erkannt wird
+- **Status:** Fixed — `main.py` liest `instrument["timezone"]` direkt aus der DB (via `instruments`-Tabelle, Spalte `timezone`); übergibt es an `BreakoutParams` (Zeile 929) und `BacktestConfig` (Zeile 963). Das Request-Feld `timezone` wird nicht mehr verwendet. Migration `20260317_instruments_timezone.sql` fügt die Spalte hinzu und setzt Exchange-Timezones.
+
+#### BUG-13 — LOW: Deadline-Check inkonsistent zwischen Strategy und Engine
+
+- **Dateien:** `python/strategies/breakout.py:233`, `python/engine/engine.py:204`
+- **Gefunden:** 2026-03-17
+- **Problem:** Die Strategie prüft `signal_bar_local_time > trigger_deadline` (exklusiv), die Engine prüft `bar_time <= o.expiry` (inklusiv). Wenn der Signal-Bar **genau** auf die Deadline-Zeit fällt: Die Strategie lässt es durch (da `>` nicht `>=`), aber der nächste Bar liegt bereits nach der Deadline (`bar_time > expiry`), sodass die Orders sofort in Schritt 1d der Engine verfallen. Ergebnis: Kein Trade — aber auch kein `DEADLINE_MISSED`-Eintrag in den Skipped Days. Der Tag ist unsichtbar verloren.
+- **Fix:** Strategie-Check von `>` auf `>=` geändert (Option A): Signal-Bar genau auf Deadline = `DEADLINE_MISSED`, konsistent mit Engine-Verhalten.
+- **Status:** Fixed (2026-03-18) — `python/strategies/breakout.py:246` prüft jetzt `signal_bar_local_time >= params.trigger_deadline`.
+
+---
+
+## QA Test Results — Round 4
+
+**Tested:** 2026-03-18
+**Tester:** QA Engineer (AI)
+**Test Method:** Full code review of 15 implementation files + Next.js production build verification
+**Build Status:** Next.js build passes (0 errors)
+
+### Results Summary
+
+| Category | Result |
+|----------|--------|
+| Acceptance Criteria | 15/15 passed |
+| Edge Cases | 10/10 passed (6 documented + 4 additional) |
+| Previous Bugs (BUG-1–14) | 14/14 confirmed fixed |
+| New Bugs | 3 (0 critical, 0 high, 0 medium, 3 low) |
+| Security | Pass |
+| Regression | Pass |
+| **Production Ready** | **YES** |
+
+### New Bugs Found
+
+#### BUG-16 — LOW: Frontend-Formular hat keine Eingabefelder für `trail_trigger_pips` / `trail_lock_pips`
+
+- **File:** `src/components/backtest/strategy-params.tsx`
+- **Description:** Das Backend unterstützt Profit-Lock-Parameter vollständig, aber Benutzer können sie nicht über die UI konfigurieren.
+- **Status:** Fixed (2026-03-18) — Zwei optionale Number-Inputs "Trail Trigger (pips)" und "Trail Lock (pips)" im UI ergänzt. Zod-Validierung in `backtest-types.ts` und `route.ts` (beide zusammen oder keiner; trigger > lock). Felder werden an `BreakoutParams` in `main.py` weitergegeben.
+
+#### BUG-17 — LOW: Commission-Label-Mismatch ("pips" vs. Kontowährung)
+
+- **Files:** `src/components/backtest/strategy-params.tsx` (Label: "Commission (pips)"), `python/engine/models.py:29` (dokumentiert als "account currency")
+- **Description:** Die Engine zieht `commission` als fixen Betrag in Kontowährung ab, aber das UI-Label impliziert Pips.
+- **Status:** Fixed (2026-03-18) — Label geändert zu "Commission (account currency)", `step` auf 0.01 angepasst.
+
+#### BUG-18 — LOW: UTC-Stunden-Vorfilter kann Bars für US-Instrumente auslassen
+
+- **File:** `python/main.py` (Zeilen 642–693)
+- **Description:** Bei Instrumenten mit großem negativem UTC-Offset (z. B. America/New_York) könnten Abendstunden lokal zu UTC-Stunden > 23 führen (Midnight-Overflow). Der bisherige Code klemmte solche Werte auf 23, was zu einem Fenster (23, 23) führte und alle Bars der Nacht ausließ. Kein Impact auf aktuelle Produktions-Assets (XAUUSD, GER40).
+- **Status:** Fixed (2026-03-18) — `_local_to_utc_hour_range` gibt `(0, 23)` zurück wenn `utc_h_from > 23` oder `utc_h_to > 23` (Fallback: alle Stunden behalten statt Bars zu verlieren).
+
+### Security Audit
+
+- [x] Auth: JWT auf beiden Ebenen (Next.js + FastAPI) verifiziert
+- [x] IDOR: `cache_id` auf `user_id` des authentifizierten Benutzers beschränkt
+- [x] Input-Validierung: Drei Ebenen (Zod → Pydantic → `validate_params`)
+- [x] Rate Limiting: 10 req/min (Next.js) + 30 req/min (FastAPI)
+- [x] DoS-Schutz: Signal-Cap 500 K, Datumsbereich 5 Jahre, Timeout 5 min
+- [x] Keine Secrets hardcodiert, keine `NEXT_PUBLIC_` auf sensiblen Variablen
+- [x] Keine Schwachstellen gefunden
+
+### Regression
+
+- [x] PROJ-1 (Data Fetcher): Nicht betroffen
+- [x] PROJ-2 (Backtesting Engine): Nicht betroffen
+- [x] PROJ-4 (Performance Analytics): Nicht betroffen
+- [x] PROJ-5 (Backtest UI): Nicht betroffen
+- [x] PROJ-8 (Authentication): Nicht betroffen
 
 ---
 

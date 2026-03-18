@@ -227,10 +227,17 @@ def avg_trade_duration_hours(trades: List[Trade]) -> Optional[float]:
 def r_multiple(trade: Trade) -> Optional[float]:
     """R-Multiple for a single trade.
 
+    For SL/SL_TRAILED exits R is defined as -1.0 regardless of gap-fill,
+    because the intended risk (1R) was the stop distance — not the slippage
+    caused by an overnight/intrabar gap.
+    For TP and TIME exits the actual pnl / initial_risk is used.
+
     Returns None if initial_risk_currency == 0 (SL at entry).
     """
     if trade.initial_risk_currency == 0:
         return None
+    if trade.exit_reason in ("SL", "SL_TRAILED"):
+        return -1.0
     return trade.pnl_currency / trade.initial_risk_currency
 
 

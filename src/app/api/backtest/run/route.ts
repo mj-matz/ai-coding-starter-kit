@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+export const maxDuration = 300; // Vercel Pro: up to 300s; Hobby: max 60s
+
+const UPSTREAM_TIMEOUT_MS = 300_000; // 5 minutes
 const FASTAPI_URL = process.env.FASTAPI_URL;
 const RATE_LIMIT_MAX = 30;
 const RATE_LIMIT_WINDOW_SECONDS = 60;
@@ -156,12 +159,19 @@ export async function POST(request: NextRequest) {
       method: "POST",
       headers,
       body: JSON.stringify(parsed.data),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
 
     const data = await response.json();
 
     return NextResponse.json(data, { status: response.status });
   } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      return NextResponse.json(
+        { error: "Backtest timed out after 5 minutes. Try a shorter date range." },
+        { status: 504 }
+      );
+    }
     console.error("FastAPI proxy error:", error);
     return NextResponse.json(
       { error: "Failed to connect to backtesting service" },

@@ -348,8 +348,8 @@ export function ConfigurationPanel({
                           <Input
                             {...field}
                             type="number"
-                            step="0.1"
-                            min="0.1"
+                            step="0.01"
+                            min="0.01"
                             max="100"
                             className="border-gray-700 bg-gray-900 text-gray-100"
                             aria-label="Risk percent per trade"

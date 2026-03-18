@@ -31,6 +31,11 @@ export const backtestFormSchema = z
     direction: z.enum(["long", "short", "both"]),
     commission: z.coerce.number().min(0, "Commission must be >= 0"),
     slippage: z.coerce.number().min(0, "Slippage must be >= 0"),
+    entryDelayBars: z.coerce.number().int().min(0, "Entry delay must be >= 0").default(1),
+
+    // Optional profit-lock (trail)
+    trailTriggerPips: z.coerce.number().positive("Trail trigger must be > 0").optional(),
+    trailLockPips: z.coerce.number().positive("Trail lock must be > 0").optional(),
 
     // Capital & sizing
     initialCapital: z.coerce.number().positive("Initial capital must be > 0"),
@@ -46,6 +51,29 @@ export const backtestFormSchema = z
     message: "End date must be after start date",
     path: ["endDate"],
   })
+  .refine(
+    (data) => {
+      const hasTrigger = data.trailTriggerPips != null;
+      const hasLock = data.trailLockPips != null;
+      return hasTrigger === hasLock;
+    },
+    {
+      message: "Both trail parameters must be set together or both left empty",
+      path: ["trailTriggerPips"],
+    }
+  )
+  .refine(
+    (data) => {
+      if (data.trailTriggerPips != null && data.trailLockPips != null) {
+        return data.trailTriggerPips > data.trailLockPips;
+      }
+      return true;
+    },
+    {
+      message: "Trail trigger must be greater than trail lock",
+      path: ["trailTriggerPips"],
+    }
+  )
   .refine(
     (data) =>
       data.sizingMode === "risk_percent"
@@ -76,6 +104,9 @@ export const defaultFormValues: BacktestFormValues = {
   direction: "both",
   commission: 0,
   slippage: 0,
+  entryDelayBars: 1,
+  trailTriggerPips: undefined,
+  trailLockPips: undefined,
   initialCapital: 10000,
   sizingMode: "risk_percent",
   riskPercent: 1.0,
@@ -96,12 +127,32 @@ export interface BacktestMetrics {
   winning_trades: number;
   losing_trades: number;
   win_rate_pct: number;
+  gross_profit: number;
+  gross_loss: number;
+  gross_profit_pips: number;
+  gross_loss_pips: number;
+  avg_win: number;
+  avg_loss: number;
   avg_win_pips: number;
   avg_loss_pips: number;
+  avg_win_loss_ratio: number;
   profit_factor: number;
   avg_r_multiple: number;
+  total_r: number;
+  avg_r_per_month: number;
   expectancy_pips: number;
+  best_trade: number;
+  worst_trade: number;
+  consecutive_wins: number;
+  consecutive_losses: number;
+  avg_trade_duration_hours: number;
   final_balance: number;
+}
+
+export interface MonthlyR {
+  month: string;
+  r_earned: number | null;
+  trade_count: number;
 }
 
 export interface EquityCurvePoint {
@@ -127,6 +178,8 @@ export interface TradeRecord {
   r_multiple: number;
   exit_reason: string;
   duration_minutes: number;
+  entry_gap_pips: number;
+  exit_gap: boolean;
 }
 
 export interface SkippedDay {
@@ -140,6 +193,7 @@ export interface BacktestResult {
   drawdown_curve: DrawdownCurvePoint[];
   trades: TradeRecord[];
   skipped_days: SkippedDay[];
+  monthly_r: MonthlyR[];
 }
 
 // ── localStorage helpers ─────────────────────────────────────────────────────

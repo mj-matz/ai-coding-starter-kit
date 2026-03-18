@@ -167,11 +167,11 @@ def fetch_dukascopy(
         hour_to:   Last UTC hour to download, 0-23 inclusive (default 23)
 
     Returns:
-        DataFrame with columns: datetime (UTC), open, high, low, close, volume
+        DataFrame with columns: datetime (UTC), open, high, low, close, volume.
+        May be partial if a timeout occurred (warning is logged).
 
     Raises:
         ValueError: No data found or symbol unsupported.
-        TimeoutError: Download exceeded FETCH_TIMEOUT_SECONDS.
     """
     if not (0 <= hour_from <= 23 and 0 <= hour_to <= 23 and hour_from <= hour_to):
         raise ValueError(f"Invalid hour range: hour_from={hour_from}, hour_to={hour_to} (must be 0-23, from <= to)")
@@ -200,22 +200,41 @@ def fetch_dukascopy(
     )
 
     frames: list[pd.DataFrame] = []
+    partial_timeout = False
     with httpx.Client(follow_redirects=True) as client:
         with ThreadPoolExecutor(max_workers=24) as executor:
             future_map = {
                 executor.submit(_download_hour, duka_symbol, h, point, client): h
                 for h in hours
             }
-            for future in as_completed(future_map, timeout=FETCH_TIMEOUT_SECONDS):
-                result = future.result()
-                if result is not None:
-                    frames.append(result)
+            try:
+                for future in as_completed(future_map, timeout=FETCH_TIMEOUT_SECONDS):
+                    result = future.result()
+                    if result is not None:
+                        frames.append(result)
+            except TimeoutError:
+                partial_timeout = True
+                logger.warning(
+                    "Timeout after %ds: partial fetch for %s — %d of %d hours downloaded",
+                    FETCH_TIMEOUT_SECONDS,
+                    symbol,
+                    len(frames),
+                    len(hours),
+                )
 
     if not frames:
         raise ValueError(
             f"No data returned from Dukascopy for {symbol} ({duka_symbol}) "
             f"between {date_from} and {date_to}. "
             "The symbol may be unsupported or the date range may have no trading data."
+        )
+
+    if partial_timeout:
+        logger.warning(
+            "Returning partial data for %s (%d of %d hours) — cache will NOT be written for incomplete fetch",
+            symbol,
+            len(frames),
+            len(hours),
         )
 
     ticks = pd.concat(frames, ignore_index=True).sort_values("datetime")
@@ -238,6 +257,9 @@ def fetch_dukascopy(
         }
     )
     ohlcv = ohlcv.dropna(subset=["open"]).reset_index()
+
+    if partial_timeout:
+        ohlcv.attrs["partial"] = True
 
     logger.info("Fetched %d 1-minute bars for %s", len(ohlcv), symbol)
     return ohlcv

@@ -170,25 +170,30 @@ def run_backtest(
 
             exit_reason = check_sl_tp(position, bar_high, bar_low)
             if exit_reason is not None:
+                exit_gap = False
                 if exit_reason in ("SL", "SL_TRAILED"):
                     sl = position.sl_price
                     # Gap fill: if bar opened past SL, use open price (worse fill)
                     if position.direction == "long" and bar_open < sl:
                         exit_price = bar_open
+                        exit_gap = True
                     elif position.direction == "short" and bar_open > sl:
                         exit_price = bar_open
+                        exit_gap = True
                     else:
                         exit_price = sl
                 else:  # TP
                     tp = position.tp_price
-                    # Gap fill: if bar opened past TP, use open price
+                    # Gap fill: if bar opened past TP, use open price (better fill)
                     if position.direction == "long" and bar_open > tp:
                         exit_price = bar_open
+                        exit_gap = True
                     elif position.direction == "short" and bar_open < tp:
                         exit_price = bar_open
+                        exit_gap = True
                     else:
                         exit_price = tp
-                trade = close_position(position, bar_time, exit_price, exit_reason, config)
+                trade = close_position(position, bar_time, exit_price, exit_reason, config, exit_gap=exit_gap)
                 trades.append(trade)
                 balance += trade.pnl_currency
                 equity_curve.append(
@@ -208,11 +213,20 @@ def run_backtest(
         if position is None and pending_orders:
             triggered = evaluate_pending_orders(pending_orders, bar_high, bar_low, bar_open)
             if triggered is not None:
-                # Adverse entry slippage
+                # Gap-fill + adverse entry slippage.
+                # If the bar opens beyond the stop level, fill at bar_open;
+                # otherwise fill at the stop level.
+                # Lot sizing uses the theoretical entry/SL (pre-gap/slippage).
                 if triggered.direction == "long":
-                    actual_entry = triggered.entry_price + slippage_offset
+                    fill_base = max(bar_open, triggered.entry_price)
+                    actual_entry = fill_base + slippage_offset
                 else:
-                    actual_entry = triggered.entry_price - slippage_offset
+                    fill_base = min(bar_open, triggered.entry_price)
+                    actual_entry = fill_base - slippage_offset
+
+                entry_gap_pips = round(
+                    abs(fill_base - triggered.entry_price) / config.instrument.pip_size, 1
+                )
 
                 lot_size = calculate_lot_size(
                     config, triggered.entry_price, triggered.sl_price, balance
@@ -225,6 +239,7 @@ def run_backtest(
                     tp_price=triggered.tp_price,
                     lot_size=lot_size,
                     initial_sl_price=triggered.sl_price,
+                    entry_gap_pips=entry_gap_pips,
                     trail_trigger_pips=triggered.trail_trigger_pips,
                     trail_lock_pips=triggered.trail_lock_pips,
                 )

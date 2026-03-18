@@ -216,10 +216,81 @@ All documented edge cases handled correctly.
 
 **Final test count: 27/27 passed.**
 
+## Post-Deployment Bugs
+
+### BUG-8 — MEDIUM: Kein Gap-Fill beim Entry
+
+- **Datei:** `python/engine/engine.py`
+- **Gefunden:** 2026-03-17
+- **Problem:** Bei SL/TP-Exits existiert korrekte Gap-Fill-Logik (Bar öffnet jenseits des Exit-Levels → Fill zu `bar_open`). Beim **Entry** fehlte dies. Wenn ein Bar oberhalb des Buy Stops öffnete, wurde trotzdem `entry_price + slippage` als Fill verwendet statt `bar_open + slippage`.
+- **Fix:** `fill_base = max(bar_open, triggered.entry_price)` (Long) / `min(...)` (Short); `actual_entry = fill_base ± slippage_offset`. Lot-Sizing bleibt auf theoretischem Entry/SL (konservativ). `entry_gap_pips` wird im `Trade`-Objekt gespeichert. SL/TP bleiben absolut (kein Shift).
+- **Status:** FIXED (2026-03-18)
+
+### BUG-9 — LOW: SL/TP beziehen sich auf theoretischen Entry, nicht tatsächlichen Fill
+
+- **Dateien:** `python/engine/engine.py`, `python/strategies/breakout.py`
+- **Gefunden:** 2026-03-17
+- **Entscheidung:** SL/TP bleiben absolut (kein Shift nach Gap/Slippage). `initial_risk = abs(actual_entry - sl_price)` reflektiert korrekt den echten Fill-zu-SL-Abstand. Kein Code-Change erforderlich — by design geschlossen.
+- **Status:** Closed (by design — 2026-03-18)
+
+### BUG-10 — LOW: 1-Bar Verzögerung beim Entry → gelöst als Feature `entry_delay_bars`
+
+- **Datei:** `python/engine/engine.py:233-240`, `python/strategies/breakout.py`
+- **Gefunden:** 2026-03-17
+- **Problem:** Ein Signal wird auf Bar N (Schritt 3) gesetzt und erst auf Bar N+1 (Schritt 2) geprüft. Dies ist eine 1-Bar-Verzögerung nach Range End.
+- **Entscheidung:** Die 1-Bar-Verzögerung ist kein Bug, sondern eine konfigurierbare Design-Entscheidung. Neues Parameter `entry_delay_bars` in `BreakoutParams`:
+  - `0` = Signal auf letztem Range-Bar → Einstieg möglich ab erstem Bar bei/nach Range End (z.B. 15:30)
+  - `1` = bisheriges Verhalten / Default → Einstieg ab einem Bar nach Range End
+  - `N` = Einstieg ab N Bars nach Range End
+- **Status:** Fixed (2026-03-17) — als Feature `entry_delay_bars` implementiert
+
+---
+
+## QA Re-Test Ergebnisse (2026-03-18)
+
+**Getestet:** 2026-03-18 | **Methode:** Code Review + statische Analyse aller Engine-Module, API-Routes und Tests
+**Scope:** Vollständiger Re-Test nach Post-Deployment Fixes (BUG-8, BUG-9, BUG-10)
+
+### Akzeptanzkriterien: 16/16 BESTANDEN
+Alle 16 Akzeptanzkriterien durch Code-Review gegen die Implementierung verifiziert.
+
+### Edge Cases: 8/8 BESTANDEN + 3 zusätzliche identifiziert und bestanden
+
+### Neue Bugs gefunden
+
+| ID | Severity | Datei | Beschreibung | Status |
+|----|----------|-------|-------------|--------|
+| BUG-NEW-1 | Low | `test_engine.py` | Fehlender Unit-Test für Entry Gap Fill (BUG-8 Fix) | **FIXED** — 3 Tests in `TestEntryGapFill` hinzugefügt (2026-03-18) |
+| BUG-NEW-2 | Medium | `main.py:879` | Exception-Message-Leak in `/backtest` Orchestrierungs-Endpoint | **FIXED** — generische Message `"Failed to fetch data."` (2026-03-18) |
+| BUG-NEW-3 | Medium | `main.py:47-52` | CORS `allow_origins` enthält nur `localhost` | **FIXED** — `CORS_ALLOWED_ORIGIN` env variable; by design für Server-zu-Server, optional für Browser-Zugriff (2026-03-18) |
+| BUG-NEW-4 | Low | `main.py:290-306` | In-Memory Rate Limiter nicht persistent über Restarts/Replicas | Open — erfordert Redis/Supabase-Infrastruktur |
+| BUG-NEW-5 | Low | `position_tracker.py:130` | `initial_risk_pips` nutzt implizites `abs()` ohne Dokumentation | **FIXED** — Kommentar hinzugefügt (2026-03-18) |
+| BUG-NEW-6 | Low | `main.py:327` | `trail_lock_pips` API lehnt `0.0` ab (`gt=0`), aber Engine defaultet `None` auf `0.0` | **FIXED** — Constraint auf `ge=0` geändert (2026-03-18) |
+
+### Security Audit
+- Authentifizierung: Solide (JWT-Verifikation auf beiden Ebenen)
+- Autorisierung: BUG-1-Fix bestätigt (`.eq("created_by", user_id)`)
+- Input-Validierung: Zod + Pydantic mit strengen Schemas
+- Rate Limiting: Zweistufig (Supabase-persistent + In-Memory)
+- Security Headers: Alle 4 Header korrekt konfiguriert
+- 1 Info-Leak verbleibt (BUG-NEW-2, Medium)
+
+### Fehlende Test-Coverage
+- Entry/Exit Gap Fill
+- Per-Signal Trail Overrides
+- Signal Expiry
+- Timezone-aware Time Exit
+- Short mit Slippage
+
+### Produktionsbereitschaft: JA
+Keine kritischen oder hohen Bugs. BUG-NEW-2 (Error-Leak) und BUG-NEW-3 (CORS) sind nicht blockierend, sollten aber im nächsten Sprint behoben werden.
+
+---
+
 ## Deployment
 
 **Deployed:** 2026-03-12
 **Commit:** `8cb5517`
 **Tag:** `v1.2.0-PROJ-2`
-**Service:** Python FastAPI (Railway) + Next.js API route (`/api/backtest/run`) on Vercel
+**Service:** Python FastAPI (Railway) + Next.js API route (`/api/backtest/run`) auf Vercel
 **Entry point:** `run_backtest()` in `python/engine/engine.py`

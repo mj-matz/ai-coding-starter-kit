@@ -31,6 +31,9 @@ const BacktestRequestSchema = z
     sizingMode: z.enum(["risk_percent", "fixed_lot"]),
     riskPercent: z.number().min(0.01).max(100).optional(),
     fixedLot: z.number().positive().optional(),
+    entryDelayBars: z.number().int().min(0).default(1),
+    trailTriggerPips: z.number().positive().optional(),
+    trailLockPips: z.number().positive().optional(),
   })
   .refine((data) => new Date(data.endDate) > new Date(data.startDate), {
     message: "End date must be after start date",
@@ -43,6 +46,23 @@ const BacktestRequestSchema = z
     {
       message: "Provide risk_percent or fixed_lot based on sizing_mode",
     }
+  )
+  .refine(
+    (data) => {
+      const hasTrigger = data.trailTriggerPips != null;
+      const hasLock = data.trailLockPips != null;
+      return hasTrigger === hasLock;
+    },
+    { message: "Both trail parameters must be set together or both omitted" }
+  )
+  .refine(
+    (data) => {
+      if (data.trailTriggerPips != null && data.trailLockPips != null) {
+        return data.trailTriggerPips > data.trailLockPips;
+      }
+      return true;
+    },
+    { message: "trailTriggerPips must be greater than trailLockPips" }
   );
 
 // ── Route handler ────────────────────────────────────────────────────────────

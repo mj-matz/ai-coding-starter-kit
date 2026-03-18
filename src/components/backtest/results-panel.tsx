@@ -148,7 +148,7 @@ export function ResultsPanel({
   return (
     <div className="space-y-6">
       {/* Metrics Summary (always visible) */}
-      <MetricsSummaryCard metrics={result.metrics} initialCapital={initialCapital} />
+      <MetricsSummaryCard metrics={result.metrics} initialCapital={initialCapital} monthlyR={result.monthly_r} />
 
       {/* Tabbed content: Charts and Trade List */}
       <Tabs defaultValue="charts" className="w-full">

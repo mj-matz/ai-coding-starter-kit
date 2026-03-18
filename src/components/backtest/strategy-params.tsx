@@ -194,16 +194,16 @@ function TimeRangeBreakoutParams({
           render={({ field }) => (
             <FormItem>
               <FormLabel className="text-gray-300">
-                Commission (pips)
+                Commission (account currency)
               </FormLabel>
               <FormControl>
                 <Input
                   {...field}
                   type="number"
-                  step="0.1"
+                  step="0.01"
                   min="0"
                   className="border-gray-700 bg-gray-900 text-gray-100"
-                  aria-label="Commission in pips"
+                  aria-label="Commission in account currency per trade"
                 />
               </FormControl>
               <FormMessage />
@@ -225,6 +225,93 @@ function TimeRangeBreakoutParams({
                   min="0"
                   className="border-gray-700 bg-gray-900 text-gray-100"
                   aria-label="Slippage in pips"
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </div>
+
+      <div className="mt-4">
+        <FormField
+          control={form.control}
+          name="entryDelayBars"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="text-gray-300">
+                Entry Delay (bars after range end)
+              </FormLabel>
+              <FormControl>
+                <Input
+                  {...field}
+                  type="number"
+                  step="1"
+                  min="0"
+                  className="border-gray-700 bg-gray-900 text-gray-100"
+                  aria-label="Entry delay in bars after range end"
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-4">
+        <FormField
+          control={form.control}
+          name="trailTriggerPips"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="text-gray-300">
+                Trail Trigger (pips, optional)
+              </FormLabel>
+              <FormControl>
+                <Input
+                  {...field}
+                  value={field.value ?? ""}
+                  onChange={(e) =>
+                    field.onChange(
+                      e.target.value === "" ? undefined : e.target.valueAsNumber
+                    )
+                  }
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  placeholder="e.g. 100"
+                  className="border-gray-700 bg-gray-900 text-gray-100"
+                  aria-label="Trail trigger in pips (profit level that activates profit lock)"
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="trailLockPips"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="text-gray-300">
+                Trail Lock (pips, optional)
+              </FormLabel>
+              <FormControl>
+                <Input
+                  {...field}
+                  value={field.value ?? ""}
+                  onChange={(e) =>
+                    field.onChange(
+                      e.target.value === "" ? undefined : e.target.valueAsNumber
+                    )
+                  }
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  placeholder="e.g. 50"
+                  className="border-gray-700 bg-gray-900 text-gray-100"
+                  aria-label="Trail lock in pips (SL moved to this offset from entry on trigger)"
                 />
               </FormControl>
               <FormMessage />

@@ -5,6 +5,7 @@ backtests against cached data sets.
 """
 
 import logging
+import os
 import threading
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
@@ -27,7 +28,7 @@ from engine import run_backtest
 from engine.models import BacktestConfig, InstrumentConfig
 from analytics import calculate_analytics
 from analytics.trade_metrics import r_multiple as compute_r_multiple
-from strategies.breakout import BreakoutStrategy, BreakoutParams
+from strategies.breakout import BreakoutStrategy, BreakoutParams, SkippedDay
 
 # Configure logging
 logging.basicConfig(
@@ -42,10 +43,17 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS — only allow Next.js frontend (the proxy routes) to communicate
+# CORS — allow Next.js frontend (the proxy routes) to communicate.
+# In production, Next.js calls this API server-to-server, so CORS only
+# matters for local dev. CORS_ALLOWED_ORIGIN can be set to the Vercel URL
+# if direct browser access is ever needed.
+_cors_origins = ["http://localhost:3000"]
+if _extra := os.environ.get("CORS_ALLOWED_ORIGIN"):
+    _cors_origins.append(_extra)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
@@ -112,9 +120,13 @@ async def fetch_data(
     _validate_timeframe(source, timeframe)
     _validate_date_range(date_from, date_to)
 
+    # Resolve hour range before cache lookup so the path check is correct (BUG-31).
+    h_from = request.hour_from if request.hour_from is not None else 0
+    h_to = request.hour_to if request.hour_to is not None else 23
+
     # Check cache (unless force_refresh)
     if not request.force_refresh:
-        cached = find_cached_entry(symbol, source, timeframe, date_from, date_to)
+        cached = find_cached_entry(symbol, source, timeframe, date_from, date_to, h_from, h_to)
         if cached:
             df = load_cached_data(cached["file_path"])
 
@@ -155,8 +167,6 @@ async def fetch_data(
         if source == "dukascopy":
             # Always fetch 1m data first, then resample if needed.
             # Optional hour_from/hour_to narrow the download to specific UTC hours (BUG-27).
-            h_from = request.hour_from if request.hour_from is not None else 0
-            h_to = request.hour_to if request.hour_to is not None else 23
             base_df = fetch_dukascopy(symbol, date_from, date_to, hour_from=h_from, hour_to=h_to)
             if timeframe != "1m":
                 df = resample_ohlcv(base_df, timeframe)
@@ -200,36 +210,46 @@ async def fetch_data(
                 f"requested {date_from} to {date_to}"
             )
 
-    # Save to cache
-    try:
-        cache_entry = save_to_cache(
-            df=df,
-            symbol=symbol,
-            source=source,
-            timeframe=timeframe,
-            date_from=date_from,
-            date_to=date_to,
-            created_by=user_id,
+    # Partial fetch (timeout) — add warning but do not cache incomplete data (BUG-15)
+    if df.attrs.get("partial"):
+        warnings.append(
+            "Fetch timed out — partial data returned. Re-fetch to download the full date range."
         )
-    except Exception as e:
-        logger.error(f"Cache save error: {e}", exc_info=True)
-        # Return data even if caching fails
-        return FetchResponse(
-            symbol=symbol,
-            source=source,
-            timeframe=timeframe,
-            date_from=date_from,
-            date_to=date_to,
-            row_count=len(df),
-            file_path="",
-            file_size_bytes=0,
-            cached=False,
-            columns=list(df.columns),
-            preview=df.head(5).to_dict(orient="records"),
-            actual_date_from=actual_date_from,
-            actual_date_to=actual_date_to,
-            warnings=warnings,
-        )
+
+    # Save to cache (skip for partial fetches to avoid caching incomplete data)
+    cache_entry = None
+    if not df.attrs.get("partial"):
+        try:
+            cache_entry = save_to_cache(
+                df=df,
+                symbol=symbol,
+                source=source,
+                timeframe=timeframe,
+                date_from=date_from,
+                date_to=date_to,
+                created_by=user_id,
+                hour_from=h_from,
+                hour_to=h_to,
+            )
+        except Exception as e:
+            logger.error(f"Cache save error: {e}", exc_info=True)
+            # Return data even if caching fails
+            return FetchResponse(
+                symbol=symbol,
+                source=source,
+                timeframe=timeframe,
+                date_from=date_from,
+                date_to=date_to,
+                row_count=len(df),
+                file_path="",
+                file_size_bytes=0,
+                cached=False,
+                columns=list(df.columns),
+                preview=df.head(5).to_dict(orient="records"),
+                actual_date_from=actual_date_from,
+                actual_date_to=actual_date_to,
+                warnings=warnings,
+            )
 
     return FetchResponse(
         symbol=symbol,
@@ -238,9 +258,9 @@ async def fetch_data(
         date_from=date_from,
         date_to=date_to,
         row_count=len(df),
-        file_path=cache_entry["file_path"],
-        file_size_bytes=cache_entry["file_size_bytes"],
-        cache_id=cache_entry["id"],
+        file_path=cache_entry["file_path"] if cache_entry else "",
+        file_size_bytes=cache_entry["file_size_bytes"] if cache_entry else 0,
+        cache_id=cache_entry["id"] if cache_entry else None,
         cached=False,
         columns=list(df.columns),
         preview=df.head(5).to_dict(orient="records"),
@@ -316,14 +336,14 @@ class BacktestConfigRequest(BaseModel):
     time_exit: Optional[str] = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # "HH:MM" (BUG-10)
     timezone: str = "UTC"                                                                    # IANA timezone (BUG-7)
     trail_trigger_pips: Optional[float] = Field(default=None, gt=0)
-    trail_lock_pips: Optional[float] = Field(default=None, gt=0)                            # BUG-9: was ge=0
+    trail_lock_pips: Optional[float] = Field(default=None, ge=0)                            # ge=0 allows 0.0 (breakeven); engine also defaults None → 0.0
 
     @field_validator("timezone")
     @classmethod
     def validate_timezone(cls, v: str) -> str:
         try:
             ZoneInfo(v)
-        except ZoneInfoNotFoundError:
+        except (ZoneInfoNotFoundError, KeyError):
             raise ValueError(f"Invalid IANA timezone: '{v}'")
         return v
 
@@ -619,10 +639,71 @@ async def list_assets(token: dict = Depends(verify_jwt)):
     return resp.data or []
 
 
+def _local_to_utc_hour_range(
+    local_h_from: int,
+    local_h_to: int,
+    tz_name: str,
+    date_from_: date,
+    date_to_: date,
+) -> tuple[int, int]:
+    """Convert a local-timezone hour range to a UTC hour range suitable for
+    pre-filtering a UTC-indexed DataFrame.
+
+    Samples one date per month across the backtest period to capture all DST
+    transitions, then applies a ±1h safety buffer.
+
+    For UTC instruments the result is simply (max(0, h_from-1), min(23, h_to+1)).
+
+    Example — Europe/Berlin (UTC+1 winter / UTC+2 summer):
+        local 14:30 → UTC 12:30 (summer) or 13:30 (winter)
+        utc_h_from = 14 - 2 - 1(buffer) = 11
+        utc_h_to   = exit - 1 + 1(buffer) = exit
+    """
+    from zoneinfo import ZoneInfo
+
+    if tz_name == "UTC":
+        return max(0, local_h_from - 1), min(23, local_h_to + 1)
+
+    tz = ZoneInfo(tz_name)
+    offsets: set[int] = set()
+
+    # Sample the 1st of each month inside [date_from_, date_to_] to catch all
+    # DST transitions in the backtest window.
+    d = date_from_.replace(day=1)
+    while d <= date_to_:
+        dt = datetime(d.year, d.month, d.day, 12, 0, tzinfo=tz)
+        offsets.add(int(dt.utcoffset().total_seconds() // 3600))
+        # Advance to the 1st of the next month
+        d = (d.replace(day=28) + timedelta(days=4)).replace(day=1)
+
+    # Also include the exact boundary dates
+    for bd in [date_from_, date_to_]:
+        dt = datetime(bd.year, bd.month, bd.day, 12, 0, tzinfo=tz)
+        offsets.add(int(dt.utcoffset().total_seconds() // 3600))
+
+    min_off = min(offsets)   # e.g. +1 for CET
+    max_off = max(offsets)   # e.g. +2 for CEST
+
+    # UTC = local − offset
+    # Lower UTC bound: use the largest offset (most hours subtracted → smallest UTC hour)
+    # Upper UTC bound: use the smallest offset (fewest hours subtracted → largest UTC hour)
+    utc_h_from = local_h_from - max_off
+    utc_h_to = local_h_to - min_off
+
+    # For instruments with large negative UTC offsets (e.g. America/New_York UTC-5),
+    # evening local times translate to UTC hours > 23 (wrapping to the next calendar day).
+    # The hour-filter cannot express overnight UTC ranges, so fall back to keeping all
+    # hours rather than silently dropping the needed bars (BUG-18).
+    if utc_h_from > 23 or utc_h_to > 23:
+        return 0, 23
+
+    return max(0, utc_h_from - 1), min(23, utc_h_to + 1)
+
+
 async def _resolve_instrument(symbol: str) -> dict:
     """
-    Look up an instrument's engine config (pip_size, pip_value_per_lot) from
-    the Supabase `instruments` table.
+    Look up an instrument's engine config (pip_size, pip_value_per_lot, timezone)
+    from the Supabase `instruments` table.
 
     Raises HTTPException 400 if the symbol is not in the database.
     """
@@ -632,7 +713,7 @@ async def _resolve_instrument(symbol: str) -> dict:
         client = _get_supabase_client()
         resp = (
             client.table("instruments")
-            .select("pip_size, pip_value_per_lot")
+            .select("pip_size, pip_value_per_lot, timezone")
             .eq("symbol", symbol)
             .single()
             .execute()
@@ -674,6 +755,9 @@ class BacktestOrchestrationRequest(BaseModel):
     sizingMode: Literal["risk_percent", "fixed_lot"]
     riskPercent: Optional[float] = Field(default=None, gt=0, le=100)
     fixedLot: Optional[float] = Field(default=None, gt=0)
+    entryDelayBars: int = Field(default=1, ge=0)  # 0 = first bar at range_end, 1 = one bar later (default)
+    trailTriggerPips: Optional[float] = Field(default=None, gt=0)
+    trailLockPips: Optional[float] = Field(default=None, gt=0)
 
 
 class BacktestMetricsOut(BaseModel):
@@ -688,11 +772,25 @@ class BacktestMetricsOut(BaseModel):
     winning_trades: int
     losing_trades: int
     win_rate_pct: float
+    gross_profit: float
+    gross_loss: float
+    gross_profit_pips: float
+    gross_loss_pips: float
+    avg_win: float
+    avg_loss: float
     avg_win_pips: float
     avg_loss_pips: float
+    avg_win_loss_ratio: float
     profit_factor: float
     avg_r_multiple: float
+    total_r: float
+    avg_r_per_month: float
     expectancy_pips: float
+    best_trade: float
+    worst_trade: float
+    consecutive_wins: int
+    consecutive_losses: int
+    avg_trade_duration_hours: float
     final_balance: float
 
 
@@ -719,6 +817,8 @@ class TradeDetailOut(BaseModel):
     r_multiple: float
     exit_reason: str
     duration_minutes: int
+    entry_gap_pips: float = 0.0
+    exit_gap: bool = False
 
 
 class BacktestOrchestrationResponse(BaseModel):
@@ -727,6 +827,7 @@ class BacktestOrchestrationResponse(BaseModel):
     drawdown_curve: List[DrawdownCurveOut]
     trades: List[TradeDetailOut]
     skipped_days: List[SkippedDayOut] = []
+    monthly_r: List[MonthlyRResponse] = []
 
 
 # ── /backtest orchestration endpoint ─────────────────────────────────────────
@@ -777,15 +878,20 @@ async def backtest_orchestrate(
     _validate_timeframe("dukascopy", request.timeframe)
 
     # ── 4. Fetch / load cached data ───────────────────────────────────────────
-    # Derive the UTC hour range from the strategy config (BUG-27).
-    # Add ±1h buffer around the trading window to handle DST transitions.
+    # Derive the UTC hour range from the strategy config (BUG-14 / BUG-27).
+    # The user enters times in the instrument's local timezone (e.g. Europe/Berlin).
+    # We convert to UTC here so that the pre-filter on the UTC-indexed DataFrame
+    # is correct. A ±1h safety buffer covers any remaining DST edge cases.
     _range_start_h = int(request.rangeStart.split(":")[0])
     _time_exit_h = int(request.timeExit.split(":")[0])
-    hour_from = max(0, _range_start_h - 1)
-    hour_to = min(23, _time_exit_h + 1)
+    hour_from, hour_to = _local_to_utc_hour_range(
+        _range_start_h, _time_exit_h,
+        instrument["timezone"],
+        date_from, date_to,
+    )
 
     df = None
-    cached = find_cached_entry(symbol, "dukascopy", request.timeframe, date_from, date_to)
+    cached = find_cached_entry(symbol, "dukascopy", request.timeframe, date_from, date_to, hour_from, hour_to)
     if cached:
         try:
             df = load_cached_data(cached["file_path"])
@@ -806,7 +912,7 @@ async def backtest_orchestrate(
             logger.error(f"Fetch error for {symbol}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=502,
-                detail=f"Failed to fetch data for {symbol}: {e}",
+                detail="Failed to fetch data.",
             )
 
         if df.empty:
@@ -815,10 +921,13 @@ async def backtest_orchestrate(
                 detail=f"No data available for {symbol} between {date_from} and {date_to}",
             )
 
-        try:
-            save_to_cache(df, symbol, "dukascopy", request.timeframe, date_from, date_to, user_id)
-        except Exception as e:
-            logger.warning(f"Cache save failed (non-fatal): {e}")
+        if not base_df.attrs.get("partial"):
+            try:
+                save_to_cache(df, symbol, "dukascopy", request.timeframe, date_from, date_to, user_id, hour_from, hour_to)
+            except Exception as e:
+                logger.warning(f"Cache save failed (non-fatal): {e}")
+        else:
+            logger.info("Skipping cache write for %s — partial fetch (timeout)", symbol)
 
     # Normalize to DatetimeIndex
     if "datetime" in df.columns:
@@ -864,8 +973,11 @@ async def backtest_orchestrate(
         stop_loss_pips=request.stopLoss,
         take_profit_pips=request.takeProfit,
         pip_size=instrument["pip_size"],
-        timezone="UTC",
+        timezone=instrument["timezone"],
         direction_filter=_DIRECTION_MAP[request.direction],
+        entry_delay_bars=request.entryDelayBars,
+        trail_trigger_pips=request.trailTriggerPips,
+        trail_lock_pips=request.trailLockPips,
     )
 
     strategy = BreakoutStrategy()
@@ -873,6 +985,16 @@ async def backtest_orchestrate(
         signals_df, skipped_days = strategy.generate_signals(df, breakout_params)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # Weekdays in [date_from, date_to] with zero bars in the filtered df get
+    # reported as NO_BARS so they appear in the trade list as no-trade days.
+    from datetime import timedelta
+    present_dates = set(df.index.date)
+    d = date_from
+    while d <= date_to:
+        if d.weekday() < 5 and d not in present_dates:
+            skipped_days.append(SkippedDay(date=str(d), reason="NO_BARS"))
+        d += timedelta(days=1)
 
     # ── 6. Run backtesting engine ─────────────────────────────────────────────
     engine_config = BacktestConfig(
@@ -887,7 +1009,7 @@ async def backtest_orchestrate(
         commission=request.commission,
         slippage_pips=request.slippage,
         time_exit=request.timeExit,
-        timezone="UTC",
+        timezone=instrument["timezone"],
     )
 
     try:
@@ -934,11 +1056,25 @@ async def backtest_orchestrate(
         winning_trades=int(m.get("Winning Trades") or 0),
         losing_trades=int(m.get("Losing Trades") or 0),
         win_rate_pct=_f(m.get("Win Rate")),
+        gross_profit=_f(m.get("Gross Profit")),
+        gross_loss=_f(m.get("Gross Loss")),
+        gross_profit_pips=_f(m.get("Gross Profit (Pips)")),
+        gross_loss_pips=_f(m.get("Gross Loss (Pips)")),
+        avg_win=_f(m.get("Avg Win")),
+        avg_loss=_f(m.get("Avg Loss")),
         avg_win_pips=_f(m.get("Avg Win (Pips)")),
         avg_loss_pips=_f(m.get("Avg Loss (Pips)")),
+        avg_win_loss_ratio=_f(m.get("Avg Win / Avg Loss")),
         profit_factor=_f(m.get("Profit Factor (Pips)")),
         avg_r_multiple=_f(m.get("Avg R per Trade")),
+        total_r=_f(m.get("Total R")),
+        avg_r_per_month=_f(m.get("Avg R per Month")),
         expectancy_pips=_f(m.get("Expectancy (Pips)")),
+        best_trade=_f(m.get("Best Trade")),
+        worst_trade=_f(m.get("Worst Trade")),
+        consecutive_wins=int(m.get("Consecutive Wins") or 0),
+        consecutive_losses=int(m.get("Consecutive Losses") or 0),
+        avg_trade_duration_hours=_f(m.get("Avg Trade Duration")),
         final_balance=result.final_balance,
     )
 
@@ -975,11 +1111,22 @@ async def backtest_orchestrate(
             r_multiple=_f(compute_r_multiple(t)),
             exit_reason=t.exit_reason,
             duration_minutes=duration_minutes,
+            entry_gap_pips=t.entry_gap_pips,
+            exit_gap=t.exit_gap,
         ))
 
     skipped_days_out = [
         SkippedDayOut(date=sd.date, reason=sd.reason)
         for sd in skipped_days
+    ]
+
+    monthly_r_out = [
+        MonthlyRResponse(
+            month=mr.month,
+            r_earned=mr.r_earned,
+            trade_count=mr.trade_count,
+        )
+        for mr in analytics_result.monthly_r
     ]
 
     return BacktestOrchestrationResponse(
@@ -988,6 +1135,7 @@ async def backtest_orchestrate(
         drawdown_curve=drawdown_curve_out,
         trades=trades_out,
         skipped_days=skipped_days_out,
+        monthly_r=monthly_r_out,
     )
 
 

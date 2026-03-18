@@ -40,6 +40,8 @@ class BreakoutParams:
     trail_trigger_pips: Optional[float] = None  # profit level (pips) that activates the lock
     trail_lock_pips: Optional[float] = None     # pips from entry to which SL is moved on trigger
     entry_offset_pips: float = 1.0
+    entry_delay_bars: int = 1  # bars to wait after range_end before entry is possible;
+                               # 0 = first bar at range_end, 1 = one bar later (default), N = N bars later
 
 
 class BreakoutStrategy(BaseStrategy):
@@ -114,6 +116,10 @@ class BreakoutStrategy(BaseStrategy):
             raise ValueError(f"Unknown timezone: '{params.timezone}'")
         if params.pip_size <= 0:
             raise ValueError(f"pip_size must be > 0, got {params.pip_size}")
+        if not isinstance(params.entry_delay_bars, int) or params.entry_delay_bars < 0:
+            raise ValueError(
+                f"entry_delay_bars must be a non-negative integer, got {params.entry_delay_bars}"
+            )
 
     def generate_signals(
         self, df: pd.DataFrame, params: BreakoutParams
@@ -221,18 +227,25 @@ class BreakoutStrategy(BaseStrategy):
                 skipped_days.append(SkippedDay(date=str(day), reason="FLAT_RANGE"))
                 continue
 
-            # -- Step 2: Find first bar after range_end
-            if len(after_range_indices) == 0:
-                skipped_days.append(SkippedDay(date=str(day), reason="NO_SIGNAL_BAR"))
-                continue
-
-            signal_bar_idx = after_range_indices[0]
-
-            # Check that this bar is within the trigger window
-            signal_bar_local_time = pd.Timestamp(signal_bar_idx).tz_convert(tz).time()
-            if signal_bar_local_time > params.trigger_deadline:
-                skipped_days.append(SkippedDay(date=str(day), reason="DEADLINE_MISSED"))
-                continue
+            # -- Step 2: Find signal bar based on entry_delay_bars
+            # entry_delay_bars = 0: signal on last range bar → engine checks entry from
+            #   the first bar at/after range_end (immediate entry possible at range_end)
+            # entry_delay_bars = N >= 1: signal on after_range_indices[N-1] → entry from
+            #   after_range_indices[N] (current default is 1 = one bar after range_end)
+            if params.entry_delay_bars == 0:
+                if len(after_range_indices) == 0:
+                    skipped_days.append(SkippedDay(date=str(day), reason="NO_SIGNAL_BAR"))
+                    continue
+                signal_bar_idx = range_indices[-1]
+            else:
+                if len(after_range_indices) < params.entry_delay_bars:
+                    skipped_days.append(SkippedDay(date=str(day), reason="NO_SIGNAL_BAR"))
+                    continue
+                signal_bar_idx = after_range_indices[params.entry_delay_bars - 1]
+                signal_bar_local_time = pd.Timestamp(signal_bar_idx).tz_convert(tz).time()
+                if signal_bar_local_time >= params.trigger_deadline:
+                    skipped_days.append(SkippedDay(date=str(day), reason="DEADLINE_MISSED"))
+                    continue
 
             # -- Step 3: Calculate entry, SL, TP prices
             entry_offset = params.entry_offset_pips * params.pip_size

@@ -31,27 +31,52 @@ def _get_supabase_client() -> Client:
 
 
 def _build_parquet_path(
-    source: str, symbol: str, timeframe: str, date_from: date, date_to: date
+    source: str,
+    symbol: str,
+    timeframe: str,
+    date_from: date,
+    date_to: date,
+    hour_from: int = 0,
+    hour_to: int = 23,
 ) -> Path:
-    """Build the Parquet file path following the naming convention."""
+    """Build the Parquet file path following the naming convention.
+
+    The hour range is included in the filename so that fetches with different
+    hour windows never share the same cache file (BUG-31).
+    """
+    hour_suffix = f"_h{hour_from:02d}-{hour_to:02d}"
     return (
         DATA_DIR
         / "parquet"
         / source
         / symbol.upper()
         / timeframe
-        / f"{date_from.isoformat()}_{date_to.isoformat()}.parquet"
+        / f"{date_from.isoformat()}_{date_to.isoformat()}{hour_suffix}.parquet"
     )
 
 
 def find_cached_entry(
-    symbol: str, source: str, timeframe: str, date_from: date, date_to: date
+    symbol: str,
+    source: str,
+    timeframe: str,
+    date_from: date,
+    date_to: date,
+    hour_from: int = 0,
+    hour_to: int = 23,
 ) -> Optional[dict]:
     """
     Check if a matching cache entry exists in Supabase.
 
+    The expected Parquet path (including hour range) is compared against the
+    stored file_path so that a cached file with a different hour window is
+    never returned as a hit (BUG-31).
+
     Returns the cache entry dict if found, or None.
     """
+    expected_path = str(
+        _build_parquet_path(source, symbol, timeframe, date_from, date_to, hour_from, hour_to)
+    )
+
     client = _get_supabase_client()
     result = (
         client.table("data_cache")
@@ -67,6 +92,13 @@ def find_cached_entry(
 
     if result.data and len(result.data) > 0:
         entry = result.data[0]
+        # Reject entries whose hour range (encoded in the file path) does not
+        # match the current request — different windows must not share cache.
+        if entry["file_path"] != expected_path:
+            logger.info(
+                f"Cache path mismatch for {symbol} (hour range changed) — treating as miss"
+            )
+            return None
         # Verify the file still exists on disk
         if Path(entry["file_path"]).exists():
             logger.info(f"Cache hit for {symbol}/{source}/{timeframe}")
@@ -96,6 +128,8 @@ def save_to_cache(
     date_from: date,
     date_to: date,
     created_by: str,
+    hour_from: int = 0,
+    hour_to: int = 23,
 ) -> dict:
     """
     Save a DataFrame as a Parquet file and record metadata in Supabase.
@@ -112,7 +146,7 @@ def save_to_cache(
     Returns:
         The created cache entry dict from Supabase.
     """
-    file_path = _build_parquet_path(source, symbol, timeframe, date_from, date_to)
+    file_path = _build_parquet_path(source, symbol, timeframe, date_from, date_to, hour_from, hour_to)
 
     # Ensure directory exists
     file_path.parent.mkdir(parents=True, exist_ok=True)

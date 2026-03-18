@@ -561,6 +561,77 @@ class TestEndOfData:
         assert t.exit_price == pytest.approx(1963.0, abs=0.01)  # last bar close
 
 
+class TestEntryGapFill:
+    def test_long_entry_gap_fill_uses_bar_open(self):
+        """
+        Bar opens above the Buy Stop → entry fills at bar_open, not at entry_price.
+
+        Entry order: long_entry=1955.00, long_sl=1940.00, long_tp=2000.00
+        Entry bar opens at 1958.00 (gap up past 1955.00).
+        Expected actual_entry = max(1958.00, 1955.00) = 1958.00 (no slippage here).
+        """
+        ohlcv = make_ohlcv([
+            ("2024-01-02T09:00:00Z", 1950, 1956, 1948, 1954),  # signal
+            ("2024-01-02T09:01:00Z", 1958, 1965, 1957, 1962),  # gap open above 1955 → fill at 1958
+            ("2024-01-02T09:02:00Z", 1962, 1980, 1961, 1978),  # TP at 2000 not hit; closed at end
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T09:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 2000.0
+            },
+        })
+        result = run_backtest(ohlcv, signals, cfg())
+
+        assert len(result.trades) == 1
+        t = result.trades[0]
+        # Fill must be bar_open (1958), not the theoretical entry (1955)
+        assert t.entry_price == pytest.approx(1958.0, abs=0.001)
+        assert t.entry_gap_pips == pytest.approx(300.0, abs=0.1)  # (1958 - 1955) / 0.01
+
+    def test_short_entry_gap_fill_uses_bar_open(self):
+        """
+        Bar opens below the Sell Stop → entry fills at bar_open, not at entry_price.
+
+        Entry order: short_entry=1950.00, short_sl=1965.00, short_tp=1900.00
+        Entry bar opens at 1947.00 (gap down past 1950.00).
+        Expected actual_entry = min(1947.00, 1950.00) = 1947.00.
+        """
+        ohlcv = make_ohlcv([
+            ("2024-01-02T09:00:00Z", 1960, 1965, 1955, 1958),  # signal
+            ("2024-01-02T09:01:00Z", 1947, 1949, 1942, 1945),  # gap open below 1950 → fill at 1947
+            ("2024-01-02T09:02:00Z", 1945, 1946, 1900, 1905),  # TP at 1900 hit
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T09:00:00Z": {
+                "short_entry": 1950.0, "short_sl": 1965.0, "short_tp": 1900.0
+            },
+        })
+        result = run_backtest(ohlcv, signals, cfg())
+
+        assert len(result.trades) == 1
+        t = result.trades[0]
+        assert t.entry_price == pytest.approx(1947.0, abs=0.001)
+        assert t.entry_gap_pips == pytest.approx(300.0, abs=0.1)  # (1950 - 1947) / 0.01
+
+    def test_no_gap_entry_uses_entry_price(self):
+        """Bar opens below the Buy Stop → no gap, fill at entry_price as usual."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T09:00:00Z", 1950, 1956, 1948, 1954),  # signal
+            ("2024-01-02T09:01:00Z", 1954, 1962, 1953, 1960),  # opens below 1955, high crosses it
+            ("2024-01-02T09:02:00Z", 1960, 1980, 1959, 1978),  # TP at 2000 not hit
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T09:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 2000.0
+            },
+        })
+        result = run_backtest(ohlcv, signals, cfg())
+
+        t = result.trades[0]
+        assert t.entry_price == pytest.approx(1955.0, abs=0.001)
+        assert t.entry_gap_pips == pytest.approx(0.0, abs=0.01)
+
+
 class TestEdgeCases:
     def test_empty_ohlcv_returns_empty_result(self):
         """Empty OHLCV DataFrame must not raise; returns an empty result."""

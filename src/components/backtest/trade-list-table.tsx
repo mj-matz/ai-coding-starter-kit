@@ -31,9 +31,17 @@ type Row =
 
 const PAGE_SIZE = 50;
 
-function formatDate(dateStr: string): string {
+function formatDateTime(dateStr: string): string {
   try {
     return format(parseISO(dateStr), "MMM dd, yyyy HH:mm");
+  } catch {
+    return dateStr;
+  }
+}
+
+function formatTimeOnly(dateStr: string): string {
+  try {
+    return format(parseISO(dateStr), "HH:mm");
   } catch {
     return dateStr;
   }
@@ -105,33 +113,11 @@ export function TradeListTable({ trades, skippedDays = [] }: TradeListTableProps
     return all;
   }, [sortedTrades, skippedDays, sortField, sortDir, showNoTrade]);
 
-  // Only real trades count for pagination page sizing; skipped days fill the view
-  const tradeOnlyRows = mergedRows.filter((r) => r.kind === "trade");
-  const totalPages = Math.ceil(tradeOnlyRows.length / PAGE_SIZE);
+  const totalPages = Math.ceil(mergedRows.length / PAGE_SIZE);
 
-  // Paginate by trade index: show PAGE_SIZE trades per page plus any skipped days between them
   const paginatedRows = useMemo(() => {
-    if (sortField !== "entry_time" || !showNoTrade || skippedDays.length === 0) {
-      return mergedRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-    }
-
-    // Find the entry_time range of trades on this page
-    const pageTradeStart = page * PAGE_SIZE;
-    const pageTradeEnd = Math.min((page + 1) * PAGE_SIZE, tradeOnlyRows.length);
-    if (pageTradeStart >= tradeOnlyRows.length) return [];
-
-    const firstTradeTime =
-      (tradeOnlyRows[pageTradeStart].data as TradeRecord).entry_time;
-    const lastTradeTime =
-      (tradeOnlyRows[pageTradeEnd - 1].data as TradeRecord).entry_time;
-
-    return mergedRows.filter((row) => {
-      const t = row.kind === "trade" ? row.data.entry_time : row.data.date;
-      return sortDir === "asc"
-        ? t >= firstTradeTime && t <= lastTradeTime
-        : t <= firstTradeTime && t >= lastTradeTime;
-    });
-  }, [mergedRows, tradeOnlyRows, page, sortField, sortDir, showNoTrade, skippedDays.length]);
+    return mergedRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  }, [mergedRows, page]);
 
   function toggleSort(field: SortField) {
     if (sortField === field) {
@@ -209,10 +195,11 @@ export function TradeListTable({ trades, skippedDays = [] }: TradeListTableProps
             <TableHeader>
               <TableRow className="border-gray-800 hover:bg-transparent">
                 <TableHead className="text-gray-400">#</TableHead>
-                <TableHead className="text-gray-400">Date</TableHead>
+                <TableHead className="text-gray-400">Entry</TableHead>
+                <TableHead className="text-gray-400">Exit</TableHead>
                 <TableHead className="text-gray-400">Dir</TableHead>
-                <TableHead className="text-right text-gray-400">Entry</TableHead>
-                <TableHead className="text-right text-gray-400">Exit</TableHead>
+                <TableHead className="text-right text-gray-400">Entry Px</TableHead>
+                <TableHead className="text-right text-gray-400">Exit Px</TableHead>
                 <TableHead className="text-right text-gray-400">Lot</TableHead>
                 <TableHead className="text-right text-gray-400">PnL (pips)</TableHead>
                 <TableHead className="text-right text-gray-400">PnL ($)</TableHead>
@@ -234,6 +221,7 @@ export function TradeListTable({ trades, skippedDays = [] }: TradeListTableProps
                       <TableCell className="whitespace-nowrap text-sm text-gray-500">
                         {formatDateShort(s.date)}
                       </TableCell>
+                      <TableCell />
                       <TableCell>
                         <Badge
                           variant="outline"
@@ -266,7 +254,10 @@ export function TradeListTable({ trades, skippedDays = [] }: TradeListTableProps
                   >
                     <TableCell className="text-gray-500">{trade.id}</TableCell>
                     <TableCell className="whitespace-nowrap text-sm text-gray-300">
-                      {formatDate(trade.entry_time)}
+                      {formatDateTime(trade.entry_time)}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-sm text-gray-400">
+                      {formatTimeOnly(trade.exit_time)}
                     </TableCell>
                     <TableCell>
                       <Badge
@@ -281,7 +272,14 @@ export function TradeListTable({ trades, skippedDays = [] }: TradeListTableProps
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right text-sm text-gray-300">
-                      {trade.entry_price.toFixed(2)}
+                      <span className="inline-flex items-center gap-1 justify-end">
+                        {trade.entry_gap_pips > 0 && (
+                          <Badge className="bg-orange-900/50 text-orange-300 hover:bg-orange-900/50 text-[10px] px-1 py-0">
+                            GAP +{trade.entry_gap_pips.toFixed(1)}p
+                          </Badge>
+                        )}
+                        {trade.entry_price.toFixed(2)}
+                      </span>
                     </TableCell>
                     <TableCell className="text-right text-sm text-gray-300">
                       {trade.exit_price.toFixed(2)}
@@ -314,12 +312,19 @@ export function TradeListTable({ trades, skippedDays = [] }: TradeListTableProps
                       {trade.r_multiple.toFixed(2)}R
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant="outline"
-                        className="border-gray-700 text-gray-400"
-                      >
-                        {trade.exit_reason}
-                      </Badge>
+                      <span className="inline-flex items-center gap-1">
+                        <Badge
+                          variant="outline"
+                          className="border-gray-700 text-gray-400"
+                        >
+                          {trade.exit_reason}
+                        </Badge>
+                        {trade.exit_gap && (
+                          <Badge className="bg-orange-900/50 text-orange-300 hover:bg-orange-900/50 text-[10px] px-1 py-0">
+                            GAP EXIT
+                          </Badge>
+                        )}
+                      </span>
                     </TableCell>
                     <TableCell className="text-right text-sm text-gray-400">
                       {formatDuration(trade.duration_minutes)}
