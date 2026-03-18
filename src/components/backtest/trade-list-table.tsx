@@ -15,11 +15,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { TradeChartDialog } from "@/components/backtest/trade-chart-dialog";
 import type { TradeRecord, SkippedDay } from "@/lib/backtest-types";
 
 interface TradeListTableProps {
   trades: TradeRecord[];
   skippedDays?: SkippedDay[];
+  cacheId?: string;
+  timeframe: string;
 }
 
 type SortField = "entry_time" | "pnl_pips" | "duration_minutes";
@@ -73,11 +76,13 @@ const REASON_LABELS: Record<string, string> = {
   DEADLINE_MISSED: "Deadline missed",
 };
 
-export function TradeListTable({ trades, skippedDays = [] }: TradeListTableProps) {
+export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe }: TradeListTableProps) {
   const [sortField, setSortField] = useState<SortField>("entry_time");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [page, setPage] = useState(0);
   const [showNoTrade, setShowNoTrade] = useState(true);
+  const [selectedTrade, setSelectedTrade] = useState<TradeRecord | null>(null);
+  const [chartOpen, setChartOpen] = useState(false);
 
   const sortedTrades = useMemo(() => {
     return [...trades].sort((a, b) => {
@@ -250,7 +255,11 @@ export function TradeListTable({ trades, skippedDays = [] }: TradeListTableProps
                 return (
                   <TableRow
                     key={trade.id}
-                    className="border-gray-800 hover:bg-gray-900/50"
+                    className="border-gray-800 cursor-pointer hover:bg-muted/50"
+                    onClick={() => {
+                      setSelectedTrade(trade);
+                      setChartOpen(true);
+                    }}
                   >
                     <TableCell className="text-gray-500">{trade.id}</TableCell>
                     <TableCell className="whitespace-nowrap text-sm text-gray-300">
@@ -369,6 +378,14 @@ export function TradeListTable({ trades, skippedDays = [] }: TradeListTableProps
           </div>
         )}
       </CardContent>
+
+      <TradeChartDialog
+        trade={selectedTrade}
+        open={chartOpen}
+        onOpenChange={setChartOpen}
+        cacheId={cacheId}
+        timeframe={timeframe}
+      />
     </Card>
   );
 }

@@ -804,6 +804,24 @@ class DrawdownCurveOut(BaseModel):
     drawdown_pct: float
 
 
+class CandleOut(BaseModel):
+    time: int  # Unix-Timestamp in Sekunden
+    open: float
+    high: float
+    low: float
+    close: float
+
+
+# Timeframe → buffer before entry / after exit for the candles endpoint
+_CANDLE_BUFFER: dict[str, timedelta] = {
+    "1m": timedelta(minutes=30),
+    "5m": timedelta(hours=2),
+    "15m": timedelta(hours=6),
+    "1h": timedelta(hours=48),
+    "1d": timedelta(weeks=4),
+}
+
+
 class TradeDetailOut(BaseModel):
     id: int
     entry_time: str
@@ -819,6 +837,10 @@ class TradeDetailOut(BaseModel):
     duration_minutes: int
     entry_gap_pips: float = 0.0
     exit_gap: bool = False
+    range_high: float = 0.0
+    range_low: float = 0.0
+    stop_loss: float = 0.0
+    take_profit: float = 0.0
 
 
 class BacktestOrchestrationResponse(BaseModel):
@@ -828,6 +850,9 @@ class BacktestOrchestrationResponse(BaseModel):
     trades: List[TradeDetailOut]
     skipped_days: List[SkippedDayOut] = []
     monthly_r: List[MonthlyRResponse] = []
+    cache_id: Optional[str] = None
+    symbol: str = ""
+    timeframe: str = ""
 
 
 # ── /backtest orchestration endpoint ─────────────────────────────────────────
@@ -891,10 +916,12 @@ async def backtest_orchestrate(
     )
 
     df = None
+    resolved_cache_id: Optional[str] = None
     cached = find_cached_entry(symbol, "dukascopy", request.timeframe, date_from, date_to, hour_from, hour_to)
     if cached:
         try:
             df = load_cached_data(cached["file_path"])
+            resolved_cache_id = cached["id"]
         except Exception as e:
             logger.warning(f"Cache load failed for {symbol}, re-fetching: {e}")
             df = None
@@ -923,7 +950,9 @@ async def backtest_orchestrate(
 
         if not base_df.attrs.get("partial"):
             try:
-                save_to_cache(df, symbol, "dukascopy", request.timeframe, date_from, date_to, user_id, hour_from, hour_to)
+                cache_entry = save_to_cache(df, symbol, "dukascopy", request.timeframe, date_from, date_to, user_id, hour_from, hour_to)
+                if cache_entry:
+                    resolved_cache_id = cache_entry["id"]
             except Exception as e:
                 logger.warning(f"Cache save failed (non-fatal): {e}")
         else:
@@ -1094,10 +1123,35 @@ async def backtest_orchestrate(
         dd_pct = round((bal - peak) / peak * 100, 4) if peak > 0 else 0.0
         drawdown_curve_out.append(DrawdownCurveOut(date=pt["time"], drawdown_pct=dd_pct))
 
-    # Trades
+    # Trades — enrich with range levels, SL/TP, and OHLCV candle snippet
     trades_out: list[TradeDetailOut] = []
     for i, t in enumerate(result.trades):
         duration_minutes = int((t.exit_time - t.entry_time).total_seconds() / 60)
+
+        # Derive range_high/range_low and SL/TP from the signal that triggered this trade.
+        # Find the most recent signal bar at or before entry_time.
+        direction_prefix = "long" if t.direction == "long" else "short"
+        entry_col = f"{direction_prefix}_entry"
+        sl_col = f"{direction_prefix}_sl"
+        tp_col = f"{direction_prefix}_tp"
+
+        signal_before_entry = signals_df.loc[:t.entry_time, entry_col].dropna()
+        if not signal_before_entry.empty:
+            sig_ts = signal_before_entry.index[-1]
+            range_high_val = float(signals_df.at[sig_ts, "long_entry"]) if pd.notna(signals_df.at[sig_ts, "long_entry"]) else 0.0
+            range_low_val = float(signals_df.at[sig_ts, "short_entry"]) if pd.notna(signals_df.at[sig_ts, "short_entry"]) else 0.0
+            # Undo the entry_offset to get the actual range extremes
+            entry_offset = breakout_params.entry_offset_pips * breakout_params.pip_size
+            range_high_val = range_high_val - entry_offset if range_high_val != 0.0 else 0.0
+            range_low_val = range_low_val + entry_offset if range_low_val != 0.0 else 0.0
+            stop_loss_val = float(signals_df.at[sig_ts, sl_col]) if pd.notna(signals_df.at[sig_ts, sl_col]) else 0.0
+            take_profit_val = float(signals_df.at[sig_ts, tp_col]) if pd.notna(signals_df.at[sig_ts, tp_col]) else 0.0
+        else:
+            range_high_val = 0.0
+            range_low_val = 0.0
+            stop_loss_val = 0.0
+            take_profit_val = 0.0
+
         trades_out.append(TradeDetailOut(
             id=i + 1,
             entry_time=t.entry_time.isoformat(),
@@ -1113,6 +1167,10 @@ async def backtest_orchestrate(
             duration_minutes=duration_minutes,
             entry_gap_pips=t.entry_gap_pips,
             exit_gap=t.exit_gap,
+            range_high=range_high_val,
+            range_low=range_low_val,
+            stop_loss=stop_loss_val,
+            take_profit=take_profit_val,
         ))
 
     skipped_days_out = [
@@ -1136,7 +1194,96 @@ async def backtest_orchestrate(
         trades=trades_out,
         skipped_days=skipped_days_out,
         monthly_r=monthly_r_out,
+        cache_id=resolved_cache_id,
+        symbol=symbol,
+        timeframe=request.timeframe,
     )
+
+
+@app.get("/backtest/candles", response_model=List[CandleOut])
+async def get_trade_candles(
+    cache_id: str,
+    entry_time: str,
+    exit_time: str,
+    timeframe: str,
+    token: dict = Depends(verify_jwt),
+):
+    """
+    Return OHLCV candles for a single trade window.
+
+    Loads the cached Parquet file identified by cache_id (must belong to the
+    authenticated user) and slices out a timeframe-dependent buffer around
+    [entry_time, exit_time].
+
+    Buffer per timeframe:
+      1m  → ±30 min
+      5m  → ±2 h
+      15m → ±6 h
+      1h  → ±48 h
+      1d  → ±4 weeks
+    """
+    user_id: str = token["sub"]
+
+    buffer = _CANDLE_BUFFER.get(timeframe)
+    if buffer is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported timeframe '{timeframe}'. Supported: {', '.join(_CANDLE_BUFFER)}",
+        )
+
+    try:
+        entry_dt = pd.Timestamp(entry_time).tz_convert("UTC")
+        exit_dt = pd.Timestamp(exit_time).tz_convert("UTC")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid entry_time or exit_time (must be ISO 8601)")
+
+    # Resolve cache_id → file_path (only the owning user may access)
+    from services.cache_service import _get_supabase_client
+
+    try:
+        client = _get_supabase_client()
+        resp = (
+            client.table("data_cache")
+            .select("file_path")
+            .eq("id", cache_id)
+            .eq("created_by", user_id)
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        logger.error(f"Supabase lookup failed for cache_id={cache_id}: {e}")
+        raise HTTPException(status_code=502, detail="Failed to query data cache.")
+
+    if not resp.data:
+        raise HTTPException(status_code=404, detail=f"cache_id '{cache_id}' not found.")
+
+    try:
+        df = load_cached_data(resp.data["file_path"])
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Parquet file not found on disk.")
+    except Exception as e:
+        logger.error(f"Parquet load error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to load data.")
+
+    if "datetime" in df.columns:
+        df = df.set_index("datetime")
+    df.index = pd.to_datetime(df.index, utc=True)
+    df.columns = [c.lower() for c in df.columns]
+
+    window_start = entry_dt - buffer
+    window_end = exit_dt + buffer
+    candle_df = df.loc[(df.index >= window_start) & (df.index <= window_end)]
+
+    return [
+        CandleOut(
+            time=int(ts.timestamp()),
+            open=float(row["open"]),
+            high=float(row["high"]),
+            low=float(row["low"]),
+            close=float(row["close"]),
+        )
+        for ts, row in candle_df.iterrows()
+    ]
 
 
 if __name__ == "__main__":

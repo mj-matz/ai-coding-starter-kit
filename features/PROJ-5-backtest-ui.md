@@ -528,6 +528,68 @@ All bugs resolved except BUG-1 (strategy params registry pattern — deferred to
 
 ---
 
+## QA Test Results (2026-03-18 — Trade-Chart-Popup)
+
+**Tested:** 2026-03-18
+**Re-verified:** 2026-03-18 (alle Bugs gefixt)
+**Build:** PASS (Production Build erfolgreich, 0 Fehler, 0 TypeScript-Fehler)
+**Tester:** QA Engineer (AI)
+**Production Ready:** JA
+
+### Getestete Änderungen (uncommitted)
+
+| Datei | Änderung |
+|-------|----------|
+| `src/components/backtest/trade-chart-dialog.tsx` | NEU — Candlestick-Chart-Dialog (Lightweight Charts) |
+| `src/components/backtest/trade-list-table.tsx` | Klick-Handler, Dialog-Integration |
+| `src/lib/backtest-types.ts` | `Candle`-Interface, erweiterte `TradeRecord` |
+| `python/main.py` | `CandleOut`-Modell, OHLCV-Extraktion, Range/SL/TP-Anreicherung |
+| `package.json` | Neue Dependency: `lightweight-charts@^5.1.0` |
+
+### Akzeptanzkriterien: 11/11 BESTANDEN
+
+- PASS: Dialog öffnet per Klick, schließt per X/Escape
+- PASS: Candlestick-Chart mit OHLCV-Daten, Entry-Linie, SL/TP-Linien, Range-Linien, Entry-Marker
+- PASS: Info-Grid mit Trade-Details
+- PASS: Leerer Zustand bei fehlenden Candles
+- PASS: Exit-Zeitpunkt als Marker mit Exit-Reason-Label (BUG-19 gefixt)
+
+### Bugs gefunden
+
+#### BUG-20 — HIGH: Candle-Daten in API-Response vergrößern Payload massiv (BLOCKER)
+- **Datei:** `src/app/api/backtest/candles/route.ts` (neu), `src/components/backtest/trade-chart-dialog.tsx`
+- **Problem:** Für jeden Trade wurden ca. 240 OHLCV-Candles (bei 1m) in die Response eingebettet. Bei 200 Trades = 48.000 Candle-Objekte.
+- **Status:** FIXED (2026-03-18) — Separater `GET /api/backtest/candles`-Endpoint erstellt; `TradeChartDialog` lädt Candles lazy on-demand per `cache_id + entry_time + exit_time + timeframe`; keine Candles mehr in der Backtest-Response.
+
+#### BUG-19 — MEDIUM: Exit-Zeitpunkt fehlt als Marker im Trade-Chart
+- **Datei:** `src/components/backtest/trade-chart-dialog.tsx`
+- **Problem:** Nur Entry-Marker (Pfeil) vorhanden, kein Exit-Marker.
+- **Status:** FIXED (2026-03-18) — `closestExitCandle` berechnet; Exit-Marker mit `exit_reason` als Text und win/loss-Farbe zu `markers`-Array hinzugefügt; via `createSeriesMarkers` gerendert.
+
+#### BUG-21 — LOW: Chart-Höhe nicht responsive auf 375px
+- **Datei:** `src/components/backtest/trade-chart-dialog.tsx`
+- **Problem:** Chart-Höhe fest auf 400px; auf mobilen Geräten zu groß.
+- **Status:** FIXED (2026-03-18) — `chartHeight = container.clientWidth < 400 ? 250 : 400`; Resize-Handler passt Höhe ebenfalls an.
+
+#### BUG-22 — LOW: lightweight-charts Version nicht gepinnt
+- **Datei:** `package.json`
+- **Problem:** `^5.1.0` statt exakter Version; `createSeriesMarkers` ist eine neue v5-API.
+- **Status:** FIXED (2026-03-18) — `"lightweight-charts": "5.1.0"` (exakt gepinnt, kein `^`).
+
+### Sicherheits-Audit: BESTANDEN
+- Kein XSS-Risiko (Canvas-Rendering, kein DOM-Injection)
+- Candle-Daten rein numerisch, kein Injection-Vektor
+- Keine neuen Endpoints, bestehende Auth greift
+- Keine neuen Secrets
+
+### Regressionen: Keine
+
+### Empfehlung
+
+Alle Bugs gefixt. Feature ist production-ready. Deployment kann erfolgen.
+
+---
+
 ## Deployment
 
 **Deployed:** 2026-03-14 (re-deploy with trade list improvements)

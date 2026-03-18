@@ -165,6 +165,14 @@ export interface DrawdownCurvePoint {
   drawdown_pct: number;
 }
 
+export interface Candle {
+  time: number; // Unix-Timestamp in Sekunden
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
 export interface TradeRecord {
   id: number;
   entry_time: string;
@@ -180,6 +188,10 @@ export interface TradeRecord {
   duration_minutes: number;
   entry_gap_pips: number;
   exit_gap: boolean;
+  range_high: number;
+  range_low: number;
+  stop_loss: number;
+  take_profit: number;
 }
 
 export interface SkippedDay {
@@ -194,6 +206,9 @@ export interface BacktestResult {
   trades: TradeRecord[];
   skipped_days: SkippedDay[];
   monthly_r: MonthlyR[];
+  cache_id?: string;
+  symbol: string;
+  timeframe: string;
 }
 
 // ── localStorage helpers ─────────────────────────────────────────────────────

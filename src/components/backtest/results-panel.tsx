@@ -173,7 +173,12 @@ export function ResultsPanel({
         </TabsContent>
 
         <TabsContent value="trades" className="mt-4">
-          <TradeListTable trades={result.trades} skippedDays={result.skipped_days ?? []} />
+          <TradeListTable
+            trades={result.trades}
+            skippedDays={result.skipped_days ?? []}
+            cacheId={result.cache_id}
+            timeframe={result.timeframe}
+          />
         </TabsContent>
       </Tabs>
 
