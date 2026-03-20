@@ -22,8 +22,9 @@
 | PROJ-8 | Authentication (Admin Login) | Deployed | [PROJ-8-authentication.md](PROJ-8-authentication.md) | 2026-03-10 |
 | PROJ-9 | Backtest History | In Progress | [PROJ-9-backtest-history.md](PROJ-9-backtest-history.md) | 2026-03-10 |
 | PROJ-10 | Backtest Progress Streaming | Planned | [PROJ-10-backtest-progress-streaming.md](PROJ-10-backtest-progress-streaming.md) | 2026-03-20 |
-| PROJ-11 | Engine Performance Optimization (NumPy + Breakout) | Planned | [PROJ-11-engine-performance-optimization.md](PROJ-11-engine-performance-optimization.md) | 2026-03-20 |
+| PROJ-11 | Engine Performance Optimization (NumPy + Breakout) | Deployed | [PROJ-11-engine-performance-optimization.md](PROJ-11-engine-performance-optimization.md) | 2026-03-20 |
+| PROJ-12 | GAP Fill Toggle | In Progress | [PROJ-12-gap-fill-toggle.md](PROJ-12-gap-fill-toggle.md) | 2026-03-20 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-12
+## Next Available ID: PROJ-13

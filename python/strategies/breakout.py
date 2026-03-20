@@ -160,60 +160,48 @@ class BreakoutStrategy(BaseStrategy):
             return (signals, skipped_days)
 
         tz = ZoneInfo(params.timezone)
+        from datetime import datetime as dt
 
         # Convert index to the instrument timezone for grouping by trading day
         local_times = df.index.tz_convert(tz)
-
-        # Group bars by calendar date in the instrument timezone
         dates = local_times.date
         unique_dates = sorted(set(dates))
 
         is_overnight = params.range_start > params.range_end
-        from datetime import datetime as dt
 
+        # ── Option C: Vectorised intraday path ─────────────────────────────
+        # Overnight ranges keep the iterative path (they span two calendar days;
+        # vectorising them is complex for minimal gain since we only iterate over
+        # ~252 days, not 250 000 bars).
+        if not is_overnight:
+            return self._generate_signals_intraday(
+                df, params, tz, local_times, dates, unique_dates, signals, skipped_days
+            )
+
+        # ── Overnight path (iterative — unchanged) ─────────────────────────
         for day_idx, day in enumerate(unique_dates):
             day_mask = dates == day
             day_local = local_times[day_mask]
             day_bar_times = day_local.time
             day_indices = df.index[day_mask]
 
-            if is_overnight:
-                # Overnight range: range_start on `day`, range_end on the next calendar day.
-                # Need a next day to complete the range.
-                if day_idx + 1 >= len(unique_dates):
-                    skipped_days.append(SkippedDay(date=str(day), reason="NO_BARS"))
-                    continue
-                next_day = unique_dates[day_idx + 1]
-                next_mask = dates == next_day
-                next_local = local_times[next_mask]
-                next_bar_times = next_local.time
-                next_indices = df.index[next_mask]
+            # Overnight range: range_start on `day`, range_end on the next calendar day.
+            if day_idx + 1 >= len(unique_dates):
+                skipped_days.append(SkippedDay(date=str(day), reason="NO_BARS"))
+                continue
+            next_day = unique_dates[day_idx + 1]
+            next_mask = dates == next_day
+            next_local = local_times[next_mask]
+            next_bar_times = next_local.time
+            next_indices = df.index[next_mask]
 
-                # Range bars: today >= range_start, next day < range_end
-                today_range_indices = day_indices[day_bar_times >= params.range_start]
-                next_range_indices = next_indices[next_bar_times < params.range_end]
-                range_indices = today_range_indices.union(next_range_indices).sort_values()
+            today_range_indices = day_indices[day_bar_times >= params.range_start]
+            next_range_indices = next_indices[next_bar_times < params.range_end]
+            range_indices = today_range_indices.union(next_range_indices).sort_values()
 
-                # Signal bar: first bar on next_day at or after range_end
-                after_range_indices = next_indices[next_bar_times >= params.range_end]
+            after_range_indices = next_indices[next_bar_times >= params.range_end]
+            expiry_naive = dt.combine(next_day, params.trigger_deadline)
 
-                # Expiry is trigger_deadline on the next calendar day
-                expiry_naive = dt.combine(next_day, params.trigger_deadline)
-            else:
-                # Normal intraday range
-                range_mask_within_day = (
-                    (day_bar_times >= params.range_start)
-                    & (day_bar_times < params.range_end)
-                )
-                range_indices = day_indices[range_mask_within_day]
-
-                # Signal bar: first bar on same day at or after range_end
-                after_range_indices = day_indices[day_bar_times >= params.range_end]
-
-                # Expiry is trigger_deadline on this calendar day
-                expiry_naive = dt.combine(day, params.trigger_deadline)
-
-            # -- Step 1: Validate range
             if len(range_indices) == 0:
                 skipped_days.append(SkippedDay(date=str(day), reason="NO_RANGE_BARS"))
                 continue
@@ -222,16 +210,10 @@ class BreakoutStrategy(BaseStrategy):
             range_high = float(range_bars["high"].max())
             range_low = float(range_bars["low"].min())
 
-            # Skip flat ranges (High == Low)
             if range_high == range_low:
                 skipped_days.append(SkippedDay(date=str(day), reason="FLAT_RANGE"))
                 continue
 
-            # -- Step 2: Find signal bar based on entry_delay_bars
-            # entry_delay_bars = 0: signal on last range bar → engine checks entry from
-            #   the first bar at/after range_end (immediate entry possible at range_end)
-            # entry_delay_bars = N >= 1: signal on after_range_indices[N-1] → entry from
-            #   after_range_indices[N] (current default is 1 = one bar after range_end)
             if params.entry_delay_bars == 0:
                 if len(after_range_indices) == 0:
                     skipped_days.append(SkippedDay(date=str(day), reason="NO_SIGNAL_BAR"))
@@ -243,43 +225,176 @@ class BreakoutStrategy(BaseStrategy):
                     continue
                 signal_bar_idx = after_range_indices[params.entry_delay_bars - 1]
                 signal_bar_local_time = pd.Timestamp(signal_bar_idx).tz_convert(tz).time()
-                if signal_bar_local_time >= params.trigger_deadline:
+                if signal_bar_local_time > params.trigger_deadline:
                     skipped_days.append(SkippedDay(date=str(day), reason="DEADLINE_MISSED"))
                     continue
 
-            # -- Step 3: Calculate entry, SL, TP prices
-            entry_offset = params.entry_offset_pips * params.pip_size
-            sl_offset = params.stop_loss_pips * params.pip_size
-            tp_offset = params.take_profit_pips * params.pip_size
-
-            long_entry = range_high + entry_offset
-            short_entry = range_low - entry_offset
-
-            long_sl = long_entry - sl_offset
-            short_sl = short_entry + sl_offset
-
-            long_tp = long_entry + tp_offset
-            short_tp = short_entry - tp_offset
-
-            # -- Step 4: Build expiry timestamp (local tz → UTC)
-            expiry_local = pd.Timestamp(expiry_naive, tz=tz)
-            expiry_utc = expiry_local.tz_convert("UTC")
-
-            # -- Step 5: Apply direction filter and write signals
-            if params.direction_filter != "short_only":
-                signals.at[signal_bar_idx, "long_entry"] = long_entry
-                signals.at[signal_bar_idx, "long_sl"] = long_sl
-                signals.at[signal_bar_idx, "long_tp"] = long_tp
-
-            if params.direction_filter != "long_only":
-                signals.at[signal_bar_idx, "short_entry"] = short_entry
-                signals.at[signal_bar_idx, "short_sl"] = short_sl
-                signals.at[signal_bar_idx, "short_tp"] = short_tp
-
-            signals.at[signal_bar_idx, "signal_expiry"] = expiry_utc
-
-            if params.trail_trigger_pips is not None:
-                signals.at[signal_bar_idx, "trail_trigger_pips"] = params.trail_trigger_pips
-                signals.at[signal_bar_idx, "trail_lock_pips"] = params.trail_lock_pips
+            self._write_signal(signals, signal_bar_idx, params, range_high, range_low,
+                               expiry_naive, tz)
 
         return signals, skipped_days
+
+    # ------------------------------------------------------------------
+    def _generate_signals_intraday(
+        self,
+        df: pd.DataFrame,
+        params: "BreakoutParams",
+        tz,
+        local_times,
+        dates,
+        unique_dates: list,
+        signals: pd.DataFrame,
+        skipped_days: list,
+    ) -> tuple[pd.DataFrame, list]:
+        """Vectorised signal generation for normal (intraday) ranges."""
+        from datetime import datetime as dt
+
+        # Precompute per-bar minute-of-day in local tz
+        local_minutes = local_times.hour * 60 + local_times.minute  # NumPy int array
+
+        range_start_min = params.range_start.hour * 60 + params.range_start.minute
+        range_end_min   = params.range_end.hour   * 60 + params.range_end.minute
+        deadline_min    = params.trigger_deadline.hour * 60 + params.trigger_deadline.minute
+
+        # ── Range bars: [range_start, range_end) ──────────────────────────
+        range_mask = (local_minutes >= range_start_min) & (local_minutes < range_end_min)
+        # Attach calendar date for grouping
+        all_dates_arr = np.array(dates)  # object array of date objects
+
+        range_idx_pos = np.where(range_mask)[0]
+        if len(range_idx_pos) == 0:
+            # No range bars at all → every day skipped
+            for day in unique_dates:
+                skipped_days.append(SkippedDay(date=str(day), reason="NO_RANGE_BARS"))
+            return signals, skipped_days
+
+        range_dates = all_dates_arr[range_idx_pos]
+        range_highs = df["high"].to_numpy(dtype=float)[range_idx_pos]
+        range_lows  = df["low"].to_numpy(dtype=float)[range_idx_pos]
+
+        # groupby day: compute max(high), min(low) per day
+        # Use pandas groupby on a small temp frame
+        range_frame = pd.DataFrame(
+            {"_date": range_dates, "h": range_highs, "l": range_lows}
+        )
+        range_agg = range_frame.groupby("_date").agg(
+            range_high=("h", "max"),
+            range_low=("l", "min"),
+        )
+        # Filter flat ranges
+        flat_mask = range_agg["range_high"] == range_agg["range_low"]
+        flat_days = set(range_agg.index[flat_mask])
+        range_agg = range_agg[~flat_mask]
+        valid_range_days = set(range_agg.index)
+
+        # ── After-range bars: >= range_end ────────────────────────────────
+        after_mask = local_minutes >= range_end_min
+        after_idx_pos = np.where(after_mask)[0]
+        after_dates   = all_dates_arr[after_idx_pos]
+        after_minutes_arr = local_minutes[after_idx_pos]
+
+        # Build a frame: position within day's after-range group (0-based)
+        after_frame = pd.DataFrame(
+            {"_pos": after_idx_pos, "_date": after_dates, "_min": after_minutes_arr}
+        )
+        # Rank within each day (0 = first bar after range_end)
+        after_frame["_rank"] = after_frame.groupby("_date").cumcount()
+
+        # entry_delay_bars = 0: signal bar = last range bar index (handled below)
+        # entry_delay_bars = N ≥ 1: rank N-1 within after-range
+        if params.entry_delay_bars >= 1:
+            target_rank = params.entry_delay_bars - 1
+            signal_candidates = after_frame[after_frame["_rank"] == target_rank].set_index("_date")
+        else:
+            # delay=0: we need the last range bar per day
+            last_range_frame = pd.DataFrame(
+                {"_pos": range_idx_pos, "_date": range_dates}
+            )
+            signal_candidates = last_range_frame.groupby("_date").last().rename(
+                columns={"_pos": "_pos"}
+            )
+            # We still need at least one after-range bar for the engine to enter
+            after_has_bars = set(after_frame["_date"].unique())
+
+        # ── Per-day assembly (O(252), not O(250000)) ───────────────────────
+        for day in unique_dates:
+            if day not in valid_range_days:
+                if day in flat_days:
+                    skipped_days.append(SkippedDay(date=str(day), reason="FLAT_RANGE"))
+                else:
+                    skipped_days.append(SkippedDay(date=str(day), reason="NO_RANGE_BARS"))
+                continue
+
+            row = range_agg.loc[day]
+            range_high = float(row["range_high"])
+            range_low  = float(row["range_low"])
+
+            # Find signal bar
+            if params.entry_delay_bars == 0:
+                # Need at least one after-range bar; signal written on last range bar
+                if day not in after_has_bars:
+                    skipped_days.append(SkippedDay(date=str(day), reason="NO_SIGNAL_BAR"))
+                    continue
+                if day not in signal_candidates.index:
+                    skipped_days.append(SkippedDay(date=str(day), reason="NO_SIGNAL_BAR"))
+                    continue
+                bar_pos = int(signal_candidates.loc[day, "_pos"])
+            else:
+                if day not in signal_candidates.index:
+                    skipped_days.append(SkippedDay(date=str(day), reason="NO_SIGNAL_BAR"))
+                    continue
+                cand = signal_candidates.loc[day]
+                bar_pos = int(cand["_pos"])
+                bar_local_min = int(cand["_min"])
+                # Deadline check (Frage 3: nach dem Join als Filter)
+                if bar_local_min > deadline_min:
+                    skipped_days.append(SkippedDay(date=str(day), reason="DEADLINE_MISSED"))
+                    continue
+
+            signal_bar_idx = df.index[bar_pos]
+            expiry_naive = dt.combine(day, params.trigger_deadline)
+            self._write_signal(signals, signal_bar_idx, params, range_high, range_low,
+                               expiry_naive, ZoneInfo(params.timezone))
+
+        return signals, skipped_days
+
+    # ------------------------------------------------------------------
+    def _write_signal(
+        self,
+        signals: pd.DataFrame,
+        signal_bar_idx,
+        params: "BreakoutParams",
+        range_high: float,
+        range_low: float,
+        expiry_naive,
+        tz,
+    ) -> None:
+        """Compute prices and write one signal row into `signals`."""
+        entry_offset = params.entry_offset_pips * params.pip_size
+        sl_offset    = params.stop_loss_pips    * params.pip_size
+        tp_offset    = params.take_profit_pips  * params.pip_size
+
+        long_entry  = range_high + entry_offset
+        short_entry = range_low  - entry_offset
+        long_sl     = long_entry  - sl_offset
+        short_sl    = short_entry + sl_offset
+        long_tp     = long_entry  + tp_offset
+        short_tp    = short_entry - tp_offset
+
+        expiry_utc = pd.Timestamp(expiry_naive, tz=tz).tz_convert("UTC")
+
+        if params.direction_filter != "short_only":
+            signals.at[signal_bar_idx, "long_entry"] = long_entry
+            signals.at[signal_bar_idx, "long_sl"]    = long_sl
+            signals.at[signal_bar_idx, "long_tp"]    = long_tp
+
+        if params.direction_filter != "long_only":
+            signals.at[signal_bar_idx, "short_entry"] = short_entry
+            signals.at[signal_bar_idx, "short_sl"]    = short_sl
+            signals.at[signal_bar_idx, "short_tp"]    = short_tp
+
+        signals.at[signal_bar_idx, "signal_expiry"] = expiry_utc
+
+        if params.trail_trigger_pips is not None:
+            signals.at[signal_bar_idx, "trail_trigger_pips"] = params.trail_trigger_pips
+            signals.at[signal_bar_idx, "trail_lock_pips"]    = params.trail_lock_pips
