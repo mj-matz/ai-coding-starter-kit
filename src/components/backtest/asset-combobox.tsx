@@ -106,7 +106,7 @@ export function AssetCombobox({ value, onChange, disabled }: AssetComboboxProps)
           aria-label="Select asset"
           disabled={disabled}
           className={cn(
-            "h-10 w-full justify-between border-gray-700 bg-gray-900 px-3 font-normal text-gray-100 hover:bg-gray-800 hover:text-gray-100",
+            "h-10 w-full justify-between border-white/10 bg-black/20 px-3 font-normal text-gray-100 hover:bg-white/10 hover:text-gray-100 focus-visible:ring-0 focus-visible:ring-offset-0",
             !value && "text-gray-500"
           )}
         >
@@ -122,15 +122,15 @@ export function AssetCombobox({ value, onChange, disabled }: AssetComboboxProps)
       </PopoverTrigger>
 
       <PopoverContent
-        className="w-[--radix-popover-trigger-width] p-0 border-gray-700 bg-gray-900"
+        className="w-[--radix-popover-trigger-width] p-0 border-white/10 bg-[#0d0f14]"
         align="start"
       >
-        <Command className="bg-gray-900">
+        <Command className="bg-[#0d0f14]">
           <CommandInput
             placeholder="Search symbol or name…"
             value={query}
             onValueChange={setQuery}
-            className="border-gray-700 text-gray-100 placeholder:text-gray-500"
+            className="border-white/10 text-gray-100 placeholder:text-gray-500"
           />
           <CommandList>
             {loading && (
@@ -159,7 +159,7 @@ export function AssetCombobox({ value, onChange, disabled }: AssetComboboxProps)
                           key={`recent-${asset.symbol}`}
                           value={`recent-${asset.symbol}`}
                           onSelect={() => handleSelect(asset.symbol)}
-                          className="cursor-pointer text-gray-100 aria-selected:bg-gray-800"
+                          className="cursor-pointer text-gray-100 aria-selected:bg-white/10"
                         >
                           <Check
                             className={cn(
@@ -174,7 +174,7 @@ export function AssetCombobox({ value, onChange, disabled }: AssetComboboxProps)
                         </CommandItem>
                       ))}
                     </CommandGroup>
-                    <CommandSeparator className="bg-gray-700" />
+                    <CommandSeparator className="bg-white/10" />
                   </>
                 )}
 
@@ -188,7 +188,7 @@ export function AssetCombobox({ value, onChange, disabled }: AssetComboboxProps)
                           key={asset.symbol}
                           value={`${asset.symbol} ${asset.name}`}
                           onSelect={() => handleSelect(asset.symbol)}
-                          className="cursor-pointer text-gray-100 aria-selected:bg-gray-800"
+                          className="cursor-pointer text-gray-100 aria-selected:bg-white/10"
                         >
                           <Check
                             className={cn(

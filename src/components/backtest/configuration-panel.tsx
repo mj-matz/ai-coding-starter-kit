@@ -140,7 +140,7 @@ export function ConfigurationPanel({
                           <SelectValue placeholder="Select strategy" />
                         </SelectTrigger>
                       </FormControl>
-                      <SelectContent className="border-white/10 bg-black/20">
+                      <SelectContent className="border-white/10 bg-[#0d0f14]">
                         {STRATEGIES.map((s) => (
                           <SelectItem
                             key={s.value}
@@ -196,7 +196,7 @@ export function ConfigurationPanel({
                           <SelectValue placeholder="Select timeframe" />
                         </SelectTrigger>
                       </FormControl>
-                      <SelectContent className="border-white/10 bg-black/20">
+                      <SelectContent className="border-white/10 bg-[#0d0f14]">
                         {TIMEFRAMES.map((t) => (
                           <SelectItem
                             key={t.value}
