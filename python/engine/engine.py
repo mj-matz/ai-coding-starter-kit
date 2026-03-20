@@ -140,30 +140,6 @@ def run_backtest(
             expired_order_dates=[],
         )
 
-    # ── Option A: Extract OHLCV + signal columns as NumPy arrays ─────────────
-    _opens         = ohlcv["open"].to_numpy(dtype=float)
-    _highs         = ohlcv["high"].to_numpy(dtype=float)
-    _lows          = ohlcv["low"].to_numpy(dtype=float)
-    _closes        = ohlcv["close"].to_numpy(dtype=float)
-    _long_entry    = signals["long_entry"].to_numpy(dtype=float)
-    _long_sl       = signals["long_sl"].to_numpy(dtype=float)
-    _long_tp       = signals["long_tp"].to_numpy(dtype=float)
-    _short_entry   = signals["short_entry"].to_numpy(dtype=float)
-    _short_sl      = signals["short_sl"].to_numpy(dtype=float)
-    _short_tp      = signals["short_tp"].to_numpy(dtype=float)
-    _trail_trigger = signals["trail_trigger_pips"].to_numpy(dtype=float)
-    _trail_lock    = signals["trail_lock_pips"].to_numpy(dtype=float)
-    _sig_expiry    = signals["signal_expiry"].to_numpy()  # datetime64 / NaT
-
-    # ── Option B: Pre-compute time-exit flags (avoid tz_convert per bar) ─────
-    if exit_time is not None:
-        _local_idx   = ohlcv.index.tz_convert(exit_tz)
-        _exit_min    = exit_time.hour * 60 + exit_time.minute
-        _bar_min     = _local_idx.hour * 60 + _local_idx.minute
-        exit_flags: Optional[np.ndarray] = (_bar_min >= _exit_min).to_numpy()
-    else:
-        exit_flags = None
-
     balance: float = config.initial_balance
     trades: List[Trade] = []
     equity_curve = [{"time": ohlcv.index[0].isoformat(), "balance": balance}]
@@ -172,13 +148,15 @@ def run_backtest(
     expired_order_dates: List[str] = []
 
     for i in range(len(ohlcv)):
+        bar = ohlcv.iloc[i]
         bar_time = ohlcv.index[i]
-        bar_open = _opens[i]
-        bar_high = _highs[i]
-        bar_low  = _lows[i]
+        bar_open = float(bar["open"])
+        bar_high = float(bar["high"])
+        bar_low = float(bar["low"])
 
         # ── 1a. Time exit ───────────────────────────────────────────────────
-        if position is not None and exit_flags is not None and exit_flags[i]:
+        if position is not None and exit_time is not None:
+            if bar_time.tz_convert(exit_tz).time() >= exit_time:
                 trade = close_position(position, bar_time, bar_open, "TIME", config)
                 trades.append(trade)
                 balance += trade.pnl_currency
@@ -278,49 +256,16 @@ def run_backtest(
         # trade per day for PROJ-3).  Future multi-signal strategies (PROJ-6)
         # may need to queue signals here instead of dropping them.
         if position is None:
-            # Option A: build pending orders directly from pre-extracted arrays
-            _le = _long_entry[i]
-            _se = _short_entry[i]
-            if not (np.isnan(_le) and np.isnan(_se)):
-                _raw_exp = _sig_expiry[i]
-                _expiry: Optional[pd.Timestamp] = (
-                    pd.Timestamp(_raw_exp) if not pd.isnull(_raw_exp) else None
-                )
-                _tt = _trail_trigger[i]
-                _tl = _trail_lock[i]
-                _ttp = float(_tt) if not np.isnan(_tt) else None
-                _tlp = float(_tl) if not np.isnan(_tl) else None
-                new_orders: List[PendingOrder] = []
-                if not np.isnan(_le):
-                    _ltp = _long_tp[i]
-                    new_orders.append(PendingOrder(
-                        direction="long",
-                        entry_price=float(_le),
-                        sl_price=float(_long_sl[i]),
-                        tp_price=float(_ltp) if not np.isnan(_ltp) else None,
-                        expiry=_expiry,
-                        trail_trigger_pips=_ttp,
-                        trail_lock_pips=_tlp,
-                    ))
-                if not np.isnan(_se):
-                    _stp = _short_tp[i]
-                    new_orders.append(PendingOrder(
-                        direction="short",
-                        entry_price=float(_se),
-                        sl_price=float(_short_sl[i]),
-                        tp_price=float(_stp) if not np.isnan(_stp) else None,
-                        expiry=_expiry,
-                        trail_trigger_pips=_ttp,
-                        trail_lock_pips=_tlp,
-                    ))
-                if new_orders:
-                    pending_orders = new_orders
+            new_orders = _extract_pending_orders(signals.iloc[i])
+            if new_orders:
+                pending_orders = new_orders
 
     # ── End of data: close any open position ───────────────────────────────
     if position is not None:
+        last_bar = ohlcv.iloc[-1]
         last_time = ohlcv.index[-1]
         trade = close_position(
-            position, last_time, _closes[-1], "TIME", config
+            position, last_time, float(last_bar["close"]), "TIME", config
         )
         trades.append(trade)
         balance += trade.pnl_currency
