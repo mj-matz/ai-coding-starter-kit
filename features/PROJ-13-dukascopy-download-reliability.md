@@ -1,0 +1,119 @@
+# PROJ-13: Dukascopy Download Reliability (Retry + Adaptive Concurrency)
+
+## Status: In Review
+**Created:** 2026-03-21
+**Last Updated:** 2026-03-21
+
+## Dependencies
+- Requires: PROJ-1 (Data Fetcher) — optimiert die bestehende `fetch_dukascopy()`-Implementierung
+
+## Context
+
+Mit BUG-36 wurden die concurrent workers von 24 auf 6 reduziert, weil Dukascopy bei zu hoher Parallelität Fehler zurückgab und einzelne Stunden ohne Daten blieben — was zu fehlenden Trades führte. Die Reduzierung auf 6 Worker löst das Korrektheitsproblem, macht aber den ersten Download (Cache-Miss) deutlich langsamer. Bei einem typischen Backtest über 1–3 Monate (1m-Daten) bedeutet das merkliche Wartezeit beim ersten Lauf.
+
+Ziel: Höhere effektive Download-Geschwindigkeit bei gleichzeitig vollständiger Datenqualität durch Retry-Logik und adaptive Parallelität statt einer fixen Worker-Grenze.
+
+## User Stories
+
+- Als Trader möchte ich, dass der erste Backtest über 1–3 Monate deutlich schneller lädt als heute, damit ich schnell mit einem neuen Symbol oder Zeitraum starten kann.
+- Als Trader möchte ich, dass trotz höherer Parallelität alle Handelsstunden vollständig heruntergeladen werden, damit keine Trades durch fehlende Datenpunkte verloren gehen.
+- Als Trader möchte ich, dass Dukascopy-Fehler automatisch wiederholt werden, damit ich nicht wegen eines kurzzeitigen Rate-Limits einen Fehler im UI sehe.
+
+## Acceptance Criteria
+
+- [ ] Fehlgeschlagene Stunden-Downloads werden automatisch bis zu 3× wiederholt mit Exponential Backoff (1s, 2s, 4s Pause)
+- [ ] Die Worker-Anzahl startet bei 12 (statt bisher 6)
+- [ ] Bei HTTP 429 oder Verbindungsfehlern wird die Parallelität temporär halbiert (Adaptive Concurrency)
+- [ ] Nach einer Fehlerfreien Phase von 10 abgeschlossenen Requests wird die Parallelität schrittweise wieder erhöht (max. 12)
+- [ ] Ein Download über 1–3 Monate 1m-Daten schließt in unter 20 Sekunden ab (Messung: Durchschnitt 3 Läufe, frischer Cache)
+- [ ] Das produzierte DataFrame hat lückenlose Stunden — keine stillen Datenlücken durch fehlgeschlagene Downloads ohne Retry
+- [ ] Wenn nach allen Retries eine Stunde nicht geladen werden kann, wird dies als WARNING geloggt (kein stilles Ignorieren)
+- [ ] Alle bestehenden Tests für `fetch_dukascopy()` bestehen ohne Änderung
+
+## Edge Cases
+
+- **Dukascopy dauerhaft nicht erreichbar:** Nach 3 Retries pro Stunde → `TimeoutError` / HTTP 502 an den Aufrufer (bestehende Fehlerbehandlung unverändert)
+- **Einzelne Stunde dauerhaft 404 (Wochenende, Feiertag):** Kein Retry für 404 — wird als fehlende Stunde akzeptiert (bestehende Logik)
+- **429-Burst bei Burst-Start:** Adaptive Concurrency greift sofort beim ersten 429, nicht erst nach mehreren Fehlern
+- **Partial fetch (Timeout des Gesamtdownloads):** Bestehende Partial-Fetch-Guard-Logik (`base_df.attrs["partial"]`) bleibt unverändert erhalten
+- **DST-Wechsel in der Datumsrange:** Stunden-Mapping bleibt UTC-basiert — kein Einfluss auf Retry-Logik
+
+## Technical Requirements
+
+- Keine neuen Python-Pakete — `asyncio`, `httpx` und `tenacity` (oder pure `asyncio`-Retry) bereits vorhanden oder Standard
+- Worker-Anzahl als Konstante konfigurierbar (nicht hardcoded)
+- Änderungen ausschließlich in `python/data/dukascopy.py` (oder äquivalente Fetcher-Datei)
+- Kein Eingriff in `main.py`, `engine.py` oder Frontend
+
+---
+
+## Tech Design (Solution Architect)
+
+### Ausgangslage
+
+Die aktuelle `fetch_dukascopy()`-Implementierung hat zwei strukturelle Schwächen:
+- **Kein Retry:** Ein Fehler bei `_download_hour()` führt direkt zu `return None` — die Stunde geht still verloren.
+- **Fixer Worker-Pool:** `ThreadPoolExecutor(max_workers=6)` ist ein statischer Wert, der keine Rate-Limit-Signale verarbeiten kann.
+
+### Komponentenstruktur
+
+```
+dukascopy_fetcher.py  [einzige geänderte Datei]
+└── fetch_dukascopy()  [Schnittstelle unverändert]
+    │
+    ├── AdaptiveConcurrencyController  [NEU]
+    │   ├── Startet mit Limit = 12 Worker
+    │   ├── Zählt aufeinanderfolgende erfolgreiche Requests
+    │   ├── on_429_or_error()  → halbiert Limit sofort (z.B. 12 → 6)
+    │   └── on_success_streak(10)  → erhöht Limit um 1 (bis max. 12)
+    │
+    └── Download-Schleife  [parallel, gesteuert durch Controller]
+        └── RetryWrapper  [NEU] um _download_hour()
+            ├── Versuch 1  → OK → fertig
+            ├── Fehler → warte 1s → Versuch 2
+            ├── Fehler → warte 2s → Versuch 3
+            ├── Fehler → warte 4s → Versuch 4 (letzter)
+            ├── HTTP 429  → Controller.on_429() + retry
+            ├── HTTP 404  → KEIN Retry (Feiertag/Wochenende)
+            └── Alle Versuche fehlgeschlagen → WARNING geloggt, None zurückgegeben
+```
+
+### Datenmodell
+
+Ausschließlich In-Memory-Zustand während eines Fetch-Aufrufs:
+
+```
+AdaptiveConcurrencyController
+- current_limit:  Integer (startet bei MAX_WORKERS=12, min. 1, max. 12)
+- success_streak: Integer (zählt fehlerfreie Requests seit letztem Fehler)
+- lock:           Thread-sicherer Mutex für gleichzeitige Updates
+
+Konfigurationskonstanten (in der Datei, nicht hardcoded im Code)
+- MAX_WORKERS:    12
+- RETRY_COUNT:    3  (= maximal 4 Versuche)
+- RETRY_BACKOFF:  [1s, 2s, 4s]
+```
+
+Kein neues Datenbankschema. Kein neuer API-Endpunkt. Kein Frontend-Eingriff.
+
+### Technische Entscheidungen
+
+| Entscheidung | Wahl | Warum |
+|---|---|---|
+| Parallelitätsmodell | Threads (wie heute) | Minimale Änderung; `ThreadPoolExecutor` bleibt, Semaphor-Logik wird ergänzt |
+| Retry-Mechanismus | Manuell oder `tenacity` | Beide vorhanden; keine neue Abhängigkeit nötig |
+| HTTP 404 | Kein Retry | Feiertage/Wochenenden sind erwartetes Verhalten, kein Fehler |
+| Neue Dateien | Keine | Alles in `dukascopy_fetcher.py` — Scope klar abgegrenzt |
+
+### Was sich nicht ändert
+
+- Öffentliche Signatur von `fetch_dukascopy()` — keine Breaking Changes
+- `partial`-Flag-Logik bei Timeouts
+- Fehlerbehandlung für HTTP 404
+- `main.py`, `engine.py`, alle API-Routen, Frontend
+
+## QA Test Results
+_To be added by /qa_
+
+## Deployment
+_To be added by /deploy_

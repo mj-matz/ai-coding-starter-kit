@@ -14,6 +14,8 @@ Each .bi5 file is LZMA-compressed binary data. Each tick is 20 bytes:
 import lzma
 import struct
 import logging
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
@@ -24,6 +26,84 @@ import pandas as pd
 from config import FETCH_TIMEOUT_SECONDS
 
 logger = logging.getLogger(__name__)
+
+# ── Concurrency & Retry constants ────────────────────────────────────────────
+
+THREAD_POOL_HARD_CEILING = 20
+INITIAL_CONCURRENCY_LIMIT = 12
+MAX_CONCURRENCY_LIMIT = 20
+MIN_CONCURRENCY_LIMIT = 1
+SUCCESS_STREAK_THRESHOLD = 10
+
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = [1, 2, 4]
+
+
+# ── Adaptive Concurrency Controller ─────────────────────────────────────────
+
+class AdaptiveConcurrencyController:
+    """Thread-safe adaptive concurrency controller using threading.Condition.
+
+    Manages a soft concurrency limit that adjusts based on success/error signals.
+    The ThreadPoolExecutor provides a hard ceiling; this controller provides a
+    dynamic soft ceiling below it.
+    """
+
+    def __init__(self, initial_limit: int = INITIAL_CONCURRENCY_LIMIT):
+        self._condition = threading.Condition()
+        self._limit = initial_limit
+        self._active = 0
+        self._success_streak = 0
+
+    @property
+    def limit(self) -> int:
+        with self._condition:
+            return self._limit
+
+    def acquire(self) -> None:
+        """Block until a concurrency slot is available."""
+        with self._condition:
+            while self._active >= self._limit:
+                self._condition.wait()
+            self._active += 1
+
+    def release(self) -> None:
+        """Release a concurrency slot and notify waiting threads."""
+        with self._condition:
+            self._active -= 1
+            self._condition.notify()
+
+    def on_success(self) -> None:
+        """Record a successful request. After SUCCESS_STREAK_THRESHOLD consecutive
+        successes, increase the limit by 1 (up to MAX_CONCURRENCY_LIMIT)."""
+        with self._condition:
+            self._success_streak += 1
+            if self._success_streak >= SUCCESS_STREAK_THRESHOLD:
+                self._success_streak = 0
+                old = self._limit
+                self._limit = min(self._limit + 1, MAX_CONCURRENCY_LIMIT)
+                if self._limit != old:
+                    logger.debug(
+                        "Concurrency limit increased: %d -> %d", old, self._limit
+                    )
+                self._condition.notify_all()
+
+    def on_error(self) -> None:
+        """Record a rate-limit or timeout error. Halve the limit immediately
+        (down to MIN_CONCURRENCY_LIMIT) and reset the success streak."""
+        with self._condition:
+            self._success_streak = 0
+            old = self._limit
+            self._limit = max(self._limit // 2, MIN_CONCURRENCY_LIMIT)
+            if self._limit != old:
+                logger.info(
+                    "Concurrency limit reduced: %d -> %d", old, self._limit
+                )
+
+
+# ── Module-level controller (reused across calls within a process) ───────────
+
+_controller = AdaptiveConcurrencyController()
 
 # ── Symbol mapping ────────────────────────────────────────────────────────────
 
@@ -104,49 +184,122 @@ def _hour_url(duka_symbol: str, dt: datetime) -> str:
     )
 
 
+def _decode_bi5(raw: bytes, dt: datetime, point: int) -> Optional[pd.DataFrame]:
+    """Decode LZMA-compressed .bi5 tick data into a DataFrame."""
+    data = lzma.decompress(raw)
+    n = len(data) // _TICK_SIZE
+    if n == 0:
+        return None
+
+    hour_ms = int(dt.timestamp() * 1000)
+    rows = []
+    for i in range(n):
+        ms, ask_raw, bid_raw, ask_vol, bid_vol = struct.unpack_from(
+            _TICK_FMT, data, i * _TICK_SIZE
+        )
+        rows.append(
+            {
+                "datetime": pd.Timestamp(hour_ms + ms, unit="ms", tz="UTC"),
+                "ask": ask_raw / point,
+                "bid": bid_raw / point,
+                "ask_volume": float(ask_vol),
+                "bid_volume": float(bid_vol),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def _download_hour(
     duka_symbol: str,
     dt: datetime,
     point: int,
+    controller: AdaptiveConcurrencyController,
 ) -> Optional[pd.DataFrame]:
-    """Download and decode one hour of tick data. Returns None when no data."""
+    """Download one hour of tick data with retry logic and adaptive concurrency.
+
+    - Acquires a concurrency slot before making the HTTP request.
+    - Retries up to MAX_RETRIES times with exponential backoff.
+    - Does NOT retry on HTTP 404 (expected for weekends/holidays).
+    - Signals success/error to the concurrency controller.
+    """
     url = _hour_url(duka_symbol, dt)
-    try:
-        resp = httpx.get(url, timeout=20, follow_redirects=True)
-        if resp.status_code == 404 or len(resp.content) == 0:
-            return None  # Normal: weekend / holiday / no trading that hour
-        if resp.status_code != 200:
-            logger.warning("Unexpected HTTP %d for %s — hour skipped", resp.status_code, url)
+    iso_ts = dt.isoformat()
+
+    for attempt in range(1 + MAX_RETRIES):
+        controller.acquire()
+        try:
+            resp = httpx.get(url, timeout=20, follow_redirects=True)
+
+            if resp.status_code == 404 or len(resp.content) == 0:
+                controller.on_success()
+                return None  # Normal: weekend / holiday / no trading that hour
+
+            if resp.status_code == 429:
+                controller.on_error()
+                if attempt < MAX_RETRIES:
+                    backoff = RETRY_BACKOFF_SECONDS[attempt]
+                    logger.info(
+                        "HTTP 429 for %s (attempt %d/%d) — retrying in %ds",
+                        iso_ts, attempt + 1, 1 + MAX_RETRIES, backoff,
+                    )
+                    time.sleep(backoff)
+                    continue
+                logger.warning(
+                    "HTTP 429 for %s — all %d retries exhausted",
+                    iso_ts, 1 + MAX_RETRIES,
+                )
+                return None
+
+            if resp.status_code != 200:
+                controller.on_error()
+                if attempt < MAX_RETRIES:
+                    backoff = RETRY_BACKOFF_SECONDS[attempt]
+                    logger.info(
+                        "HTTP %d for %s (attempt %d/%d) — retrying in %ds",
+                        resp.status_code, iso_ts, attempt + 1, 1 + MAX_RETRIES, backoff,
+                    )
+                    time.sleep(backoff)
+                    continue
+                logger.warning(
+                    "HTTP %d for %s — all %d retries exhausted",
+                    resp.status_code, iso_ts, 1 + MAX_RETRIES,
+                )
+                return None
+
+            # Successful HTTP 200
+            try:
+                result = _decode_bi5(resp.content, dt, point)
+                controller.on_success()
+                return result
+            except lzma.LZMAError as exc:
+                logger.warning("LZMA decode error for %s — hour skipped: %s", iso_ts, exc)
+                controller.on_success()  # Not a server error, no need to throttle
+                return None
+
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
+            controller.on_error()
+            if attempt < MAX_RETRIES:
+                backoff = RETRY_BACKOFF_SECONDS[attempt]
+                logger.info(
+                    "Connection error for %s (attempt %d/%d): %s — retrying in %ds",
+                    iso_ts, attempt + 1, 1 + MAX_RETRIES, type(exc).__name__, backoff,
+                )
+                time.sleep(backoff)
+                continue
+            logger.warning(
+                "Connection error for %s — all %d retries exhausted: %s",
+                iso_ts, 1 + MAX_RETRIES, exc,
+            )
             return None
 
-        raw = lzma.decompress(resp.content)
-        n = len(raw) // _TICK_SIZE
-        if n == 0:
+        except Exception as exc:
+            logger.warning("Unexpected error for %s — hour skipped: %s", iso_ts, exc)
             return None
 
-        hour_ms = int(dt.timestamp() * 1000)
-        rows = []
-        for i in range(n):
-            ms, ask_raw, bid_raw, ask_vol, bid_vol = struct.unpack_from(
-                _TICK_FMT, raw, i * _TICK_SIZE
-            )
-            rows.append(
-                {
-                    "datetime": pd.Timestamp(hour_ms + ms, unit="ms", tz="UTC"),
-                    "ask": ask_raw / point,
-                    "bid": bid_raw / point,
-                    "ask_volume": float(ask_vol),
-                    "bid_volume": float(bid_vol),
-                }
-            )
-        return pd.DataFrame(rows)
+        finally:
+            controller.release()
 
-    except lzma.LZMAError as exc:
-        logger.warning("LZMA decode error for %s — hour skipped: %s", url, exc)
-        return None
-    except Exception as exc:
-        logger.warning("Download error for %s — hour skipped: %s", url, exc)
-        return None
+    return None
 
 
 def fetch_dukascopy(
@@ -201,9 +354,9 @@ def fetch_dukascopy(
 
     frames: list[pd.DataFrame] = []
     partial_timeout = False
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=THREAD_POOL_HARD_CEILING) as executor:
         future_map = {
-            executor.submit(_download_hour, duka_symbol, h, point): h
+            executor.submit(_download_hour, duka_symbol, h, point, _controller): h
             for h in hours
         }
         try:
