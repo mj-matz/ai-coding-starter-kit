@@ -6,7 +6,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, Play } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -114,18 +113,13 @@ export function ConfigurationPanel({
   }
 
   return (
-    <Card className="border-gray-800 bg-[#111118]">
-      <CardHeader className="pb-4">
-        <CardTitle className="text-lg text-gray-100">
-          Backtest Configuration
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <Form {...form}>
-          <form
-            onSubmit={form.handleSubmit(handleSubmit)}
-            className="space-y-6"
-          >
+    <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-3xl p-6">
+      <h2 className="text-lg font-semibold text-white mb-6">Backtest Configuration</h2>
+      <Form {...form}>
+        <form
+          onSubmit={form.handleSubmit(handleSubmit)}
+          className="space-y-6"
+        >
             {/* Strategy & Asset */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <FormField
@@ -140,18 +134,18 @@ export function ConfigurationPanel({
                     >
                       <FormControl>
                         <SelectTrigger
-                          className="border-gray-700 bg-gray-900 text-gray-100 [&>span]:flex-1 [&>span]:text-left"
+                          className="border-white/10 bg-black/20 text-gray-100 rounded-lg [&>span]:flex-1 [&>span]:text-left"
                           aria-label="Select strategy"
                         >
                           <SelectValue placeholder="Select strategy" />
                         </SelectTrigger>
                       </FormControl>
-                      <SelectContent className="border-gray-700 bg-gray-900">
+                      <SelectContent className="border-white/10 bg-black/20">
                         {STRATEGIES.map((s) => (
                           <SelectItem
                             key={s.value}
                             value={s.value}
-                            className="text-gray-100 focus:bg-gray-800 focus:text-white"
+                            className="text-gray-100 focus:bg-white/10 focus:text-white"
                           >
                             {s.label}
                           </SelectItem>
@@ -196,18 +190,18 @@ export function ConfigurationPanel({
                     >
                       <FormControl>
                         <SelectTrigger
-                          className="border-gray-700 bg-gray-900 text-gray-100"
+                          className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
                           aria-label="Select timeframe"
                         >
                           <SelectValue placeholder="Select timeframe" />
                         </SelectTrigger>
                       </FormControl>
-                      <SelectContent className="border-gray-700 bg-gray-900">
+                      <SelectContent className="border-white/10 bg-black/20">
                         {TIMEFRAMES.map((t) => (
                           <SelectItem
                             key={t.value}
                             value={t.value}
-                            className="text-gray-100 focus:bg-gray-800 focus:text-white"
+                            className="text-gray-100 focus:bg-white/10 focus:text-white"
                           >
                             {t.label}
                           </SelectItem>
@@ -229,7 +223,7 @@ export function ConfigurationPanel({
                       <Input
                         {...field}
                         type="date"
-                        className="border-gray-700 bg-gray-900 text-gray-100"
+                        className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
                         aria-label="Start date"
                       />
                     </FormControl>
@@ -248,7 +242,7 @@ export function ConfigurationPanel({
                       <Input
                         {...field}
                         type="date"
-                        className="border-gray-700 bg-gray-900 text-gray-100"
+                        className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
                         aria-label="End date"
                       />
                     </FormControl>
@@ -258,7 +252,7 @@ export function ConfigurationPanel({
               />
             </div>
 
-            <Separator className="bg-gray-800" />
+            <Separator className="bg-white/10" />
 
             {/* Strategy Parameters (rendered dynamically per strategy) */}
             <div>
@@ -268,7 +262,7 @@ export function ConfigurationPanel({
               <StrategyParams strategy={selectedStrategy} form={form} />
             </div>
 
-            <Separator className="bg-gray-800" />
+            <Separator className="bg-white/10" />
 
             {/* Capital & Sizing */}
             <div>
@@ -289,7 +283,7 @@ export function ConfigurationPanel({
                           {...field}
                           type="number"
                           step="100"
-                          className="border-gray-700 bg-gray-900 text-gray-100"
+                          className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
                           aria-label="Initial capital"
                         />
                       </FormControl>
@@ -363,7 +357,7 @@ export function ConfigurationPanel({
                             step="0.01"
                             min="0.01"
                             max="100"
-                            className="border-gray-700 bg-gray-900 text-gray-100"
+                            className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
                             aria-label="Risk percent per trade"
                           />
                         </FormControl>
@@ -386,7 +380,7 @@ export function ConfigurationPanel({
                             type="number"
                             step="0.01"
                             min="0.01"
-                            className="border-gray-700 bg-gray-900 text-gray-100"
+                            className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
                             aria-label="Fixed lot size"
                           />
                         </FormControl>
@@ -399,7 +393,7 @@ export function ConfigurationPanel({
               </div>
             </div>
 
-            <Separator className="bg-gray-800" />
+            <Separator className="bg-white/10" />
 
             {/* Simulation Options */}
             <div>
@@ -410,7 +404,7 @@ export function ConfigurationPanel({
                 control={form.control}
                 name="gapFill"
                 render={({ field }) => (
-                  <FormItem className="flex items-center justify-between rounded-md border border-gray-700 bg-gray-900 px-4 py-3">
+                  <FormItem className="flex items-center justify-between rounded-md border border-white/10 bg-black/20 px-4 py-3">
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -438,7 +432,7 @@ export function ConfigurationPanel({
             <Button
               type="submit"
               disabled={isRunning}
-              className="w-full bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              className="w-full bg-blue-600 text-white hover:bg-blue-700 shadow-md disabled:opacity-50"
               aria-label="Run backtest"
             >
               {isRunning ? (
@@ -453,9 +447,8 @@ export function ConfigurationPanel({
                 </>
               )}
             </Button>
-          </form>
-        </Form>
-      </CardContent>
-    </Card>
+        </form>
+      </Form>
+    </div>
   );
 }

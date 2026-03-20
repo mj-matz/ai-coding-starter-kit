@@ -68,7 +68,7 @@ function TimeRangeBreakoutParams({
                   <Input
                     {...field}
                     type="time"
-                    className="border-gray-700 bg-gray-900 pl-9 text-gray-100 [&::-webkit-calendar-picker-indicator]:hidden"
+                    className="border-white/10 bg-black/20 pl-9 text-gray-100 rounded-lg [&::-webkit-calendar-picker-indicator]:hidden"
                     aria-label="Range start time"
                   />
                 </div>
@@ -90,7 +90,7 @@ function TimeRangeBreakoutParams({
                   <Input
                     {...field}
                     type="time"
-                    className="border-gray-700 bg-gray-900 pl-9 text-gray-100 [&::-webkit-calendar-picker-indicator]:hidden"
+                    className="border-white/10 bg-black/20 pl-9 text-gray-100 rounded-lg [&::-webkit-calendar-picker-indicator]:hidden"
                     aria-label="Range end time"
                   />
                 </div>
@@ -112,7 +112,7 @@ function TimeRangeBreakoutParams({
                   <Input
                     {...field}
                     type="time"
-                    className="border-gray-700 bg-gray-900 pl-9 text-gray-100 [&::-webkit-calendar-picker-indicator]:hidden"
+                    className="border-white/10 bg-black/20 pl-9 text-gray-100 rounded-lg [&::-webkit-calendar-picker-indicator]:hidden"
                     aria-label="Trigger deadline time"
                   />
                 </div>
@@ -134,7 +134,7 @@ function TimeRangeBreakoutParams({
                   <Input
                     {...field}
                     type="time"
-                    className="border-gray-700 bg-gray-900 pl-9 text-gray-100 [&::-webkit-calendar-picker-indicator]:hidden"
+                    className="border-white/10 bg-black/20 pl-9 text-gray-100 rounded-lg [&::-webkit-calendar-picker-indicator]:hidden"
                     aria-label="Time exit"
                   />
                 </div>
@@ -157,7 +157,7 @@ function TimeRangeBreakoutParams({
                   {...field}
                   type="number"
                   step="0.1"
-                  className="border-gray-700 bg-gray-900 text-gray-100"
+                  className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
                   aria-label="Stop loss in pips"
                 />
               </FormControl>
@@ -179,7 +179,7 @@ function TimeRangeBreakoutParams({
                   {...field}
                   type="number"
                   step="0.1"
-                  className="border-gray-700 bg-gray-900 text-gray-100"
+                  className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
                   aria-label="Take profit in pips"
                 />
               </FormControl>
@@ -202,7 +202,7 @@ function TimeRangeBreakoutParams({
                   type="number"
                   step="0.01"
                   min="0"
-                  className="border-gray-700 bg-gray-900 text-gray-100"
+                  className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
                   aria-label="Commission in account currency per trade"
                 />
               </FormControl>
@@ -223,7 +223,7 @@ function TimeRangeBreakoutParams({
                   type="number"
                   step="0.1"
                   min="0"
-                  className="border-gray-700 bg-gray-900 text-gray-100"
+                  className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
                   aria-label="Slippage in pips"
                 />
               </FormControl>
@@ -248,7 +248,7 @@ function TimeRangeBreakoutParams({
                   type="number"
                   step="1"
                   min="0"
-                  className="border-gray-700 bg-gray-900 text-gray-100"
+                  className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
                   aria-label="Entry delay in bars after range end"
                 />
               </FormControl>
@@ -280,7 +280,7 @@ function TimeRangeBreakoutParams({
                   step="0.1"
                   min="0"
                   placeholder="e.g. 100"
-                  className="border-gray-700 bg-gray-900 text-gray-100"
+                  className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
                   aria-label="Trail trigger in pips (profit level that activates profit lock)"
                 />
               </FormControl>
@@ -310,7 +310,7 @@ function TimeRangeBreakoutParams({
                   step="0.1"
                   min="0"
                   placeholder="e.g. 50"
-                  className="border-gray-700 bg-gray-900 text-gray-100"
+                  className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
                   aria-label="Trail lock in pips (SL moved to this offset from entry on trigger)"
                 />
               </FormControl>

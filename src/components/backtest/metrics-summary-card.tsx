@@ -34,15 +34,11 @@ function formatNum(value: number, decimals = 2): string {
 function GlowBadge({ value, positive }: { value: string; positive: boolean }) {
   const color = positive ? EMERALD : ROSE;
   const bg = positive ? "rgba(16, 185, 129, 0.15)" : "rgba(244, 63, 94, 0.15)";
-  const shadow = positive
-    ? "0 0 12px rgba(16, 185, 129, 0.3)"
-    : "0 0 12px rgba(244, 63, 94, 0.3)";
   return (
     <span
       style={{
         color,
         background: bg,
-        boxShadow: shadow,
         borderRadius: "8px",
         padding: "2px 10px",
         fontSize: "13px",
