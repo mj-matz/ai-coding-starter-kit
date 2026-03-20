@@ -1,7 +1,5 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import type { BacktestMetrics, MonthlyR } from "@/lib/backtest-types";
 
 interface MetricsSummaryCardProps {
@@ -10,22 +8,19 @@ interface MetricsSummaryCardProps {
   monthlyR?: MonthlyR[];
 }
 
-interface MetricItemProps {
-  label: string;
-  value: string;
-  valueColor?: string;
-}
+const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+const EMERALD = "#10B981";
+const ROSE = "#F43F5E";
 
-function MetricItem({ label, value, valueColor }: MetricItemProps) {
-  return (
-    <div className="flex items-center justify-between py-1">
-      <span className="text-sm text-gray-400">{label}</span>
-      <span className={`text-sm font-medium ${valueColor ?? "text-gray-100"}`}>
-        {value}
-      </span>
-    </div>
-  );
-}
+const glassCard: React.CSSProperties = {
+  background: "rgba(255, 255, 255, 0.05)",
+  backdropFilter: "blur(20px)",
+  WebkitBackdropFilter: "blur(20px)",
+  border: "1px solid rgba(255, 255, 255, 0.1)",
+  borderRadius: "24px",
+  padding: "24px",
+  fontFamily: FONT,
+};
 
 function formatPct(value: number): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
@@ -35,198 +30,314 @@ function formatNum(value: number, decimals = 2): string {
   return value.toFixed(decimals);
 }
 
-function pctColor(value: number): string {
-  if (value > 0) return "text-green-400";
-  if (value < 0) return "text-red-400";
-  return "text-gray-100";
+// Colored badge with neon glow
+function GlowBadge({ value, positive }: { value: string; positive: boolean }) {
+  const color = positive ? EMERALD : ROSE;
+  const bg = positive ? "rgba(16, 185, 129, 0.15)" : "rgba(244, 63, 94, 0.15)";
+  const shadow = positive
+    ? "0 0 12px rgba(16, 185, 129, 0.3)"
+    : "0 0 12px rgba(244, 63, 94, 0.3)";
+  return (
+    <span
+      style={{
+        color,
+        background: bg,
+        boxShadow: shadow,
+        borderRadius: "8px",
+        padding: "2px 10px",
+        fontSize: "13px",
+        fontWeight: 600,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {value}
+    </span>
+  );
 }
 
-export function MetricsSummaryCard({ metrics, initialCapital, monthlyR }: MetricsSummaryCardProps) {
+// Plain metric row (label + neutral value)
+function Row({ label, value }: { label: string; value: string }) {
   return (
-    <Card className="border-gray-800 bg-[#111118]">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base text-gray-100">
-          Performance Summary
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: "6px 0",
+      }}
+    >
+      <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)" }}>{label}</span>
+      <span style={{ fontSize: "13px", fontWeight: 600, color: "rgba(255,255,255,0.9)" }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// Badge metric row
+function BadgeRow({ label, value, positive }: { label: string; value: string; positive: boolean }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: "6px 0",
+      }}
+    >
+      <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)" }}>{label}</span>
+      <GlowBadge value={value} positive={positive} />
+    </div>
+  );
+}
+
+// Circular win rate donut (SVG)
+function WinRateCircle({ pct }: { pct: number }) {
+  const r = 50;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (pct / 100) * circ;
+  return (
+    <div style={{ position: "relative", width: 136, height: 136, flexShrink: 0 }}>
+      <svg width="136" height="136" style={{ transform: "rotate(-90deg)" }}>
+        <circle
+          cx="68" cy="68" r={r}
+          fill="none"
+          stroke="rgba(255,255,255,0.08)"
+          strokeWidth="10"
+        />
+        <circle
+          cx="68" cy="68" r={r}
+          fill="none"
+          stroke={EMERALD}
+          strokeWidth="10"
+          strokeDasharray={circ}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          style={{ filter: "drop-shadow(0 0 6px rgba(16,185,129,0.6))" }}
+        />
+      </svg>
+      <div
+        style={{
+          position: "absolute",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          textAlign: "center",
+        }}
+      >
+        <div style={{ fontSize: "11px", color: "rgba(255,255,255,0.45)", marginBottom: "2px" }}>
+          Win Rate
+        </div>
+        <div style={{ fontSize: "21px", fontWeight: 700, color: "white" }}>
+          {pct.toFixed(2)}%
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <h3
+      style={{
+        fontSize: "15px",
+        fontWeight: 600,
+        color: "white",
+        marginBottom: "16px",
+        fontFamily: FONT,
+      }}
+    >
+      {children}
+    </h3>
+  );
+}
+
+export function MetricsSummaryCard({ metrics, monthlyR }: MetricsSummaryCardProps) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px", fontFamily: FONT }}>
+
+      {/* Row 1: Overview + Trade Stats */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+
         {/* Overview */}
-        <div>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-            Overview
-          </h4>
-          <MetricItem
+        <div style={glassCard}>
+          <SectionTitle>Overview</SectionTitle>
+          <BadgeRow
             label="Total Return"
             value={formatPct(metrics.total_return_pct)}
-            valueColor={pctColor(metrics.total_return_pct)}
+            positive={metrics.total_return_pct >= 0}
           />
-          <MetricItem
+          <BadgeRow
             label="CAGR"
             value={formatPct(metrics.cagr_pct)}
-            valueColor={pctColor(metrics.cagr_pct)}
+            positive={metrics.cagr_pct >= 0}
           />
-          <MetricItem
-            label="Sharpe Ratio"
-            value={formatNum(metrics.sharpe_ratio)}
-          />
-          <MetricItem
-            label="Sortino Ratio"
-            value={formatNum(metrics.sortino_ratio)}
-          />
-          <MetricItem
+          <Row label="Sharpe Ratio" value={formatNum(metrics.sharpe_ratio)} />
+          <Row label="Sortino Ratio" value={formatNum(metrics.sortino_ratio)} />
+          <Row
             label="Final Balance"
-            value={`$${metrics.final_balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-            valueColor={pctColor(metrics.final_balance - initialCapital)}
+            value={`$${metrics.final_balance.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}`}
           />
         </div>
-
-        <Separator className="bg-gray-800" />
 
         {/* Trade Stats */}
-        <div>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-            Trade Stats
-          </h4>
-          <MetricItem
-            label="Total Trades"
-            value={String(metrics.total_trades)}
-          />
-          <MetricItem
-            label="Win Rate"
-            value={formatPct(metrics.win_rate_pct)}
-          />
-          <MetricItem
-            label="Winning / Losing"
-            value={`${metrics.winning_trades} / ${metrics.losing_trades}`}
-          />
-          <MetricItem
-            label="Consecutive Wins / Losses"
-            value={`${metrics.consecutive_wins} / ${metrics.consecutive_losses}`}
-          />
-          <MetricItem
-            label="Avg Duration"
-            value={`${formatNum(metrics.avg_trade_duration_hours, 1)} h`}
-          />
+        <div style={glassCard}>
+          <SectionTitle>Trade Stats</SectionTitle>
+          <div style={{ display: "flex", alignItems: "center", gap: "24px" }}>
+            <WinRateCircle pct={metrics.win_rate_pct} />
+            <div style={{ flex: 1 }}>
+              <Row label="Total Trades" value={String(metrics.total_trades)} />
+              <Row
+                label="Winning / Losing"
+                value={`${metrics.winning_trades} / ${metrics.losing_trades}`}
+              />
+              <Row
+                label="Consecutive W / L"
+                value={`${metrics.consecutive_wins} / ${metrics.consecutive_losses}`}
+              />
+              <Row
+                label="Avg Duration"
+                value={`${formatNum(metrics.avg_trade_duration_hours, 1)} h`}
+              />
+            </div>
+          </div>
         </div>
+      </div>
 
-        <Separator className="bg-gray-800" />
-
+      {/* Row 2: P&L + R-Multiple/Risk column */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1.15fr 1fr",
+          gap: "16px",
+          alignItems: "start",
+        }}
+      >
         {/* P&L */}
-        <div>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-            P&amp;L
-          </h4>
-          <MetricItem
+        <div style={glassCard}>
+          <SectionTitle>P&amp;L</SectionTitle>
+          <BadgeRow
             label="Gross Profit"
             value={`$${formatNum(metrics.gross_profit)} (${formatNum(metrics.gross_profit_pips, 1)} pips)`}
-            valueColor="text-green-400"
+            positive={true}
           />
-          <MetricItem
+          <BadgeRow
             label="Gross Loss"
             value={`$${formatNum(metrics.gross_loss)} (${formatNum(metrics.gross_loss_pips, 1)} pips)`}
-            valueColor="text-red-400"
+            positive={false}
           />
-          <MetricItem
-            label="Profit Factor"
-            value={formatNum(metrics.profit_factor)}
-          />
-          <MetricItem
+          <Row label="Profit Factor" value={formatNum(metrics.profit_factor)} />
+          <BadgeRow
             label="Avg Win"
             value={`$${formatNum(metrics.avg_win)} (${formatNum(metrics.avg_win_pips, 1)} pips)`}
-            valueColor="text-green-400"
+            positive={true}
           />
-          <MetricItem
+          <BadgeRow
             label="Avg Loss"
             value={`$${formatNum(metrics.avg_loss)} (${formatNum(metrics.avg_loss_pips, 1)} pips)`}
-            valueColor="text-red-400"
+            positive={false}
           />
-          <MetricItem
-            label="Avg Win / Avg Loss"
-            value={formatNum(metrics.avg_win_loss_ratio)}
-          />
-          <MetricItem
+          <Row label="Avg Win / Avg Loss" value={formatNum(metrics.avg_win_loss_ratio)} />
+          <BadgeRow
             label="Best Trade"
             value={`$${formatNum(metrics.best_trade)}`}
-            valueColor="text-green-400"
+            positive={true}
           />
-          <MetricItem
+          <BadgeRow
             label="Worst Trade"
             value={`$${formatNum(metrics.worst_trade)}`}
-            valueColor="text-red-400"
+            positive={false}
           />
-          <MetricItem
+          <BadgeRow
             label="Expectancy"
             value={`${formatNum(metrics.expectancy_pips)} pips`}
-            valueColor={pctColor(metrics.expectancy_pips)}
+            positive={metrics.expectancy_pips >= 0}
           />
         </div>
 
-        <Separator className="bg-gray-800" />
+        {/* Right column: R-Multiple + Risk stacked */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          {/* R-Multiple */}
+          <div style={glassCard}>
+            <SectionTitle>R-Multiple</SectionTitle>
+            <BadgeRow
+              label="Avg R per Trade"
+              value={`${formatNum(metrics.avg_r_multiple)}R`}
+              positive={metrics.avg_r_multiple >= 0}
+            />
+            <BadgeRow
+              label="Total R"
+              value={`${formatNum(metrics.total_r)}R`}
+              positive={metrics.total_r >= 0}
+            />
+            <BadgeRow
+              label="Avg R per Month"
+              value={`${formatNum(metrics.avg_r_per_month)}R`}
+              positive={metrics.avg_r_per_month >= 0}
+            />
+          </div>
 
-        {/* R-Multiple */}
-        <div>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-            R-Multiple
-          </h4>
-          <MetricItem
-            label="Avg R per Trade"
-            value={`${formatNum(metrics.avg_r_multiple)}R`}
-            valueColor={pctColor(metrics.avg_r_multiple)}
-          />
-          <MetricItem
-            label="Total R"
-            value={`${formatNum(metrics.total_r)}R`}
-            valueColor={pctColor(metrics.total_r)}
-          />
-          <MetricItem
-            label="Avg R per Month"
-            value={`${formatNum(metrics.avg_r_per_month)}R`}
-            valueColor={pctColor(metrics.avg_r_per_month)}
-          />
+          {/* Risk */}
+          <div style={glassCard}>
+            <SectionTitle>Risk</SectionTitle>
+            <BadgeRow
+              label="Max Drawdown"
+              value={formatPct(-Math.abs(metrics.max_drawdown_pct))}
+              positive={false}
+            />
+            <Row label="Calmar Ratio" value={formatNum(metrics.calmar_ratio)} />
+            <Row
+              label="Longest Drawdown"
+              value={`${metrics.longest_drawdown_days.toFixed(0)} days`}
+            />
+          </div>
         </div>
+      </div>
 
-        <Separator className="bg-gray-800" />
-
-        {/* Risk */}
-        <div>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-            Risk
-          </h4>
-          <MetricItem
-            label="Max Drawdown"
-            value={formatPct(-Math.abs(metrics.max_drawdown_pct))}
-            valueColor="text-red-400"
-          />
-          <MetricItem
-            label="Calmar Ratio"
-            value={formatNum(metrics.calmar_ratio)}
-          />
-          <MetricItem
-            label="Longest Drawdown"
-            value={`${metrics.longest_drawdown_days.toFixed(0)} days`}
-          />
-        </div>
-
-        {/* Monthly R Breakdown */}
-        {monthlyR && monthlyR.length > 0 && (
-          <>
-            <Separator className="bg-gray-800" />
-            <div>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                Monthly R
-              </h4>
-              {monthlyR.map((row) => (
-                <MetricItem
-                  key={row.month}
-                  label={`${row.month} (${row.trade_count} trades)`}
-                  value={row.r_earned != null ? `${row.r_earned.toFixed(2)}R` : "—"}
-                  valueColor={row.r_earned != null ? pctColor(row.r_earned) : undefined}
+      {/* Monthly R */}
+      {monthlyR && monthlyR.length > 0 && (
+        <div style={glassCard}>
+          <h3
+            style={{
+              fontSize: "11px",
+              fontWeight: 600,
+              color: "rgba(255,255,255,0.4)",
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              marginBottom: "12px",
+              fontFamily: FONT,
+            }}
+          >
+            Monthly R
+          </h3>
+          {monthlyR.map((row) => (
+            <div
+              key={row.month}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "5px 0",
+              }}
+            >
+              <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)" }}>
+                {row.month} ({row.trade_count} trades)
+              </span>
+              {row.r_earned != null ? (
+                <GlowBadge
+                  value={`${row.r_earned.toFixed(2)}R`}
+                  positive={row.r_earned >= 0}
                 />
-              ))}
+              ) : (
+                <span style={{ color: "rgba(255,255,255,0.3)", fontSize: "13px" }}>—</span>
+              )}
             </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

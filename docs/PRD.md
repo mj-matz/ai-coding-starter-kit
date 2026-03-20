@@ -23,7 +23,9 @@ A personal web-based backtesting platform for systematic trading strategies. The
 | P0 (MVP) | Backtest History (per User) | Planned |
 | P1 | Strategy Library (Plugin System) | Planned |
 | P1 | Trade Journal (Manual) | Planned |
-| P1 | GAP Fill Toggle | Planned |
+| P1 | GAP Fill Toggle | Deployed |
+| P1 | Dukascopy Download Reliability (Retry + Adaptive Concurrency) | Planned |
+| P1 | Cache Warming (Background Prefetch) | Planned |
 
 ## Success Metrics
 - Backtesting engine produces identical results on repeated runs (deterministic)
