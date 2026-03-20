@@ -337,6 +337,7 @@ class BacktestConfigRequest(BaseModel):
     timezone: str = "UTC"                                                                    # IANA timezone (BUG-7)
     trail_trigger_pips: Optional[float] = Field(default=None, gt=0)
     trail_lock_pips: Optional[float] = Field(default=None, ge=0)                            # ge=0 allows 0.0 (breakeven); engine also defaults None → 0.0
+    gap_fill: bool = False
 
     @field_validator("timezone")
     @classmethod
@@ -537,6 +538,7 @@ async def backtest_run(
         timezone=cfg.timezone,
         trail_trigger_pips=cfg.trail_trigger_pips,
         trail_lock_pips=cfg.trail_lock_pips,
+        gap_fill=cfg.gap_fill,
     )
 
     try:
@@ -758,6 +760,7 @@ class BacktestOrchestrationRequest(BaseModel):
     entryDelayBars: int = Field(default=1, ge=0)  # 0 = first bar at range_end, 1 = one bar later (default)
     trailTriggerPips: Optional[float] = Field(default=None, gt=0)
     trailLockPips: Optional[float] = Field(default=None, gt=0)
+    gapFill: bool = False
 
 
 class BacktestMetricsOut(BaseModel):
@@ -1039,6 +1042,7 @@ async def backtest_orchestrate(
         slippage_pips=request.slippage,
         time_exit=request.timeExit,
         timezone=instrument["timezone"],
+        gap_fill=request.gapFill,
     )
 
     try:

@@ -21,11 +21,13 @@ import { Separator } from "@/components/ui/separator";
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import { Switch } from "@/components/ui/switch";
 
 import { StrategyParams } from "@/components/backtest/strategy-params";
 import { AssetCombobox } from "@/components/backtest/asset-combobox";
@@ -385,6 +387,37 @@ export function ConfigurationPanel({
                 )}
                 </div>
               </div>
+            </div>
+
+            <Separator className="bg-gray-800" />
+
+            {/* Simulation Options */}
+            <div>
+              <h3 className="mb-3 text-sm font-medium text-gray-400">
+                Simulation Options
+              </h3>
+              <FormField
+                control={form.control}
+                name="gapFill"
+                render={({ field }) => (
+                  <FormItem className="flex items-center justify-between rounded-md border border-gray-700 bg-gray-900 px-4 py-3">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-gray-300">Gap Fill</FormLabel>
+                      <FormDescription className="text-xs text-gray-500">
+                        Gaps bei Markteröffnung führen zu schlechteren Fills.
+                        Aus = TradingView-kompatibler Modus (Standard).
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        aria-label="Gap Fill aktivieren"
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
             </div>
 
             <Button

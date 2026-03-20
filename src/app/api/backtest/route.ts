@@ -34,6 +34,7 @@ const BacktestRequestSchema = z
     entryDelayBars: z.number().int().min(0).default(1),
     trailTriggerPips: z.number().positive().optional(),
     trailLockPips: z.number().positive().optional(),
+    gapFill: z.boolean().default(false),
   })
   .refine((data) => new Date(data.endDate) > new Date(data.startDate), {
     message: "End date must be after start date",

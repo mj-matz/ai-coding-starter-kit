@@ -37,6 +37,9 @@ export const backtestFormSchema = z
     trailTriggerPips: z.coerce.number().positive("Trail trigger must be > 0").optional(),
     trailLockPips: z.coerce.number().positive("Trail lock must be > 0").optional(),
 
+    // Simulation options
+    gapFill: z.boolean().default(false),
+
     // Capital & sizing
     initialCapital: z.coerce.number().positive("Initial capital must be > 0"),
     sizingMode: z.enum(["risk_percent", "fixed_lot"]),
@@ -107,6 +110,7 @@ export const defaultFormValues: BacktestFormValues = {
   entryDelayBars: 1,
   trailTriggerPips: undefined,
   trailLockPips: undefined,
+  gapFill: false,
   initialCapital: 10000,
   sizingMode: "risk_percent",
   riskPercent: 1.0,

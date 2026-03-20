@@ -32,6 +32,7 @@ class BacktestConfig:
     timezone: str = "UTC"                   # IANA timezone for time_exit, e.g. "Europe/Berlin"
     trail_trigger_pips: Optional[float] = None  # unrealised profit threshold to step SL
     trail_lock_pips: Optional[float] = None     # pips from entry to which SL is moved
+    gap_fill: bool = False                      # True = realistic gap behaviour; False = TradingView-compatible exact fills
 
 
 @dataclass
