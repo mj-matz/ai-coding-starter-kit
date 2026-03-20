@@ -1,6 +1,6 @@
 # PROJ-12: GAP Fill Toggle
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-03-20
 **Last Updated:** 2026-03-20
 
@@ -146,4 +146,7 @@ Keine neuen Packages. `src/components/ui/switch.tsx` ist bereits installiert.
 Der Default-Wechsel von implizit `True` auf `False` ist im Spec als bewusste Entscheidung dokumentiert (Technical Requirements). Da aktuell nur ein einziger Nutzer existiert, gibt es kein Migrations- oder Kommunikationsproblem — kein Handlungsbedarf.
 
 ## Deployment
-_To be added by /deploy_
+
+**Deployed:** 2026-03-20
+**Commit:** 69e9a46
+**Branch:** main → auto-deploy via Vercel
