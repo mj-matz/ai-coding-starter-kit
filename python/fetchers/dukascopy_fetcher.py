@@ -21,9 +21,15 @@ from typing import Optional
 import httpx
 import pandas as pd
 
-from config import FETCH_TIMEOUT_SECONDS
-
 logger = logging.getLogger(__name__)
+
+
+class _HourDownloadError(Exception):
+    """Raised by _download_hour when a network or decode error occurs.
+
+    Distinct from returning None, which means the hour has no trading data
+    (404 or empty file — a normal, expected outcome for holidays/weekends).
+    """
 
 # ── Symbol mapping ────────────────────────────────────────────────────────────
 
@@ -110,15 +116,23 @@ def _download_hour(
     point: int,
     client: httpx.Client,
 ) -> Optional[pd.DataFrame]:
-    """Download and decode one hour of tick data. Returns None when no data."""
+    """Download and decode one hour of tick data.
+
+    Returns:
+        DataFrame with tick rows, or None when the hour has no trading data
+        (404 or empty file — normal for weekends/holidays).
+
+    Raises:
+        _HourDownloadError: On network errors, unexpected HTTP status codes,
+            or LZMA decode failures. The caller can retry these.
+    """
     url = _hour_url(duka_symbol, dt)
     try:
-        resp = client.get(url, timeout=20)
+        resp = client.get(url)
         if resp.status_code == 404 or len(resp.content) == 0:
             return None  # Normal: weekend / holiday / no trading that hour
         if resp.status_code != 200:
-            logger.debug("HTTP %d for %s", resp.status_code, url)
-            return None
+            raise _HourDownloadError(f"HTTP {resp.status_code}")
 
         raw = lzma.decompress(resp.content)
         n = len(raw) // _TICK_SIZE
@@ -142,11 +156,53 @@ def _download_hour(
             )
         return pd.DataFrame(rows)
 
-    except lzma.LZMAError:
-        return None  # Corrupt or truncated file — skip
+    except _HourDownloadError:
+        raise
+    except lzma.LZMAError as exc:
+        raise _HourDownloadError(f"LZMA decode error: {exc}") from exc
     except Exception as exc:
-        logger.debug("Error for %s: %s", url, exc)
-        return None
+        raise _HourDownloadError(str(exc)) from exc
+
+
+def _run_downloads(
+    hours: list[datetime],
+    duka_symbol: str,
+    point: int,
+) -> tuple[list[pd.DataFrame], list[datetime]]:
+    """Download a list of hours concurrently.
+
+    Uses a 5s connect timeout and 20s read timeout per request. Waits for all
+    futures to complete (no global wall-clock timeout) so results are
+    deterministic regardless of network latency order.
+
+    Returns:
+        (frames, failed_hours): frames with tick data, and hours that raised
+        _HourDownloadError (network/decode failures — candidates for retry).
+    """
+    frames: list[pd.DataFrame] = []
+    failed: list[datetime] = []
+    timeout = httpx.Timeout(20.0, connect=5.0)
+    with httpx.Client(follow_redirects=True, timeout=timeout) as client:
+        with ThreadPoolExecutor(max_workers=24) as executor:
+            future_map = {
+                executor.submit(_download_hour, duka_symbol, h, point, client): h
+                for h in hours
+            }
+            for future in as_completed(future_map):
+                h = future_map[future]
+                try:
+                    result = future.result()
+                    if result is not None:
+                        frames.append(result)
+                except _HourDownloadError as exc:
+                    logger.warning(
+                        "Download failed for %s %s: %s",
+                        duka_symbol,
+                        h.strftime("%Y-%m-%d %H:00 UTC"),
+                        exc,
+                    )
+                    failed.append(h)
+    return frames, failed
 
 
 def fetch_dukascopy(
@@ -168,7 +224,8 @@ def fetch_dukascopy(
 
     Returns:
         DataFrame with columns: datetime (UTC), open, high, low, close, volume.
-        May be partial if a timeout occurred (warning is logged).
+        attrs["partial"] = True if some hours could not be downloaded even after
+        one retry (result will not be cached).
 
     Raises:
         ValueError: No data found or symbol unsupported.
@@ -199,42 +256,29 @@ def fetch_dukascopy(
         hour_range_str,
     )
 
-    frames: list[pd.DataFrame] = []
-    partial_timeout = False
-    with httpx.Client(follow_redirects=True) as client:
-        with ThreadPoolExecutor(max_workers=24) as executor:
-            future_map = {
-                executor.submit(_download_hour, duka_symbol, h, point, client): h
-                for h in hours
-            }
-            try:
-                for future in as_completed(future_map, timeout=FETCH_TIMEOUT_SECONDS):
-                    result = future.result()
-                    if result is not None:
-                        frames.append(result)
-            except TimeoutError:
-                partial_timeout = True
-                logger.warning(
-                    "Timeout after %ds: partial fetch for %s — %d of %d hours downloaded",
-                    FETCH_TIMEOUT_SECONDS,
-                    symbol,
-                    len(frames),
-                    len(hours),
-                )
+    # First pass
+    frames, failed_hours = _run_downloads(hours, duka_symbol, point)
+
+    # Retry any hours that raised a download error (transient network issues)
+    partial = False
+    if failed_hours:
+        logger.info("Retrying %d failed hours for %s...", len(failed_hours), symbol)
+        retry_frames, still_failed = _run_downloads(failed_hours, duka_symbol, point)
+        frames.extend(retry_frames)
+        if still_failed:
+            partial = True
+            logger.warning(
+                "%d hour(s) permanently failed for %s after retry — result will NOT be cached: %s",
+                len(still_failed),
+                symbol,
+                [h.strftime("%Y-%m-%d %H:00 UTC") for h in sorted(still_failed)],
+            )
 
     if not frames:
         raise ValueError(
             f"No data returned from Dukascopy for {symbol} ({duka_symbol}) "
             f"between {date_from} and {date_to}. "
             "The symbol may be unsupported or the date range may have no trading data."
-        )
-
-    if partial_timeout:
-        logger.warning(
-            "Returning partial data for %s (%d of %d hours) — cache will NOT be written for incomplete fetch",
-            symbol,
-            len(frames),
-            len(hours),
         )
 
     ticks = pd.concat(frames, ignore_index=True).sort_values("datetime")
@@ -258,7 +302,7 @@ def fetch_dukascopy(
     )
     ohlcv = ohlcv.dropna(subset=["open"]).reset_index()
 
-    if partial_timeout:
+    if partial:
         ohlcv.attrs["partial"] = True
 
     logger.info("Fetched %d 1-minute bars for %s", len(ohlcv), symbol)
