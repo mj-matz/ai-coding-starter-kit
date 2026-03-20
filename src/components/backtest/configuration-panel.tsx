@@ -28,6 +28,12 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Switch } from "@/components/ui/switch";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 import { StrategyParams } from "@/components/backtest/strategy-params";
 import { AssetCombobox } from "@/components/backtest/asset-combobox";
@@ -51,9 +57,13 @@ const STRATEGIES = [
 
 const TIMEFRAMES = [
   { value: "1m", label: "1 minute" },
+  { value: "2m", label: "2 minutes" },
+  { value: "3m", label: "3 minutes" },
   { value: "5m", label: "5 minutes" },
   { value: "15m", label: "15 minutes" },
+  { value: "30m", label: "30 minutes" },
   { value: "1h", label: "1 hour" },
+  { value: "4h", label: "4 hours" },
   { value: "1d", label: "1 day" },
 ];
 
@@ -401,18 +411,23 @@ export function ConfigurationPanel({
                 name="gapFill"
                 render={({ field }) => (
                   <FormItem className="flex items-center justify-between rounded-md border border-gray-700 bg-gray-900 px-4 py-3">
-                    <div className="space-y-0.5">
-                      <FormLabel className="text-gray-300">Gap Fill</FormLabel>
-                      <FormDescription className="text-xs text-gray-500">
-                        Gaps bei Markteröffnung führen zu schlechteren Fills.
-                        Aus = TradingView-kompatibler Modus (Standard).
-                      </FormDescription>
-                    </div>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <FormLabel className="cursor-help text-gray-300 underline decoration-dotted underline-offset-2">
+                            Gap Fill
+                          </FormLabel>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-60">
+                          Gaps at market open lead to worse fills. Off = TradingView-compatible mode (default).
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                     <FormControl>
                       <Switch
                         checked={field.value}
                         onCheckedChange={field.onChange}
-                        aria-label="Gap Fill aktivieren"
+                        aria-label="Enable Gap Fill"
                       />
                     </FormControl>
                   </FormItem>

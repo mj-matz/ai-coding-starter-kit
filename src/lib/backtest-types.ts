@@ -9,7 +9,7 @@ export const backtestFormSchema = z
       .string()
       .min(1, "Symbol is required")
       .regex(/^[A-Z0-9.]+$/i, "Invalid symbol format"),
-    timeframe: z.enum(["1m", "5m", "15m", "1h", "1d"]),
+    timeframe: z.enum(["1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"]),
     startDate: z.string().min(1, "Start date is required"),
     endDate: z.string().min(1, "End date is required"),
 

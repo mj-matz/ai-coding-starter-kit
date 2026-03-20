@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 # Mapping of timeframe strings to pandas resample rule
 TIMEFRAME_TO_RULE = {
     "1m": "1min",
+    "2m": "2min",
+    "3m": "3min",
     "5m": "5min",
     "15m": "15min",
     "30m": "30min",

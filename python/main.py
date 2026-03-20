@@ -61,7 +61,7 @@ app.add_middleware(
 
 
 # Valid timeframes per source
-DUKASCOPY_TIMEFRAMES = {"1m", "5m", "15m", "30m", "1h", "4h", "1d"}
+DUKASCOPY_TIMEFRAMES = {"1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"}
 
 
 def _validate_timeframe(source: str, timeframe: str) -> None:
@@ -818,9 +818,13 @@ class CandleOut(BaseModel):
 # Timeframe → buffer before entry / after exit for the candles endpoint
 _CANDLE_BUFFER: dict[str, timedelta] = {
     "1m": timedelta(minutes=30),
+    "2m": timedelta(hours=1),
+    "3m": timedelta(hours=2),
     "5m": timedelta(hours=2),
     "15m": timedelta(hours=6),
+    "30m": timedelta(hours=12),
     "1h": timedelta(hours=48),
+    "4h": timedelta(days=7),
     "1d": timedelta(weeks=4),
 }
 
