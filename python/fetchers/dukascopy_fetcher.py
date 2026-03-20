@@ -201,7 +201,7 @@ def fetch_dukascopy(
 
     frames: list[pd.DataFrame] = []
     partial_timeout = False
-    with ThreadPoolExecutor(max_workers=24) as executor:
+    with ThreadPoolExecutor(max_workers=6) as executor:
         future_map = {
             executor.submit(_download_hour, duka_symbol, h, point): h
             for h in hours
