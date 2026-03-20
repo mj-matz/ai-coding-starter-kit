@@ -2,7 +2,7 @@
 
 ## Status: Deployed
 **Created:** 2026-03-09
-**Last Updated:** 2026-03-14
+**Last Updated:** 2026-03-20
 
 ## Dependencies
 - Requires: PROJ-1 (Data Fetcher) — UI triggers data download
@@ -11,6 +11,7 @@
 - Requires: PROJ-4 (Performance Analytics) — UI displays computed metrics
 - Requires: PROJ-8 (Authentication) — all routes are protected; user session required
 - Extended by: PROJ-9 (Backtest History) — adds "Save Run" button and history view to this UI
+- Extended by: PROJ-10 (Backtest Progress Streaming) — ersetzt Loading State (Spinner) durch Progress Bar mit Tagesfortschritt
 
 ## User Stories
 - As a trader, I want a configuration form where I select strategy template, asset, timeframe, date range, and strategy parameters so that I can define a backtest in one place.
@@ -46,7 +47,7 @@
 - [ ] Last configuration is persisted in localStorage and restored on page load
 
 ### Results Dashboard
-- [ ] Loading state shown while backtest runs (spinner + "Running backtest…" message)
+- [ ] Loading state shown while backtest runs — Progress Bar (shadcn `Progress`) mit „X / Y Tage"-Label statt Spinner (implementiert durch PROJ-10; bis dahin: Spinner)
 - [ ] Error state shown if backtest fails (clear message, no crash)
 - [ ] Empty state shown if no trades were generated
 - [ ] Equity Curve chart: line chart, x-axis = date, y-axis = account balance
@@ -185,9 +186,9 @@ This keeps the frontend simple: one request in, full results out. The multi-step
 | Long-running UX | 30s timeout warning + cancel | Prevents confusion without streaming complexity in MVP |
 | API design | New orchestration endpoint | Keeps UI simple; hides multi-step backend pipeline |
 
-### Future Consideration (PROJ-6 or later)
+### Future Consideration — Addressed by PROJ-10
 
-If FastAPI processing regularly exceeds 30 seconds (e.g. large date ranges or tick-level data), replace the simple HTTP request + timeout with **Server-Sent Events (SSE)** or a **WebSocket** connection. This would allow a real progress bar with named stages ("Fetching data…", "Computing signals…", "Running engine…") instead of a generic spinner. The UI component boundary for this is already isolated in `LoadingState`, making the upgrade straightforward.
+~~If FastAPI processing regularly exceeds 30 seconds, replace the simple HTTP request + timeout with SSE or a WebSocket connection.~~ → **Umgesetzt in PROJ-10 (Backtest Progress Streaming):** SSE-Streaming mit tagesgenauem Fortschrittsbalken.
 
 ### New Dependencies
 

@@ -1049,6 +1049,10 @@ async def backtest_orchestrate(
         logger.error(f"Backtest engine error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal engine error.")
 
+    # Days where pending orders expired without triggering (Trigger Deadline days)
+    for d_str in result.expired_order_dates:
+        skipped_days.append(SkippedDay(date=d_str, reason="TRIGGER_EXPIRED"))
+
     # ── 7. Calculate analytics ────────────────────────────────────────────────
     try:
         analytics_result = calculate_analytics(result)

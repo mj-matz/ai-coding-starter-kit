@@ -57,7 +57,8 @@ class Trade:
 class BacktestResult:
     """Output of run_backtest()."""
 
-    trades: list          # List[Trade]
-    equity_curve: list    # List[{"time": str, "balance": float}]
+    trades: list                  # List[Trade]
+    equity_curve: list            # List[{"time": str, "balance": float}]
     final_balance: float
     initial_balance: float
+    expired_order_dates: list     # List[str] — local-tz dates where pending orders expired without triggering

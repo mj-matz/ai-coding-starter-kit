@@ -21,7 +21,9 @@
 | PROJ-7 | Trade Journal (Manual) | Planned | [PROJ-7-trade-journal.md](PROJ-7-trade-journal.md) | 2026-03-09 |
 | PROJ-8 | Authentication (Admin Login) | Deployed | [PROJ-8-authentication.md](PROJ-8-authentication.md) | 2026-03-10 |
 | PROJ-9 | Backtest History | In Progress | [PROJ-9-backtest-history.md](PROJ-9-backtest-history.md) | 2026-03-10 |
+| PROJ-10 | Backtest Progress Streaming | Planned | [PROJ-10-backtest-progress-streaming.md](PROJ-10-backtest-progress-streaming.md) | 2026-03-20 |
+| PROJ-11 | Engine Performance Optimization (NumPy + Breakout) | Planned | [PROJ-11-engine-performance-optimization.md](PROJ-11-engine-performance-optimization.md) | 2026-03-20 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-10
+## Next Available ID: PROJ-12

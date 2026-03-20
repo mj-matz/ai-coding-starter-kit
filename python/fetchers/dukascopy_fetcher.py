@@ -108,12 +108,11 @@ def _download_hour(
     duka_symbol: str,
     dt: datetime,
     point: int,
-    client: httpx.Client,
 ) -> Optional[pd.DataFrame]:
     """Download and decode one hour of tick data. Returns None when no data."""
     url = _hour_url(duka_symbol, dt)
     try:
-        resp = client.get(url, timeout=20)
+        resp = httpx.get(url, timeout=20, follow_redirects=True)
         if resp.status_code == 404 or len(resp.content) == 0:
             return None  # Normal: weekend / holiday / no trading that hour
         if resp.status_code != 200:
@@ -202,26 +201,25 @@ def fetch_dukascopy(
 
     frames: list[pd.DataFrame] = []
     partial_timeout = False
-    with httpx.Client(follow_redirects=True) as client:
-        with ThreadPoolExecutor(max_workers=24) as executor:
-            future_map = {
-                executor.submit(_download_hour, duka_symbol, h, point, client): h
-                for h in hours
-            }
-            try:
-                for future in as_completed(future_map, timeout=FETCH_TIMEOUT_SECONDS):
-                    result = future.result()
-                    if result is not None:
-                        frames.append(result)
-            except TimeoutError:
-                partial_timeout = True
-                logger.warning(
-                    "Timeout after %ds: partial fetch for %s — %d of %d hours downloaded",
-                    FETCH_TIMEOUT_SECONDS,
-                    symbol,
-                    len(frames),
-                    len(hours),
-                )
+    with ThreadPoolExecutor(max_workers=24) as executor:
+        future_map = {
+            executor.submit(_download_hour, duka_symbol, h, point): h
+            for h in hours
+        }
+        try:
+            for future in as_completed(future_map, timeout=FETCH_TIMEOUT_SECONDS):
+                result = future.result()
+                if result is not None:
+                    frames.append(result)
+        except TimeoutError:
+            partial_timeout = True
+            logger.warning(
+                "Timeout after %ds: partial fetch for %s — %d of %d hours downloaded",
+                FETCH_TIMEOUT_SECONDS,
+                symbol,
+                len(frames),
+                len(hours),
+            )
 
     if not frames:
         raise ValueError(

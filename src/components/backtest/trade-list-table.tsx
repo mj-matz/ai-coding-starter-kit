@@ -74,6 +74,7 @@ const REASON_LABELS: Record<string, string> = {
   FLAT_RANGE: "Flat range",
   NO_SIGNAL_BAR: "No signal bar",
   DEADLINE_MISSED: "Deadline missed",
+  TRIGGER_EXPIRED: "Trigger Deadline/Range",
 };
 
 export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe }: TradeListTableProps) {
@@ -230,7 +231,11 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe }:
                       <TableCell>
                         <Badge
                           variant="outline"
-                          className="border-gray-700 text-gray-500 text-[10px] px-1"
+                          className={
+                            s.reason === "TRIGGER_EXPIRED"
+                              ? "border-blue-700 text-blue-400 text-[10px] px-1"
+                              : "border-gray-700 text-gray-500 text-[10px] px-1"
+                          }
                         >
                           NT
                         </Badge>
@@ -242,9 +247,15 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe }:
                       <TableCell />
                       <TableCell />
                       <TableCell>
-                        <span className="text-xs text-gray-600 italic">
-                          {REASON_LABELS[s.reason] ?? s.reason}
-                        </span>
+                        {s.reason === "TRIGGER_EXPIRED" ? (
+                          <span className="text-xs text-blue-400 italic">
+                            {REASON_LABELS[s.reason]}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-600 italic">
+                            {REASON_LABELS[s.reason] ?? s.reason}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell />
                     </TableRow>

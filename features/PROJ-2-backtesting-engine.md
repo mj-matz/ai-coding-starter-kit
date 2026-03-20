@@ -2,10 +2,11 @@
 
 ## Status: Deployed
 **Created:** 2026-03-09
-**Last Updated:** 2026-03-12 (Deployed to production)
+**Last Updated:** 2026-03-20
 
 ## Dependencies
 - Requires: PROJ-1 (Data Fetcher) — engine consumes OHLCV DataFrames produced by the fetcher
+- Extended by: PROJ-10 (Backtest Progress Streaming) — fügt optionalen `progress_callback` Parameter zu `run_backtest()` hinzu
 
 ## User Stories
 - As a trader, I want the engine to simulate orders bar-by-bar so that there is no look-ahead bias in the results.
@@ -35,6 +36,7 @@
   - `TIME` — position force-closed at configured time exit
 - [ ] Engine output includes an equity curve: time series of account balance after each closed trade
 - [ ] Engine is callable as a pure Python function — no side effects, fully testable in isolation
+- [ ] `run_backtest()` akzeptiert einen optionalen `progress_callback: Callable[[int, int, str], None]`-Parameter (days_done, total_days, date_str); wird einmal pro Handelstag aufgerufen — bestehende Aufrufe ohne Callback sind unverändert (PROJ-10)
 - [ ] Conditional SL step supported: if `trail_trigger_pips` is set and open trade profit reaches that level, SL is moved to `trail_lock_pips` above/below entry price (long/short respectively) — this adjustment happens exactly once per trade
 - [ ] If the price never reaches `trail_trigger_pips`, the original SL remains unchanged
 - [ ] `trail_trigger_pips` and `trail_lock_pips` are optional; if not set, engine behaves as fixed SL only
