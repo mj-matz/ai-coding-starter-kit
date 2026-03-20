@@ -117,7 +117,7 @@ def _download_hour(
         if resp.status_code == 404 or len(resp.content) == 0:
             return None  # Normal: weekend / holiday / no trading that hour
         if resp.status_code != 200:
-            logger.debug("HTTP %d for %s", resp.status_code, url)
+            logger.warning("Unexpected HTTP %d for %s — hour skipped", resp.status_code, url)
             return None
 
         raw = lzma.decompress(resp.content)
@@ -142,10 +142,11 @@ def _download_hour(
             )
         return pd.DataFrame(rows)
 
-    except lzma.LZMAError:
-        return None  # Corrupt or truncated file — skip
+    except lzma.LZMAError as exc:
+        logger.warning("LZMA decode error for %s — hour skipped: %s", url, exc)
+        return None
     except Exception as exc:
-        logger.debug("Error for %s: %s", url, exc)
+        logger.warning("Download error for %s — hour skipped: %s", url, exc)
         return None
 
 
