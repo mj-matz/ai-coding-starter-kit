@@ -418,7 +418,7 @@ export function ConfigurationPanel({
                             Gap Fill
                           </FormLabel>
                         </TooltipTrigger>
-                        <TooltipContent className="max-w-60">
+                        <TooltipContent side="top" align="start" className="max-w-72">
                           Gaps at market open lead to worse fills. Off = TradingView-compatible mode (default).
                         </TooltipContent>
                       </Tooltip>
