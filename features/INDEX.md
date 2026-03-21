@@ -24,7 +24,7 @@
 | PROJ-10 | Backtest Progress Streaming | Planned | [PROJ-10-backtest-progress-streaming.md](PROJ-10-backtest-progress-streaming.md) | 2026-03-20 |
 | PROJ-11 | Engine Performance Optimization (NumPy + Breakout) | Deployed | [PROJ-11-engine-performance-optimization.md](PROJ-11-engine-performance-optimization.md) | 2026-03-20 |
 | PROJ-12 | GAP Fill Toggle | Deployed | [PROJ-12-gap-fill-toggle.md](PROJ-12-gap-fill-toggle.md) | 2026-03-20 |
-| PROJ-13 | Dukascopy Download Reliability (Retry + Adaptive Concurrency) | In Review | [PROJ-13-dukascopy-download-reliability.md](PROJ-13-dukascopy-download-reliability.md) | 2026-03-21 |
+| PROJ-13 | Dukascopy Download Reliability (Retry + Adaptive Concurrency) | Deployed | [PROJ-13-dukascopy-download-reliability.md](PROJ-13-dukascopy-download-reliability.md) | 2026-03-21 |
 | PROJ-14 | Cache Warming (Background Prefetch) | Planned | [PROJ-14-cache-warming.md](PROJ-14-cache-warming.md) | 2026-03-21 |
 
 <!-- Add features above this line -->

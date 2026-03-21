@@ -101,10 +101,6 @@ class AdaptiveConcurrencyController:
                 )
 
 
-# ── Module-level controller (reused across calls within a process) ───────────
-
-_controller = AdaptiveConcurrencyController()
-
 # ── Symbol mapping ────────────────────────────────────────────────────────────
 
 DUKASCOPY_SYMBOLS: dict[str, str] = {
@@ -352,11 +348,12 @@ def fetch_dukascopy(
         hour_range_str,
     )
 
+    controller = AdaptiveConcurrencyController()
     frames: list[pd.DataFrame] = []
     partial_timeout = False
     with ThreadPoolExecutor(max_workers=THREAD_POOL_HARD_CEILING) as executor:
         future_map = {
-            executor.submit(_download_hour, duka_symbol, h, point, _controller): h
+            executor.submit(_download_hour, duka_symbol, h, point, controller): h
             for h in hours
         }
         try:
