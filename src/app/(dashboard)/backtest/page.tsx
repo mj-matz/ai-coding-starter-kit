@@ -10,9 +10,13 @@ export default function BacktestPage() {
   const { status, result, error, isTimedOut, runBacktest, cancel } =
     useBacktest();
   const [initialCapital, setInitialCapital] = useState(10000);
+  const [rangeStart, setRangeStart] = useState("02:00");
+  const [rangeEnd, setRangeEnd] = useState("06:00");
 
   function handleRunBacktest(config: BacktestFormValues) {
     setInitialCapital(config.initialCapital);
+    setRangeStart(config.rangeStart);
+    setRangeEnd(config.rangeEnd);
     runBacktest(config);
   }
 
@@ -45,6 +49,8 @@ export default function BacktestPage() {
             isTimedOut={isTimedOut}
             onCancel={cancel}
             initialCapital={initialCapital}
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
           />
         </div>
       </div>

@@ -29,6 +29,8 @@ interface ResultsPanelProps {
   isTimedOut: boolean;
   onCancel: () => void;
   initialCapital: number;
+  rangeStart: string;
+  rangeEnd: string;
 }
 
 function EmptyState() {
@@ -121,6 +123,8 @@ export function ResultsPanel({
   isTimedOut,
   onCancel,
   initialCapital,
+  rangeStart,
+  rangeEnd,
 }: ResultsPanelProps) {
   if (status === "loading") {
     return <LoadingState isTimedOut={isTimedOut} onCancel={onCancel} />;
@@ -171,6 +175,8 @@ export function ResultsPanel({
             skippedDays={result.skipped_days ?? []}
             cacheId={result.cache_id}
             timeframe={result.timeframe}
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
           />
         </TabsContent>
       </Tabs>

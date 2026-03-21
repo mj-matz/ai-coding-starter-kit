@@ -22,6 +22,8 @@ interface TradeListTableProps {
   skippedDays?: SkippedDay[];
   cacheId?: string;
   timeframe: string;
+  rangeStart: string;
+  rangeEnd: string;
 }
 
 type SortField = "entry_time" | "pnl_pips" | "duration_minutes";
@@ -76,7 +78,7 @@ const REASON_LABELS: Record<string, string> = {
   TRIGGER_EXPIRED: "Trigger Deadline/Range",
 };
 
-export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe }: TradeListTableProps) {
+export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, rangeStart, rangeEnd }: TradeListTableProps) {
   const [sortField, setSortField] = useState<SortField>("entry_time");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [page, setPage] = useState(0);
@@ -394,6 +396,8 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe }:
         onOpenChange={setChartOpen}
         cacheId={cacheId}
         timeframe={timeframe}
+        rangeStart={rangeStart}
+        rangeEnd={rangeEnd}
       />
     </div>
   );

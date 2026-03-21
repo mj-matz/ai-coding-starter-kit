@@ -9,7 +9,7 @@ const CandlesQuerySchema = z.object({
   cache_id: z.string().uuid("cache_id must be a valid UUID"),
   entry_time: z.string().min(1, "entry_time is required"),
   exit_time: z.string().min(1, "exit_time is required"),
-  timeframe: z.enum(["1m", "5m", "15m", "1h", "1d"]),
+  timeframe: z.enum(["1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"]),
 });
 
 export async function GET(request: NextRequest) {

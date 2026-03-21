@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { format, parseISO } from "date-fns";
-import { createChart, CandlestickSeries, LineStyle, createSeriesMarkers } from "lightweight-charts";
+import { createChart, CandlestickSeries, BaselineSeries, createSeriesMarkers } from "lightweight-charts";
 import type { IChartApi, UTCTimestamp } from "lightweight-charts";
 
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,8 @@ interface TradeChartDialogProps {
   onOpenChange: (open: boolean) => void;
   cacheId: string | undefined;
   timeframe: string;
+  rangeStart: string; // HH:MM (local time)
+  rangeEnd: string;   // HH:MM (local time)
 }
 
 interface CandleCache {
@@ -37,15 +39,37 @@ function formatDateTime(dateStr: string): string {
   }
 }
 
-export function TradeChartDialog({ trade, open, onOpenChange, cacheId, timeframe }: TradeChartDialogProps) {
+// Shift a UTC unix timestamp to local time so lightweight-charts (which renders
+// timestamps as-if UTC) displays the correct local time on the time axis.
+function toChartTime(utcSeconds: number): UTCTimestamp {
+  const tzOffsetSec = -new Date().getTimezoneOffset() * 60;
+  return (utcSeconds + tzOffsetSec) as UTCTimestamp;
+}
+
+// Build the UTC unix timestamp for a given HH:MM local time on the same
+// calendar day as `referenceDateStr` (an ISO date-time string).
+function buildLocalTimestamp(referenceDateStr: string, timeHHMM: string): number {
+  const refDate = new Date(referenceDateStr);
+  // toLocaleDateString with en-CA gives "YYYY-MM-DD" in the browser's local timezone.
+  const localDate = refDate.toLocaleDateString("en-CA");
+  // No trailing 'Z' → Date constructor treats it as local time → getTime() is UTC ms.
+  return new Date(`${localDate}T${timeHHMM}:00`).getTime() / 1000;
+}
+
+export function TradeChartDialog({
+  trade,
+  open,
+  onOpenChange,
+  cacheId,
+  timeframe,
+  rangeStart,
+  rangeEnd,
+}: TradeChartDialogProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
-  // Cache candles per trade id — avoids re-fetching when dialog re-opens for same trade.
-  // All setState calls are inside async fetch callbacks (no synchronous setState in effect body).
   const [candleCache, setCandleCache] = useState<CandleCache | null>(null);
 
-  // Derived: we need candles for this trade but don't have them yet
   const cacheHit = open && trade != null && candleCache?.tradeId === trade.id;
   const isLoadingCandles = open && trade != null && cacheId != null && !cacheHit;
   const candles = useMemo(
@@ -54,10 +78,10 @@ export function TradeChartDialog({ trade, open, onOpenChange, cacheId, timeframe
   );
   const candleError = cacheHit ? (candleCache?.error ?? null) : null;
 
-  // Fetch candles on-demand — no synchronous setState in effect body
+  // Fetch candles on-demand
   useEffect(() => {
     if (!open || !trade || !cacheId) return;
-    if (candleCache?.tradeId === trade.id) return; // already cached for this trade
+    if (candleCache?.tradeId === trade.id) return;
 
     const controller = new AbortController();
     const tradeId = trade.id;
@@ -100,24 +124,25 @@ export function TradeChartDialog({ trade, open, onOpenChange, cacheId, timeframe
       width: container.clientWidth,
       height: chartHeight,
       layout: {
-        background: { color: "#111118" },
-        textColor: "#9ca3af",
+        background: { color: "#ffffff" },
+        textColor: "#374151",
       },
       grid: {
-        vertLines: { color: "#1f2937" },
-        horzLines: { color: "#1f2937" },
+        vertLines: { color: "#f3f4f6" },
+        horzLines: { color: "#f3f4f6" },
       },
       crosshair: { mode: 0 },
       timeScale: {
-        borderColor: "#374151",
+        borderColor: "#d1d5db",
         timeVisible: true,
         secondsVisible: false,
       },
-      rightPriceScale: { borderColor: "#374151" },
+      rightPriceScale: { borderColor: "#d1d5db" },
     });
 
     chartRef.current = chart;
 
+    // ── Candlestick series ────────────────────────────────────────────────────
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: "#22c55e",
       downColor: "#ef4444",
@@ -129,7 +154,7 @@ export function TradeChartDialog({ trade, open, onOpenChange, cacheId, timeframe
 
     candleSeries.setData(
       candles.map((c) => ({
-        time: c.time as UTCTimestamp,
+        time: toChartTime(c.time),
         open: c.open,
         high: c.high,
         low: c.low,
@@ -139,90 +164,107 @@ export function TradeChartDialog({ trade, open, onOpenChange, cacheId, timeframe
 
     const isLong = trade.direction === "long";
 
-    candleSeries.createPriceLine({
-      price: trade.entry_price,
-      color: isLong ? "#22c55e" : "#ef4444",
-      lineWidth: 2,
-      lineStyle: LineStyle.Solid,
-      axisLabelVisible: true,
-      title: `Entry ${trade.entry_price.toFixed(2)}`,
-    });
+    // ── Range box (light blue) — from rangeStart to rangeEnd, range_low to range_high ──
+    if (trade.range_high > 0 && trade.range_low > 0 && rangeStart && rangeEnd) {
+      const rangeStartUtc = buildLocalTimestamp(trade.entry_time, rangeStart);
+      const rangeEndUtc   = buildLocalTimestamp(trade.entry_time, rangeEnd);
 
-    candleSeries.createPriceLine({
-      price: trade.exit_price,
-      color: isLong ? "#ef4444" : "#22c55e",
-      lineWidth: 2,
-      lineStyle: LineStyle.Solid,
-      axisLabelVisible: true,
-      title: `Exit ${trade.exit_price.toFixed(2)}`,
-    });
-
-    if (trade.stop_loss > 0) {
-      candleSeries.createPriceLine({
-        price: trade.stop_loss,
-        color: "#ef4444",
+      const rangeSeries = chart.addSeries(BaselineSeries, {
+        baseValue: { type: "price", price: trade.range_low },
+        topFillColor1: "rgba(96, 165, 250, 0.25)",
+        topFillColor2: "rgba(96, 165, 250, 0.25)",
+        bottomFillColor1: "rgba(0,0,0,0)",
+        bottomFillColor2: "rgba(0,0,0,0)",
+        topLineColor: "rgba(96, 165, 250, 0.8)",
+        bottomLineColor: "rgba(96, 165, 250, 0.8)",
         lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: "SL",
+        lastValueVisible: false,
+        priceLineVisible: false,
+        crosshairMarkerVisible: false,
       });
+
+      rangeSeries.setData([
+        { time: toChartTime(rangeStartUtc), value: trade.range_high },
+        { time: toChartTime(rangeEndUtc),   value: trade.range_high },
+      ]);
     }
 
-    if (trade.take_profit > 0) {
-      candleSeries.createPriceLine({
-        price: trade.take_profit,
-        color: "#22c55e",
+    // ── Trade zones (green TP / red SL) — from entry to exit ─────────────────
+    const entryUtc = Math.floor(new Date(trade.entry_time).getTime() / 1000);
+    const exitUtc  = Math.floor(new Date(trade.exit_time).getTime() / 1000);
+
+    if (trade.take_profit > 0 && trade.stop_loss > 0) {
+      // Green zone: profit area between entry_price and take_profit
+      // Long:  baseline=entry_price, value=take_profit  (tp > entry)
+      // Short: baseline=take_profit, value=entry_price  (entry > tp)
+      const greenBaseline = isLong ? trade.entry_price : trade.take_profit;
+      const greenValue    = isLong ? trade.take_profit  : trade.entry_price;
+
+      const greenSeries = chart.addSeries(BaselineSeries, {
+        baseValue: { type: "price", price: greenBaseline },
+        topFillColor1: "rgba(34, 197, 94, 0.18)",
+        topFillColor2: "rgba(34, 197, 94, 0.18)",
+        bottomFillColor1: "rgba(0,0,0,0)",
+        bottomFillColor2: "rgba(0,0,0,0)",
+        topLineColor: "rgba(0,0,0,0)",
+        bottomLineColor: "rgba(0,0,0,0)",
         lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: "TP",
+        lastValueVisible: false,
+        priceLineVisible: false,
+        crosshairMarkerVisible: false,
       });
+
+      greenSeries.setData([
+        { time: toChartTime(entryUtc), value: greenValue },
+        { time: toChartTime(exitUtc),  value: greenValue },
+      ]);
+
+      // Red zone: loss area between stop_loss and entry_price
+      // Long:  baseline=stop_loss,   value=entry_price  (entry > sl)
+      // Short: baseline=entry_price, value=stop_loss    (sl > entry)
+      const redBaseline = isLong ? trade.stop_loss   : trade.entry_price;
+      const redValue    = isLong ? trade.entry_price : trade.stop_loss;
+
+      const redSeries = chart.addSeries(BaselineSeries, {
+        baseValue: { type: "price", price: redBaseline },
+        topFillColor1: "rgba(239, 68, 68, 0.18)",
+        topFillColor2: "rgba(239, 68, 68, 0.18)",
+        bottomFillColor1: "rgba(0,0,0,0)",
+        bottomFillColor2: "rgba(0,0,0,0)",
+        topLineColor: "rgba(0,0,0,0)",
+        bottomLineColor: "rgba(0,0,0,0)",
+        lineWidth: 1,
+        lastValueVisible: false,
+        priceLineVisible: false,
+        crosshairMarkerVisible: false,
+      });
+
+      redSeries.setData([
+        { time: toChartTime(entryUtc), value: redValue },
+        { time: toChartTime(exitUtc),  value: redValue },
+      ]);
     }
 
-    if (trade.range_high > 0) {
-      candleSeries.createPriceLine({
-        price: trade.range_high,
-        color: "#f97316",
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: "Range High",
-      });
-    }
-
-    if (trade.range_low > 0) {
-      candleSeries.createPriceLine({
-        price: trade.range_low,
-        color: "#f97316",
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: "Range Low",
-      });
-    }
-
-    const entryTimestamp = Math.floor(new Date(trade.entry_time).getTime() / 1000);
+    // ── Entry / Exit markers ──────────────────────────────────────────────────
     const closestEntryCandle = candles.reduce((prev, curr) =>
-      Math.abs(curr.time - entryTimestamp) < Math.abs(prev.time - entryTimestamp) ? curr : prev
+      Math.abs(curr.time - entryUtc) < Math.abs(prev.time - entryUtc) ? curr : prev
     );
-
-    const exitTimestamp = Math.floor(new Date(trade.exit_time).getTime() / 1000);
     const closestExitCandle = candles.reduce((prev, curr) =>
-      Math.abs(curr.time - exitTimestamp) < Math.abs(prev.time - exitTimestamp) ? curr : prev
+      Math.abs(curr.time - exitUtc) < Math.abs(prev.time - exitUtc) ? curr : prev
     );
 
     const isWinLocal = trade.pnl_currency >= 0;
 
     const markers = [
       {
-        time: closestEntryCandle.time as UTCTimestamp,
+        time: toChartTime(closestEntryCandle.time),
         position: isLong ? "belowBar" : "aboveBar",
         color: isLong ? "#22c55e" : "#ef4444",
         shape: isLong ? "arrowUp" : "arrowDown",
         text: "Entry",
       },
       {
-        time: closestExitCandle.time as UTCTimestamp,
+        time: toChartTime(closestExitCandle.time),
         position: isLong ? "aboveBar" : "belowBar",
         color: isWinLocal ? "#22c55e" : "#ef4444",
         shape: isLong ? "arrowDown" : "arrowUp",
@@ -250,7 +292,7 @@ export function TradeChartDialog({ trade, open, onOpenChange, cacheId, timeframe
       chart.remove();
       chartRef.current = null;
     };
-  }, [open, trade, candles]);
+  }, [open, trade, candles, rangeStart, rangeEnd]);
 
   if (!trade) return null;
 
@@ -295,7 +337,7 @@ export function TradeChartDialog({ trade, open, onOpenChange, cacheId, timeframe
             <p className="text-sm text-red-400">{candleError}</p>
           </div>
         ) : candles.length > 0 ? (
-          <div ref={chartContainerRef} className="w-full rounded border border-gray-800" />
+          <div ref={chartContainerRef} className="w-full rounded border border-gray-200" />
         ) : (
           <div className="flex h-[250px] items-center justify-center rounded border border-gray-800 bg-[#111118] sm:h-[400px]">
             <p className="text-sm text-gray-500">No candle data available for this trade.</p>
