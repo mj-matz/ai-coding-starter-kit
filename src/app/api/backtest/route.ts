@@ -15,7 +15,7 @@ const BacktestRequestSchema = z
   .object({
     strategy: z.string().min(1),
     symbol: z.string().min(1).regex(/^[A-Z0-9.]+$/i),
-    timeframe: z.enum(["1m", "5m", "15m", "1h", "1d"]),
+    timeframe: z.enum(["1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"]),
     startDate: z.string().min(1),
     endDate: z.string().min(1),
     rangeStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
