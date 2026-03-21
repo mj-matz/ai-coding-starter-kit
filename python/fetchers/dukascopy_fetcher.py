@@ -11,12 +11,10 @@ Each .bi5 file is LZMA-compressed binary data. Each tick is 20 bytes:
   - float32 big-endian: bid volume
 """
 
+import asyncio
 import lzma
 import struct
 import logging
-import threading
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -29,77 +27,12 @@ logger = logging.getLogger(__name__)
 
 # ── Concurrency & Retry constants ────────────────────────────────────────────
 
-THREAD_POOL_HARD_CEILING = 20
-INITIAL_CONCURRENCY_LIMIT = 12
-MAX_CONCURRENCY_LIMIT = 20
-MIN_CONCURRENCY_LIMIT = 1
-SUCCESS_STREAK_THRESHOLD = 10
+CONCURRENT_REQUESTS = 20
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = [1, 2, 4]
 
-
-# ── Adaptive Concurrency Controller ─────────────────────────────────────────
-
-class AdaptiveConcurrencyController:
-    """Thread-safe adaptive concurrency controller using threading.Condition.
-
-    Manages a soft concurrency limit that adjusts based on success/error signals.
-    The ThreadPoolExecutor provides a hard ceiling; this controller provides a
-    dynamic soft ceiling below it.
-    """
-
-    def __init__(self, initial_limit: int = INITIAL_CONCURRENCY_LIMIT):
-        self._condition = threading.Condition()
-        self._limit = initial_limit
-        self._active = 0
-        self._success_streak = 0
-
-    @property
-    def limit(self) -> int:
-        with self._condition:
-            return self._limit
-
-    def acquire(self) -> None:
-        """Block until a concurrency slot is available."""
-        with self._condition:
-            while self._active >= self._limit:
-                self._condition.wait()
-            self._active += 1
-
-    def release(self) -> None:
-        """Release a concurrency slot and notify waiting threads."""
-        with self._condition:
-            self._active -= 1
-            self._condition.notify()
-
-    def on_success(self) -> None:
-        """Record a successful request. After SUCCESS_STREAK_THRESHOLD consecutive
-        successes, increase the limit by 1 (up to MAX_CONCURRENCY_LIMIT)."""
-        with self._condition:
-            self._success_streak += 1
-            if self._success_streak >= SUCCESS_STREAK_THRESHOLD:
-                self._success_streak = 0
-                old = self._limit
-                self._limit = min(self._limit + 1, MAX_CONCURRENCY_LIMIT)
-                if self._limit != old:
-                    logger.debug(
-                        "Concurrency limit increased: %d -> %d", old, self._limit
-                    )
-                self._condition.notify_all()
-
-    def on_error(self) -> None:
-        """Record a rate-limit or timeout error. Halve the limit immediately
-        (down to MIN_CONCURRENCY_LIMIT) and reset the success streak."""
-        with self._condition:
-            self._success_streak = 0
-            old = self._limit
-            self._limit = max(self._limit // 2, MIN_CONCURRENCY_LIMIT)
-            if self._limit != old:
-                logger.info(
-                    "Concurrency limit reduced: %d -> %d", old, self._limit
-                )
-
+_POOL_LIMITS = httpx.Limits(max_connections=25, max_keepalive_connections=20)
 
 # ── Symbol mapping ────────────────────────────────────────────────────────────
 
@@ -205,97 +138,106 @@ def _decode_bi5(raw: bytes, dt: datetime, point: int) -> Optional[pd.DataFrame]:
     return pd.DataFrame(rows)
 
 
-def _download_hour(
+async def _download_hour_async(
+    client: httpx.AsyncClient,
+    semaphore: asyncio.Semaphore,
     duka_symbol: str,
     dt: datetime,
     point: int,
-    controller: AdaptiveConcurrencyController,
 ) -> Optional[pd.DataFrame]:
-    """Download one hour of tick data with retry logic and adaptive concurrency.
+    """Download one hour of tick data with retry logic and semaphore-based concurrency.
 
-    - Acquires a concurrency slot before making the HTTP request.
-    - Retries up to MAX_RETRIES times with exponential backoff.
+    - Acquires a semaphore slot only for the HTTP request itself.
+    - Retries up to MAX_RETRIES times with backoff.
     - Does NOT retry on HTTP 404 (expected for weekends/holidays).
-    - Signals success/error to the concurrency controller.
+    - Backoff sleep happens OUTSIDE the semaphore to free the slot for other tasks.
     """
     url = _hour_url(duka_symbol, dt)
     iso_ts = dt.isoformat()
 
     for attempt in range(1 + MAX_RETRIES):
-        controller.acquire()
-        try:
-            resp = httpx.get(url, timeout=20, follow_redirects=True)
+        backoff: Optional[float] = None
 
-            if resp.status_code == 404 or len(resp.content) == 0:
-                controller.on_success()
-                return None  # Normal: weekend / holiday / no trading that hour
-
-            if resp.status_code == 429:
-                controller.on_error()
-                if attempt < MAX_RETRIES:
-                    backoff = RETRY_BACKOFF_SECONDS[attempt]
-                    logger.info(
-                        "HTTP 429 for %s (attempt %d/%d) — retrying in %ds",
-                        iso_ts, attempt + 1, 1 + MAX_RETRIES, backoff,
-                    )
-                    time.sleep(backoff)
-                    continue
-                logger.warning(
-                    "HTTP 429 for %s — all %d retries exhausted",
-                    iso_ts, 1 + MAX_RETRIES,
-                )
-                return None
-
-            if resp.status_code != 200:
-                controller.on_error()
-                if attempt < MAX_RETRIES:
-                    backoff = RETRY_BACKOFF_SECONDS[attempt]
-                    logger.info(
-                        "HTTP %d for %s (attempt %d/%d) — retrying in %ds",
-                        resp.status_code, iso_ts, attempt + 1, 1 + MAX_RETRIES, backoff,
-                    )
-                    time.sleep(backoff)
-                    continue
-                logger.warning(
-                    "HTTP %d for %s — all %d retries exhausted",
-                    resp.status_code, iso_ts, 1 + MAX_RETRIES,
-                )
-                return None
-
-            # Successful HTTP 200
+        async with semaphore:  # slot acquired only for the HTTP request
             try:
-                result = _decode_bi5(resp.content, dt, point)
-                controller.on_success()
-                return result
-            except lzma.LZMAError as exc:
-                logger.warning("LZMA decode error for %s — hour skipped: %s", iso_ts, exc)
-                controller.on_success()  # Not a server error, no need to throttle
-                return None
+                resp = await client.get(url, timeout=20)
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
+                if attempt < MAX_RETRIES:
+                    backoff = RETRY_BACKOFF_SECONDS[attempt]
+                    logger.info("Connection error for %s (attempt %d/%d): %s — retry in %gs",
+                                iso_ts, attempt + 1, 1 + MAX_RETRIES, type(exc).__name__, backoff)
+                else:
+                    logger.warning("Connection error for %s — all %d retries exhausted: %s",
+                                   iso_ts, 1 + MAX_RETRIES, exc)
+                    return None
+            else:
+                if resp.status_code == 404 or len(resp.content) == 0:
+                    return None  # Weekend / holiday
 
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
-            controller.on_error()
-            if attempt < MAX_RETRIES:
-                backoff = RETRY_BACKOFF_SECONDS[attempt]
-                logger.info(
-                    "Connection error for %s (attempt %d/%d): %s — retrying in %ds",
-                    iso_ts, attempt + 1, 1 + MAX_RETRIES, type(exc).__name__, backoff,
-                )
-                time.sleep(backoff)
-                continue
-            logger.warning(
-                "Connection error for %s — all %d retries exhausted: %s",
-                iso_ts, 1 + MAX_RETRIES, exc,
-            )
-            return None
+                if resp.status_code == 200:
+                    try:
+                        return _decode_bi5(resp.content, dt, point)
+                    except lzma.LZMAError as exc:
+                        logger.warning("LZMA decode error for %s: %s", iso_ts, exc)
+                        return None
 
-        except Exception as exc:
-            logger.warning("Unexpected error for %s — hour skipped: %s", iso_ts, exc)
-            return None
+                # Non-200, non-404
+                if attempt < MAX_RETRIES:
+                    backoff = RETRY_BACKOFF_SECONDS[attempt]
+                    logger.info("HTTP %d for %s (attempt %d/%d) — retry in %gs",
+                                resp.status_code, iso_ts, attempt + 1, 1 + MAX_RETRIES, backoff)
+                else:
+                    logger.warning("HTTP %d for %s — all %d retries exhausted",
+                                   resp.status_code, iso_ts, 1 + MAX_RETRIES)
+                    return None
 
-        finally:
-            controller.release()
+        # Semaphore released — sleep does NOT hold a concurrency slot
+        if backoff is not None:
+            await asyncio.sleep(backoff)
 
     return None
+
+
+async def _fetch_all_hours(
+    duka_symbol: str,
+    hours: list[datetime],
+    point: int,
+    symbol: str,
+) -> tuple[list[pd.DataFrame], bool]:
+    """Download all hours concurrently using an async client with connection pooling."""
+    semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
+    frames: list[pd.DataFrame] = []
+    partial_timeout = False
+
+    async with httpx.AsyncClient(limits=_POOL_LIMITS) as client:
+        tasks = [
+            asyncio.create_task(
+                _download_hour_async(client, semaphore, duka_symbol, h, point)
+            )
+            for h in hours
+        ]
+
+        done, pending = await asyncio.wait(tasks, timeout=FETCH_TIMEOUT_SECONDS)
+
+        if pending:
+            partial_timeout = True
+            logger.warning(
+                "Timeout after %ds: partial fetch for %s — %d of %d hours completed",
+                FETCH_TIMEOUT_SECONDS, symbol, len(done), len(hours),
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        for task in done:
+            try:
+                result = task.result()
+                if result is not None:
+                    frames.append(result)
+            except Exception as exc:
+                logger.warning("Unexpected task error: %s", exc)
+
+    return frames, partial_timeout
 
 
 def fetch_dukascopy(
@@ -348,28 +290,9 @@ def fetch_dukascopy(
         hour_range_str,
     )
 
-    controller = AdaptiveConcurrencyController()
-    frames: list[pd.DataFrame] = []
-    partial_timeout = False
-    with ThreadPoolExecutor(max_workers=THREAD_POOL_HARD_CEILING) as executor:
-        future_map = {
-            executor.submit(_download_hour, duka_symbol, h, point, controller): h
-            for h in hours
-        }
-        try:
-            for future in as_completed(future_map, timeout=FETCH_TIMEOUT_SECONDS):
-                result = future.result()
-                if result is not None:
-                    frames.append(result)
-        except TimeoutError:
-            partial_timeout = True
-            logger.warning(
-                "Timeout after %ds: partial fetch for %s — %d of %d hours downloaded",
-                FETCH_TIMEOUT_SECONDS,
-                symbol,
-                len(frames),
-                len(hours),
-            )
+    frames, partial_timeout = asyncio.run(
+        _fetch_all_hours(duka_symbol, hours, point, symbol)
+    )
 
     if not frames:
         raise ValueError(
