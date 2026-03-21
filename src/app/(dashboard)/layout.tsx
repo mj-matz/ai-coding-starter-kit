@@ -24,8 +24,8 @@ export default async function DashboardLayout({
     <SidebarProvider>
       <AppSidebar userEmail={user.email ?? "Unknown"} userRole={userRole} />
       <main className="flex flex-1 flex-col">
-        <header className="flex h-12 items-center border-b border-gray-800 px-4">
-          <SidebarTrigger className="text-gray-400 hover:text-white" />
+        <header className="flex h-12 items-center border-b border-white/5 px-4">
+          <SidebarTrigger className="text-slate-400 hover:text-white" />
         </header>
         <div className="flex-1 p-6">{children}</div>
       </main>

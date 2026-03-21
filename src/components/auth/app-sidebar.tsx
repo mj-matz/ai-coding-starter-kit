@@ -56,8 +56,8 @@ export function AppSidebar({ userEmail, userRole }: AppSidebarProps) {
   }
 
   return (
-    <Sidebar className="border-gray-800">
-      <SidebarHeader className="border-b border-gray-800 px-4 py-4">
+    <Sidebar className="border-white/5">
+      <SidebarHeader className="border-b border-white/5 px-4 py-4">
         <Link href="/" className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600">
             <Zap className="h-5 w-5 text-white" />
@@ -70,7 +70,7 @@ export function AppSidebar({ userEmail, userRole }: AppSidebarProps) {
 
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel className="text-gray-500">
+          <SidebarGroupLabel className="text-slate-500">
             Navigation
           </SidebarGroupLabel>
           <SidebarGroupContent>
@@ -101,7 +101,7 @@ export function AppSidebar({ userEmail, userRole }: AppSidebarProps) {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-gray-800">
+      <SidebarFooter className="border-t border-white/5">
         <SidebarMenu>
           <SidebarMenuItem>
             <DropdownMenu>
@@ -110,27 +110,27 @@ export function AppSidebar({ userEmail, userRole }: AppSidebarProps) {
                   size="lg"
                   className="data-[state=open]:bg-sidebar-accent"
                 >
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-700 text-sm font-medium text-gray-200">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-sm font-medium text-slate-200">
                     {userEmail.charAt(0).toUpperCase()}
                   </div>
                   <div className="flex flex-col gap-0.5 leading-none">
-                    <span className="truncate text-sm font-medium text-gray-200">
+                    <span className="truncate text-sm font-medium text-slate-200">
                       {userEmail}
                     </span>
-                    <span className="text-xs text-gray-500">{userRole}</span>
+                    <span className="text-xs text-slate-500">{userRole}</span>
                   </div>
-                  <ChevronUp className="ml-auto h-4 w-4 text-gray-500" />
+                  <ChevronUp className="ml-auto h-4 w-4 text-slate-500" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent
-                className="w-[--radix-dropdown-menu-trigger-width] border-gray-800 bg-gray-900"
+                className="w-[--radix-dropdown-menu-trigger-width] border-white/10 bg-[#0d0f14]"
                 side="top"
                 align="start"
                 sideOffset={4}
               >
                 <DropdownMenuItem
                   onClick={handleSignOut}
-                  className="cursor-pointer text-gray-300 focus:bg-gray-800 focus:text-white"
+                  className="cursor-pointer text-slate-300 focus:bg-white/10 focus:text-white"
                 >
                   <LogOut className="mr-2 h-4 w-4" />
                   Sign Out
