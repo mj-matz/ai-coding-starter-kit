@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # ── Concurrency & Retry constants ────────────────────────────────────────────
 
-CONCURRENT_REQUESTS = 20
+CONCURRENT_REQUESTS = 12
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = [1, 2, 4]
@@ -190,25 +190,43 @@ async def _download_hour_async(
                                    iso_ts, 1 + MAX_RETRIES, exc)
                     return None
             else:
-                if resp.status_code == 404 or len(resp.content) == 0:
-                    return None  # Weekend / holiday
+                if resp.status_code == 404:
+                    return None  # Weekend / holiday — no retry
 
-                if resp.status_code == 200:
+                if len(resp.content) == 0:
+                    # Empty body on a non-404 response is likely a server-side
+                    # throttle (Dukascopy returns 200+empty under high load).
+                    # Retry like a 429; only accept empty as genuine on last attempt.
+                    if attempt < MAX_RETRIES:
+                        backoff = RETRY_BACKOFF_SECONDS[attempt]
+                        logger.info(
+                            "Empty response for %s (attempt %d/%d) — possible throttle, retry in %gs",
+                            iso_ts, attempt + 1, 1 + MAX_RETRIES, backoff,
+                        )
+                    else:
+                        logger.warning(
+                            "Empty response for %s — all %d retries exhausted, hour skipped",
+                            iso_ts, 1 + MAX_RETRIES,
+                        )
+                        return None
+
+                elif resp.status_code == 200:
                     try:
                         return _decode_bi5(resp.content, dt, point)
                     except lzma.LZMAError as exc:
                         logger.warning("LZMA decode error for %s: %s", iso_ts, exc)
                         return None
 
-                # Non-200, non-404
-                if attempt < MAX_RETRIES:
-                    backoff = RETRY_BACKOFF_SECONDS[attempt]
-                    logger.info("HTTP %d for %s (attempt %d/%d) — retry in %gs",
-                                resp.status_code, iso_ts, attempt + 1, 1 + MAX_RETRIES, backoff)
                 else:
-                    logger.warning("HTTP %d for %s — all %d retries exhausted",
-                                   resp.status_code, iso_ts, 1 + MAX_RETRIES)
-                    return None
+                    # Non-200, non-404, non-empty (e.g. 429, 503, 500)
+                    if attempt < MAX_RETRIES:
+                        backoff = RETRY_BACKOFF_SECONDS[attempt]
+                        logger.info("HTTP %d for %s (attempt %d/%d) — retry in %gs",
+                                    resp.status_code, iso_ts, attempt + 1, 1 + MAX_RETRIES, backoff)
+                    else:
+                        logger.warning("HTTP %d for %s — all %d retries exhausted",
+                                       resp.status_code, iso_ts, 1 + MAX_RETRIES)
+                        return None
 
         # Semaphore released — sleep does NOT hold a concurrency slot
         if backoff is not None:
