@@ -34,6 +34,25 @@ RETRY_BACKOFF_SECONDS = [1, 2, 4]
 
 _POOL_LIMITS = httpx.Limits(max_connections=25, max_keepalive_connections=20)
 
+
+def _run_async(coro):
+    """Run a coroutine safely from both sync and async calling contexts.
+
+    asyncio.run() fails with 'This event loop is already running' when called
+    from within a FastAPI async route handler. In that case, we spawn a dedicated
+    thread with its own event loop instead.
+    """
+    try:
+        asyncio.get_running_loop()
+        # Already inside a running event loop (e.g. FastAPI async handler).
+        # asyncio.run() would raise RuntimeError — delegate to a fresh thread.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    except RuntimeError:
+        # No running event loop — safe to call asyncio.run() directly.
+        return asyncio.run(coro)
+
 # ── Symbol mapping ────────────────────────────────────────────────────────────
 
 DUKASCOPY_SYMBOLS: dict[str, str] = {
@@ -290,9 +309,7 @@ def fetch_dukascopy(
         hour_range_str,
     )
 
-    frames, partial_timeout = asyncio.run(
-        _fetch_all_hours(duka_symbol, hours, point, symbol)
-    )
+    frames, partial_timeout = _run_async(_fetch_all_hours(duka_symbol, hours, point, symbol))
 
     if not frames:
         raise ValueError(
