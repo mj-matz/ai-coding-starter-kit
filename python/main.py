@@ -1248,10 +1248,7 @@ async def backtest_stream(
 
     symbol = request.symbol.upper()
 
-    # ── 2. Resolve instrument config from Supabase (validates symbol) ─────────
-    instrument = await _resolve_instrument(symbol)
-
-    # ── 3. Parse and validate date range ──────────────────────────────────────
+    # ── 2. Parse and validate date range ──────────────────────────────────────
     try:
         date_from = date.fromisoformat(request.startDate)
         date_to = date.fromisoformat(request.endDate)
@@ -1261,137 +1258,144 @@ async def backtest_stream(
     _validate_date_range(date_from, date_to)
     _validate_timeframe("dukascopy", request.timeframe)
 
-    # ── 4. Fetch / load cached data ───────────────────────────────────────────
-    _range_start_h = int(request.rangeStart.split(":")[0])
-    _time_exit_h = int(request.timeExit.split(":")[0])
-    hour_from, hour_to = _local_to_utc_hour_range(
-        _range_start_h, _time_exit_h,
-        instrument["timezone"],
-        date_from, date_to,
-    )
-
-    df = None
-    resolved_cache_id: Optional[str] = None
-    cached = find_cached_entry(symbol, "dukascopy", request.timeframe, date_from, date_to, hour_from, hour_to)
-    if cached:
-        try:
-            df = load_cached_data(cached["file_path"])
-            resolved_cache_id = cached["id"]
-        except Exception as e:
-            logger.warning(f"Cache load failed for {symbol}, re-fetching: {e}")
-            df = None
-
-    if df is None:
-        try:
-            base_df = fetch_dukascopy(symbol, date_from, date_to, hour_from=hour_from, hour_to=hour_to)
-            df = resample_ohlcv(base_df, request.timeframe) if request.timeframe != "1m" else base_df
-        except TimeoutError as e:
-            raise HTTPException(status_code=504, detail=str(e))
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            logger.error(f"Fetch error for {symbol}: {e}", exc_info=True)
-            raise HTTPException(status_code=502, detail="Failed to fetch data.")
-
-        if df.empty:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No data available for {symbol} between {date_from} and {date_to}",
-            )
-
-        if not base_df.attrs.get("partial"):
-            try:
-                cache_entry = save_to_cache(df, symbol, "dukascopy", request.timeframe, date_from, date_to, user_id, hour_from, hour_to)
-                if cache_entry:
-                    resolved_cache_id = cache_entry["id"]
-            except Exception as e:
-                logger.warning(f"Cache save failed (non-fatal): {e}")
-        else:
-            logger.info("Skipping cache write for %s — partial fetch (timeout)", symbol)
-
-    # Normalize to DatetimeIndex
-    if "datetime" in df.columns:
-        df = df.set_index("datetime")
-    df.index = pd.to_datetime(df.index, utc=True)
-    df.columns = [c.lower() for c in df.columns]
-
-    required_cols = {"open", "high", "low", "close"}
-    if not required_cols.issubset(set(df.columns)):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Data is missing required columns: {required_cols - set(df.columns)}",
-        )
-
-    # Filter to requested date range
-    df = df[(df.index.date >= date_from) & (df.index.date <= date_to)]
-    if df.empty:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No data in range {date_from} to {date_to}",
-        )
-
-    # Filter to relevant UTC hours
-    df = df[(df.index.hour >= hour_from) & (df.index.hour <= hour_to)]
-    if df.empty:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No data in UTC hour range {hour_from:02d}:00-{hour_to:02d}:00 for {symbol}",
-        )
-
-    # ── 5. Generate breakout signals ──────────────────────────────────────────
-    breakout_params = BreakoutParams(
-        asset=symbol,
-        range_start=time.fromisoformat(request.rangeStart),
-        range_end=time.fromisoformat(request.rangeEnd),
-        trigger_deadline=time.fromisoformat(request.triggerDeadline),
-        stop_loss_pips=request.stopLoss,
-        take_profit_pips=request.takeProfit,
-        pip_size=instrument["pip_size"],
-        timezone=instrument["timezone"],
-        direction_filter=_DIRECTION_MAP[request.direction],
-        entry_delay_bars=request.entryDelayBars,
-        trail_trigger_pips=request.trailTriggerPips,
-        trail_lock_pips=request.trailLockPips,
-    )
-
-    strategy = BreakoutStrategy()
-    try:
-        signals_df, skipped_days = strategy.generate_signals(df, breakout_params)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    present_dates = set(df.index.date)
-    d = date_from
-    while d <= date_to:
-        if d.weekday() < 5 and d not in present_dates:
-            skipped_days.append(SkippedDay(date=str(d), reason="NO_BARS"))
-        d += timedelta(days=1)
-
-    # ── 6. Build engine config ────────────────────────────────────────────────
-    engine_config = BacktestConfig(
-        initial_balance=request.initialCapital,
-        sizing_mode=request.sizingMode,
-        instrument=InstrumentConfig(
-            pip_size=instrument["pip_size"],
-            pip_value_per_lot=instrument["pip_value_per_lot"],
-        ),
-        fixed_lot=request.fixedLot,
-        risk_percent=request.riskPercent,
-        commission=request.commission,
-        slippage_pips=request.slippage,
-        time_exit=request.timeExit,
-        timezone=instrument["timezone"],
-        gap_fill=request.gapFill,
-    )
-
-    # ── 7. Stream SSE events ──────────────────────────────────────────────────
-    # Capture all needed references for the closure (df, signals_df, etc.)
-    _stream_df = df
-    _stream_signals = signals_df
-    _stream_skipped = skipped_days
-    _stream_breakout_params = breakout_params
+    # ── 3. Return StreamingResponse immediately ──────────────────────────────
+    # All heavy work (instrument resolution, data fetching, signal generation,
+    # engine execution) runs inside the async generator so that FastAPI sends
+    # response headers right away and the client receives SSE events as they
+    # are produced.
 
     async def event_stream():
+        loop = asyncio.get_running_loop()
+
+        # ── Resolve instrument config from Supabase (validates symbol) ────
+        try:
+            instrument = await _resolve_instrument(symbol)
+        except HTTPException as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': e.detail})}\n\n"
+            return
+
+        # ── Compute UTC hour range ────────────────────────────────────────
+        _range_start_h = int(request.rangeStart.split(":")[0])
+        _time_exit_h = int(request.timeExit.split(":")[0])
+        hour_from, hour_to = _local_to_utc_hour_range(
+            _range_start_h, _time_exit_h,
+            instrument["timezone"],
+            date_from, date_to,
+        )
+
+        # ── Fetch / load cached data ─────────────────────────────────────
+        df = None
+        resolved_cache_id: Optional[str] = None
+        cached = find_cached_entry(symbol, "dukascopy", request.timeframe, date_from, date_to, hour_from, hour_to)
+        if cached:
+            try:
+                df = load_cached_data(cached["file_path"])
+                resolved_cache_id = cached["id"]
+            except Exception as e:
+                logger.warning(f"Cache load failed for {symbol}, re-fetching: {e}")
+                df = None
+
+        if df is None:
+            try:
+                base_df = await loop.run_in_executor(
+                    None,
+                    lambda: fetch_dukascopy(symbol, date_from, date_to, hour_from=hour_from, hour_to=hour_to),
+                )
+                df = resample_ohlcv(base_df, request.timeframe) if request.timeframe != "1m" else base_df
+            except TimeoutError as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                return
+            except ValueError as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                return
+            except Exception as e:
+                logger.error(f"Fetch error for {symbol}: {e}", exc_info=True)
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Failed to fetch data.'})}\n\n"
+                return
+
+            if df.empty:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'No data available for {symbol} between {date_from} and {date_to}'})}\n\n"
+                return
+
+            if not base_df.attrs.get("partial"):
+                try:
+                    cache_entry = save_to_cache(df, symbol, "dukascopy", request.timeframe, date_from, date_to, user_id, hour_from, hour_to)
+                    if cache_entry:
+                        resolved_cache_id = cache_entry["id"]
+                except Exception as e:
+                    logger.warning(f"Cache save failed (non-fatal): {e}")
+            else:
+                logger.info("Skipping cache write for %s — partial fetch (timeout)", symbol)
+
+        # ── Normalize & filter data ───────────────────────────────────────
+        if "datetime" in df.columns:
+            df = df.set_index("datetime")
+        df.index = pd.to_datetime(df.index, utc=True)
+        df.columns = [c.lower() for c in df.columns]
+
+        required_cols = {"open", "high", "low", "close"}
+        if not required_cols.issubset(set(df.columns)):
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Data missing required columns: {list(required_cols - set(df.columns))}'})}\n\n"
+            return
+
+        df = df[(df.index.date >= date_from) & (df.index.date <= date_to)]
+        if df.empty:
+            yield f"data: {json.dumps({'type': 'error', 'message': f'No data in range {date_from} to {date_to}'})}\n\n"
+            return
+
+        df = df[(df.index.hour >= hour_from) & (df.index.hour <= hour_to)]
+        if df.empty:
+            yield f"data: {json.dumps({'type': 'error', 'message': f'No data in UTC hour range {hour_from:02d}:00-{hour_to:02d}:00 for {symbol}'})}\n\n"
+            return
+
+        # ── Generate breakout signals ─────────────────────────────────────
+        breakout_params = BreakoutParams(
+            asset=symbol,
+            range_start=time.fromisoformat(request.rangeStart),
+            range_end=time.fromisoformat(request.rangeEnd),
+            trigger_deadline=time.fromisoformat(request.triggerDeadline),
+            stop_loss_pips=request.stopLoss,
+            take_profit_pips=request.takeProfit,
+            pip_size=instrument["pip_size"],
+            timezone=instrument["timezone"],
+            direction_filter=_DIRECTION_MAP[request.direction],
+            entry_delay_bars=request.entryDelayBars,
+            trail_trigger_pips=request.trailTriggerPips,
+            trail_lock_pips=request.trailLockPips,
+        )
+
+        strategy = BreakoutStrategy()
+        try:
+            signals_df, skipped_days = strategy.generate_signals(df, breakout_params)
+        except ValueError as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            return
+
+        present_dates = set(df.index.date)
+        d = date_from
+        while d <= date_to:
+            if d.weekday() < 5 and d not in present_dates:
+                skipped_days.append(SkippedDay(date=str(d), reason="NO_BARS"))
+            d += timedelta(days=1)
+
+        # ── Build engine config ───────────────────────────────────────────
+        engine_config = BacktestConfig(
+            initial_balance=request.initialCapital,
+            sizing_mode=request.sizingMode,
+            instrument=InstrumentConfig(
+                pip_size=instrument["pip_size"],
+                pip_value_per_lot=instrument["pip_value_per_lot"],
+            ),
+            fixed_lot=request.fixedLot,
+            risk_percent=request.riskPercent,
+            commission=request.commission,
+            slippage_pips=request.slippage,
+            time_exit=request.timeExit,
+            timezone=instrument["timezone"],
+            gap_fill=request.gapFill,
+        )
+
+        # ── Stream engine progress ────────────────────────────────────────
         progress_queue: queue.Queue = queue.Queue()
         result_holder: list = []  # [0] = result or Exception
 
@@ -1400,17 +1404,16 @@ async def backtest_stream(
 
         def run_engine():
             try:
-                res = run_backtest(_stream_df, _stream_signals, engine_config, progress_callback=on_progress)
+                res = run_backtest(df, signals_df, engine_config, progress_callback=on_progress)
                 result_holder.append(res)
             except Exception as exc:
                 result_holder.append(exc)
             finally:
                 progress_queue.put(None)  # sentinel
 
-        loop = asyncio.get_running_loop()
         loop.run_in_executor(None, run_engine)
 
-        total_days_init = int(_stream_df.index.normalize().nunique())
+        total_days_init = int(df.index.normalize().nunique())
         yield f"data: {json.dumps({'type': 'init', 'total_days': total_days_init})}\n\n"
 
         # Yield progress events from the queue
@@ -1442,7 +1445,7 @@ async def backtest_stream(
 
         # Days where pending orders expired without triggering
         for d_str in result.expired_order_dates:
-            _stream_skipped.append(SkippedDay(date=d_str, reason="TRIGGER_EXPIRED"))
+            skipped_days.append(SkippedDay(date=d_str, reason="TRIGGER_EXPIRED"))
 
         # Calculate analytics
         try:
@@ -1524,16 +1527,16 @@ async def backtest_stream(
             sl_col = f"{direction_prefix}_sl"
             tp_col = f"{direction_prefix}_tp"
 
-            signal_before_entry = _stream_signals.loc[:t.entry_time, entry_col].dropna()
+            signal_before_entry = signals_df.loc[:t.entry_time, entry_col].dropna()
             if not signal_before_entry.empty:
                 sig_ts = signal_before_entry.index[-1]
-                range_high_val = float(_stream_signals.at[sig_ts, "long_entry"]) if pd.notna(_stream_signals.at[sig_ts, "long_entry"]) else 0.0
-                range_low_val = float(_stream_signals.at[sig_ts, "short_entry"]) if pd.notna(_stream_signals.at[sig_ts, "short_entry"]) else 0.0
-                entry_offset = _stream_breakout_params.entry_offset_pips * _stream_breakout_params.pip_size
+                range_high_val = float(signals_df.at[sig_ts, "long_entry"]) if pd.notna(signals_df.at[sig_ts, "long_entry"]) else 0.0
+                range_low_val = float(signals_df.at[sig_ts, "short_entry"]) if pd.notna(signals_df.at[sig_ts, "short_entry"]) else 0.0
+                entry_offset = breakout_params.entry_offset_pips * breakout_params.pip_size
                 range_high_val = range_high_val - entry_offset if range_high_val != 0.0 else 0.0
                 range_low_val = range_low_val + entry_offset if range_low_val != 0.0 else 0.0
-                stop_loss_val = float(_stream_signals.at[sig_ts, sl_col]) if pd.notna(_stream_signals.at[sig_ts, sl_col]) else 0.0
-                take_profit_val = float(_stream_signals.at[sig_ts, tp_col]) if pd.notna(_stream_signals.at[sig_ts, tp_col]) else 0.0
+                stop_loss_val = float(signals_df.at[sig_ts, sl_col]) if pd.notna(signals_df.at[sig_ts, sl_col]) else 0.0
+                take_profit_val = float(signals_df.at[sig_ts, tp_col]) if pd.notna(signals_df.at[sig_ts, tp_col]) else 0.0
             else:
                 range_high_val = 0.0
                 range_low_val = 0.0
@@ -1563,7 +1566,7 @@ async def backtest_stream(
 
         skipped_days_out = [
             SkippedDayOut(date=sd.date, reason=sd.reason)
-            for sd in _stream_skipped
+            for sd in skipped_days
         ]
 
         monthly_r_out = [
