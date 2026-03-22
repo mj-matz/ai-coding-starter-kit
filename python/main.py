@@ -1589,7 +1589,14 @@ async def backtest_stream(
 
         yield f"data: {json.dumps({'type': 'result', 'data': result_data.model_dump()})}\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/backtest/candles", response_model=List[CandleOut])
