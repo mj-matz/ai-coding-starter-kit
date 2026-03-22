@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Optional
 
+import pandas as pd
+
 from .models import BacktestConfig, Trade
 from .pip_utils import pips_to_price_offset, price_diff_to_pips, pip_value_for_lot
 
@@ -97,6 +99,67 @@ def check_sl_tp(
     return None
 
 
+def is_sl_tp_ambiguous(
+    position: OpenPosition,
+    bar_high: float,
+    bar_low: float,
+) -> bool:
+    """
+    Return True if both SL and TP are hit on the same bar (ambiguous outcome).
+
+    This is used to decide whether a 1-second zoom-in is needed.
+    """
+    if position.tp_price is None:
+        return False
+
+    if position.direction == "long":
+        sl_hit = bar_low <= position.sl_price
+        tp_hit = bar_high >= position.tp_price
+    else:
+        sl_hit = bar_high >= position.sl_price
+        tp_hit = bar_low <= position.tp_price
+
+    return sl_hit and tp_hit
+
+
+def resolve_exit_with_1s_data(
+    position: OpenPosition,
+    ohlcv_1s: pd.DataFrame,
+) -> Optional[Literal["SL", "SL_TRAILED", "TP"]]:
+    """
+    Iterate 1-second bars to determine which level (SL or TP) was hit first.
+
+    Args:
+        position: The open position with SL/TP levels.
+        ohlcv_1s: 1-second OHLCV DataFrame with columns: datetime, open, high, low, close, volume.
+                  Must be sorted by datetime.
+
+    Returns:
+        The exit reason ("SL", "SL_TRAILED", or "TP"), or None if neither was hit
+        in the 1-second data (should not happen if called correctly).
+    """
+    for _, row in ohlcv_1s.iterrows():
+        h = row["high"]
+        l = row["low"]
+
+        if position.direction == "long":
+            sl_hit = l <= position.sl_price
+            tp_hit = position.tp_price is not None and h >= position.tp_price
+        else:
+            sl_hit = h >= position.sl_price
+            tp_hit = position.tp_price is not None and l <= position.tp_price
+
+        if sl_hit and tp_hit:
+            # Even at 1s resolution both hit: fall back to worst-case SL
+            return "SL_TRAILED" if position.trail_applied else "SL"
+        if sl_hit:
+            return "SL_TRAILED" if position.trail_applied else "SL"
+        if tp_hit:
+            return "TP"
+
+    return None
+
+
 def close_position(
     position: OpenPosition,
     exit_time: datetime,
@@ -104,6 +167,7 @@ def close_position(
     exit_reason: Literal["SL", "SL_TRAILED", "TP", "TIME"],
     config: BacktestConfig,
     exit_gap: bool = False,
+    used_1s_resolution: bool = False,
 ) -> Trade:
     """
     Close a position and return the completed Trade record.
@@ -150,4 +214,5 @@ def close_position(
         initial_risk_currency=round(initial_risk_currency, 2),
         entry_gap_pips=position.entry_gap_pips,
         exit_gap=exit_gap,
+        used_1s_resolution=used_1s_resolution,
     )

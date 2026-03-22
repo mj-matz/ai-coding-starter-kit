@@ -33,6 +33,7 @@ from engine.models import BacktestConfig, InstrumentConfig
 from analytics import calculate_analytics
 from analytics.trade_metrics import r_multiple as compute_r_multiple
 from strategies.breakout import BreakoutStrategy, BreakoutParams, SkippedDay
+from services.one_second_provider import create_1s_data_provider
 
 # Configure logging
 logging.basicConfig(
@@ -386,6 +387,7 @@ class TradeResponse(BaseModel):
     initial_risk_pips: float
     initial_risk_currency: float
     r_multiple: Optional[float] = None
+    used_1s_resolution: bool = False
 
 
 class MetricResponse(BaseModel):
@@ -448,7 +450,7 @@ async def backtest_run(
         client = _get_supabase_client()
         resp = (
             client.table("data_cache")
-            .select("file_path")
+            .select("file_path, symbol")
             .eq("id", request.cache_id)
             .eq("created_by", user_id)
             .single()
@@ -464,6 +466,7 @@ async def backtest_run(
         )
 
     file_path: str = resp.data["file_path"]
+    symbol: str = resp.data.get("symbol", "")
 
     # ── 2. Load OHLCV from Parquet ───────────────────────────────────────────
     try:
@@ -546,7 +549,10 @@ async def backtest_run(
     )
 
     try:
-        result = run_backtest(df, signals_df, engine_config)
+        result = run_backtest(
+            df, signals_df, engine_config,
+            get_1s_data=create_1s_data_provider(symbol) if symbol else None,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -595,6 +601,7 @@ async def backtest_run(
             initial_risk_pips=t.initial_risk_pips,
             initial_risk_currency=t.initial_risk_currency,
             r_multiple=compute_r_multiple(t),
+            used_1s_resolution=t.used_1s_resolution,
         )
         for t in result.trades
     ]
@@ -848,6 +855,7 @@ class TradeDetailOut(BaseModel):
     duration_minutes: int
     entry_gap_pips: float = 0.0
     exit_gap: bool = False
+    used_1s_resolution: bool = False
     range_high: float = 0.0
     range_low: float = 0.0
     stop_loss: float = 0.0
@@ -1054,7 +1062,10 @@ async def backtest_orchestrate(
     )
 
     try:
-        result = run_backtest(df, signals_df, engine_config)
+        result = run_backtest(
+            df, signals_df, engine_config,
+            get_1s_data=create_1s_data_provider(symbol),
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -1183,6 +1194,7 @@ async def backtest_orchestrate(
             duration_minutes=duration_minutes,
             entry_gap_pips=t.entry_gap_pips,
             exit_gap=t.exit_gap,
+            used_1s_resolution=t.used_1s_resolution,
             range_high=range_high_val,
             range_low=range_low_val,
             stop_loss=stop_loss_val,
@@ -1404,7 +1416,11 @@ async def backtest_stream(
 
         def run_engine():
             try:
-                res = run_backtest(df, signals_df, engine_config, progress_callback=on_progress)
+                res = run_backtest(
+                    df, signals_df, engine_config,
+                    progress_callback=on_progress,
+                    get_1s_data=create_1s_data_provider(symbol),
+                )
                 result_holder.append(res)
             except Exception as exc:
                 result_holder.append(exc)

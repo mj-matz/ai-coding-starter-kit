@@ -426,11 +426,16 @@ class TestTrailTrigger:
         assert t.exit_price == pytest.approx(1955.20, abs=0.001)
 
     def test_no_trail_trigger_uses_original_sl(self):
-        """If profit never reaches trail_trigger, original SL is used and reason is SL."""
+        """If profit never reaches trail_trigger, original SL is used and reason is SL.
+
+        PROJ-15: Entry-bar now also applies trail logic, so the entry bar's high
+        must stay below entry + trigger (1955 + 0.50 = 1955.50) to avoid
+        triggering the trail on the entry bar itself.
+        """
         ohlcv = make_ohlcv([
             ("2024-01-02T10:00:00Z", 1950, 1956, 1948, 1954),  # signal
-            ("2024-01-02T10:01:00Z", 1954, 1958, 1953, 1956),  # entry
-            ("2024-01-02T10:02:00Z", 1956, 1955.40, 1935, 1938),  # max profit 40 pips < 50, SL hit
+            ("2024-01-02T10:01:00Z", 1954, 1955.40, 1953, 1955.20),  # entry at 1955; high 1955.40 → 40 pips < 50 trigger
+            ("2024-01-02T10:02:00Z", 1955.20, 1955.40, 1935, 1938),  # max profit still 40 pips < 50, SL hit
         ])
         signals = make_signals(ohlcv, {
             "2024-01-02T10:00:00Z": {
@@ -580,7 +585,7 @@ class TestEntryGapFill:
                 "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 2000.0
             },
         })
-        result = run_backtest(ohlcv, signals, cfg())
+        result = run_backtest(ohlcv, signals, cfg(gap_fill=True))
 
         assert len(result.trades) == 1
         t = result.trades[0]
@@ -606,7 +611,7 @@ class TestEntryGapFill:
                 "short_entry": 1950.0, "short_sl": 1965.0, "short_tp": 1900.0
             },
         })
-        result = run_backtest(ohlcv, signals, cfg())
+        result = run_backtest(ohlcv, signals, cfg(gap_fill=True))
 
         assert len(result.trades) == 1
         t = result.trades[0]
@@ -767,3 +772,303 @@ class TestMultipleTrades:
         # Only 1 trade: the second signal was placed while the position was open
         assert len(result.trades) == 1
         assert result.trades[0].exit_reason == "TP"
+
+
+# ── PROJ-15: Intra-Bar Accuracy Tests ────────────────────────────────────────
+
+
+class TestEntryBarSLTP:
+    """PROJ-15: SL/TP checks on the entry bar itself."""
+
+    def test_entry_bar_sl_hit(self):
+        """SL is hit on the same bar where the trade opens → immediate exit."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T09:00:00Z", 1950, 1956, 1948, 1954),  # signal bar
+            ("2024-01-02T09:01:00Z", 1954, 1960, 1935, 1940),  # entry triggers at 1955 (high≥1955), then low=1935 ≤ SL=1940
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T09:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 1990.0
+            },
+        })
+        result = run_backtest(ohlcv, signals, cfg())
+
+        assert len(result.trades) == 1
+        t = result.trades[0]
+        assert t.exit_reason == "SL"
+        assert t.exit_price == 1940.0
+        # Entry and exit on the same bar
+        assert t.entry_time == t.exit_time
+        assert t.used_1s_resolution is False
+
+    def test_entry_bar_tp_hit(self):
+        """TP is hit on the entry bar (SL is NOT hit) → immediate TP exit."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T09:00:00Z", 1950, 1956, 1948, 1954),  # signal bar
+            # Entry triggers at 1955 (high≥1955). Bar high=1975 ≥ TP=1970.
+            # Bar low=1953 > SL=1940, so SL is not hit → TP wins.
+            ("2024-01-02T09:01:00Z", 1954, 1975, 1953, 1970),
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T09:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 1970.0
+            },
+        })
+        result = run_backtest(ohlcv, signals, cfg())
+
+        assert len(result.trades) == 1
+        t = result.trades[0]
+        assert t.exit_reason == "TP"
+        assert t.exit_price == 1970.0
+        assert t.entry_time == t.exit_time
+        assert t.used_1s_resolution is False
+
+    def test_entry_bar_both_sl_tp_hit_no_1s_data_falls_back_to_sl(self):
+        """Both SL and TP hit on entry bar, no 1s data → worst-case SL."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T09:00:00Z", 1950, 1956, 1948, 1954),  # signal bar
+            # Entry triggers at 1955. Both levels touched:
+            # high=1975 ≥ TP=1970 AND low=1935 ≤ SL=1940
+            ("2024-01-02T09:01:00Z", 1954, 1975, 1935, 1960),
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T09:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 1970.0
+            },
+        })
+        # No get_1s_data callback → falls back to worst-case SL
+        result = run_backtest(ohlcv, signals, cfg())
+
+        assert len(result.trades) == 1
+        t = result.trades[0]
+        assert t.exit_reason == "SL"
+        assert t.used_1s_resolution is False
+
+    def test_entry_bar_ambiguous_resolved_by_1s_tp(self):
+        """Both SL and TP hit on entry bar, 1s data resolves to TP."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T09:00:00Z", 1950, 1956, 1948, 1954),  # signal bar
+            # Entry triggers at 1955. Both levels touched:
+            # high=1975 ≥ TP=1970 AND low=1935 ≤ SL=1940
+            ("2024-01-02T09:01:00Z", 1954, 1975, 1935, 1960),
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T09:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 1970.0
+            },
+        })
+
+        # 1s data shows TP was hit first (price goes up first, then down)
+        ohlcv_1s = pd.DataFrame({
+            "datetime": pd.to_datetime([
+                "2024-01-02T09:01:00Z",
+                "2024-01-02T09:01:01Z",
+                "2024-01-02T09:01:02Z",
+                "2024-01-02T09:01:03Z",
+            ], utc=True),
+            "open":  [1955.0, 1965.0, 1972.0, 1950.0],
+            "high":  [1966.0, 1972.0, 1975.0, 1955.0],
+            "low":   [1954.0, 1964.0, 1970.0, 1935.0],
+            "close": [1965.0, 1971.0, 1973.0, 1940.0],
+            "volume": [100, 100, 100, 100],
+        })
+
+        def mock_1s_provider(bar_time):
+            return ohlcv_1s
+
+        result = run_backtest(ohlcv, signals, cfg(), get_1s_data=mock_1s_provider)
+
+        assert len(result.trades) == 1
+        t = result.trades[0]
+        assert t.exit_reason == "TP"
+        assert t.used_1s_resolution is True
+
+    def test_entry_bar_ambiguous_resolved_by_1s_sl(self):
+        """Both SL and TP hit on entry bar, 1s data resolves to SL (SL first)."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T09:00:00Z", 1950, 1956, 1948, 1954),  # signal bar
+            # Both levels touched on entry bar
+            ("2024-01-02T09:01:00Z", 1954, 1975, 1935, 1960),
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T09:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 1970.0
+            },
+        })
+
+        # 1s data shows SL was hit first (price drops first, then recovers)
+        ohlcv_1s = pd.DataFrame({
+            "datetime": pd.to_datetime([
+                "2024-01-02T09:01:00Z",
+                "2024-01-02T09:01:01Z",
+                "2024-01-02T09:01:02Z",
+                "2024-01-02T09:01:03Z",
+            ], utc=True),
+            "open":  [1955.0, 1945.0, 1938.0, 1960.0],
+            "high":  [1956.0, 1946.0, 1940.0, 1975.0],
+            "low":   [1944.0, 1938.0, 1935.0, 1958.0],
+            "close": [1945.0, 1939.0, 1938.0, 1973.0],
+            "volume": [100, 100, 100, 100],
+        })
+
+        def mock_1s_provider(bar_time):
+            return ohlcv_1s
+
+        result = run_backtest(ohlcv, signals, cfg(), get_1s_data=mock_1s_provider)
+
+        assert len(result.trades) == 1
+        t = result.trades[0]
+        assert t.exit_reason == "SL"
+        assert t.used_1s_resolution is True
+
+
+class TestAmbiguousBarZoomIn:
+    """PROJ-15: 1-second zoom-in for ambiguous bars (not entry bar)."""
+
+    def test_ambiguous_bar_resolved_to_tp_by_1s_data(self):
+        """SL and TP both hit on a non-entry bar, 1s data says TP first."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T09:00:00Z", 1950, 1956, 1948, 1954),  # signal bar
+            ("2024-01-02T09:01:00Z", 1954, 1960, 1953, 1958),  # entry triggers at 1955
+            # Ambiguous bar: high=1975 ≥ TP=1970, low=1935 ≤ SL=1940
+            ("2024-01-02T09:02:00Z", 1958, 1975, 1935, 1960),
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T09:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 1970.0
+            },
+        })
+
+        # 1s data for bar 09:02 shows TP hit first
+        ohlcv_1s = pd.DataFrame({
+            "datetime": pd.to_datetime([
+                "2024-01-02T09:02:00Z",
+                "2024-01-02T09:02:01Z",
+                "2024-01-02T09:02:02Z",
+            ], utc=True),
+            "open":  [1958.0, 1968.0, 1950.0],
+            "high":  [1969.0, 1975.0, 1955.0],
+            "low":   [1957.0, 1967.0, 1935.0],
+            "close": [1968.0, 1972.0, 1940.0],
+            "volume": [100, 100, 100],
+        })
+
+        def mock_1s_provider(bar_time):
+            return ohlcv_1s
+
+        result = run_backtest(ohlcv, signals, cfg(), get_1s_data=mock_1s_provider)
+
+        assert len(result.trades) == 1
+        t = result.trades[0]
+        assert t.exit_reason == "TP"
+        assert t.used_1s_resolution is True
+
+    def test_ambiguous_bar_fallback_when_1s_data_unavailable(self):
+        """SL and TP both hit, 1s provider returns None → worst-case SL."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T09:00:00Z", 1950, 1956, 1948, 1954),  # signal bar
+            ("2024-01-02T09:01:00Z", 1954, 1960, 1953, 1958),  # entry triggers at 1955
+            # Ambiguous bar
+            ("2024-01-02T09:02:00Z", 1958, 1975, 1935, 1960),
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T09:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 1970.0
+            },
+        })
+
+        def mock_1s_provider_empty(bar_time):
+            return None
+
+        result = run_backtest(ohlcv, signals, cfg(), get_1s_data=mock_1s_provider_empty)
+
+        assert len(result.trades) == 1
+        t = result.trades[0]
+        assert t.exit_reason == "SL"  # worst-case fallback
+        assert t.used_1s_resolution is False
+
+    def test_non_ambiguous_bar_does_not_use_1s(self):
+        """Only SL is hit (not TP) → no zoom-in needed, used_1s_resolution=False."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T09:00:00Z", 1950, 1956, 1948, 1954),  # signal bar
+            ("2024-01-02T09:01:00Z", 1954, 1960, 1953, 1958),  # entry triggers at 1955
+            # Only SL hit: low=1935 ≤ SL=1940, high=1965 < TP=1970
+            ("2024-01-02T09:02:00Z", 1958, 1965, 1935, 1940),
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T09:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 1970.0
+            },
+        })
+
+        call_count = [0]
+
+        def mock_1s_provider(bar_time):
+            call_count[0] += 1
+            return None
+
+        result = run_backtest(ohlcv, signals, cfg(), get_1s_data=mock_1s_provider)
+
+        assert len(result.trades) == 1
+        t = result.trades[0]
+        assert t.exit_reason == "SL"
+        assert t.used_1s_resolution is False
+        # The 1s provider should not have been called for a non-ambiguous bar
+        assert call_count[0] == 0
+
+
+class TestUsed1sResolutionFlag:
+    """PROJ-15: Verify the used_1s_resolution flag is correctly set."""
+
+    def test_flag_false_by_default(self):
+        """Normal trade without any 1s involvement has flag=False."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T09:00:00Z", 1950, 1956, 1948, 1954),
+            ("2024-01-02T09:01:00Z", 1954, 1962, 1953, 1960),  # entry
+            ("2024-01-02T09:02:00Z", 1960, 1975, 1959, 1972),  # TP hit
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T09:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 1970.0
+            },
+        })
+        result = run_backtest(ohlcv, signals, cfg())
+
+        assert len(result.trades) == 1
+        assert result.trades[0].used_1s_resolution is False
+
+    def test_flag_true_when_1s_resolves_ambiguity(self):
+        """Flag is True when 1s data successfully resolved an ambiguous bar."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T09:00:00Z", 1950, 1956, 1948, 1954),
+            ("2024-01-02T09:01:00Z", 1954, 1960, 1953, 1958),  # entry
+            # Ambiguous: both SL and TP hit
+            ("2024-01-02T09:02:00Z", 1958, 1975, 1935, 1960),
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T09:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 1970.0
+            },
+        })
+
+        ohlcv_1s = pd.DataFrame({
+            "datetime": pd.to_datetime([
+                "2024-01-02T09:02:00Z",
+                "2024-01-02T09:02:01Z",
+            ], utc=True),
+            "open":  [1958.0, 1950.0],
+            "high":  [1960.0, 1955.0],
+            "low":   [1935.0, 1940.0],
+            "close": [1950.0, 1945.0],
+            "volume": [100, 100],
+        })
+
+        def mock_1s_provider(bar_time):
+            return ohlcv_1s
+
+        result = run_backtest(ohlcv, signals, cfg(), get_1s_data=mock_1s_provider)
+
+        assert len(result.trades) == 1
+        t = result.trades[0]
+        assert t.exit_reason == "SL"
+        assert t.used_1s_resolution is True

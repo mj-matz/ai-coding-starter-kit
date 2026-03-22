@@ -113,6 +113,10 @@ _BASE_URL = "https://datafeed.dukascopy.com/datafeed"
 _TICK_FMT = ">IIIff"
 _TICK_SIZE = struct.calcsize(_TICK_FMT)  # 20 bytes
 
+# Candle format: ts_sec(u32), open(u32), close(u32), low(u32), high(u32), volume(f32)
+_CANDLE_FMT = ">IIIIIf"
+_CANDLE_SIZE = 24  # bytes per record
+
 
 def resolve_symbol(symbol: str) -> str:
     """Resolve a user-friendly symbol to a Dukascopy ticker."""
@@ -130,6 +134,61 @@ def _hour_url(duka_symbol: str, dt: datetime) -> str:
         f"{dt.year}/{dt.month - 1:02d}/{dt.day:02d}/"
         f"{dt.hour:02d}h_ticks.bi5"
     )
+
+
+def _day_candle_url(duka_symbol: str, year: int, month: int, day: int) -> str:
+    """Build the .bi5 candle URL for one trading day. Month is 0-indexed in Dukascopy URLs."""
+    return (
+        f"{_BASE_URL}/{duka_symbol}/"
+        f"{year}/{month - 1:02d}/{day:02d}/"
+        f"BID_candles_min_1.bi5"
+    )
+
+
+def _decode_candle_bi5(
+    raw: bytes,
+    year: int,
+    month: int,
+    day: int,
+    point: int,
+    hour_from: int,
+    hour_to: int,
+) -> Optional[pd.DataFrame]:
+    """Decode LZMA-compressed .bi5 candle data into a 1-minute OHLCV DataFrame.
+
+    Binary format per record (24 bytes, big-endian):
+      uint32 seconds from day start, uint32 open, uint32 close,
+      uint32 low, uint32 high, float32 volume.
+    Field order is O, C, L, H (not standard OHLC).
+    """
+    data = lzma.decompress(raw)
+    n = len(data) // _CANDLE_SIZE
+    if n == 0:
+        return None
+
+    day_start = datetime(year, month, day, tzinfo=timezone.utc)
+    rows = []
+    for i in range(n):
+        ts_sec, open_raw, close_raw, low_raw, high_raw, vol_float = struct.unpack_from(
+            _CANDLE_FMT, data, i * _CANDLE_SIZE
+        )
+        dt = day_start + timedelta(seconds=ts_sec)
+        if not (hour_from <= dt.hour <= hour_to):
+            continue
+        rows.append(
+            {
+                "datetime": pd.Timestamp(dt, tz="UTC"),
+                "open": open_raw / point,
+                "high": high_raw / point,
+                "low": low_raw / point,
+                "close": close_raw / point,
+                "volume": float(vol_float),
+            }
+        )
+
+    if not rows:
+        return None
+    return pd.DataFrame(rows)
 
 
 def _decode_bi5(raw: bytes, dt: datetime, point: int) -> Optional[pd.DataFrame]:
@@ -258,6 +317,65 @@ async def _fetch_all_hours(
                 logger.warning("Unexpected task error: %s", exc)
 
     return frames, partial_timeout
+
+
+def fetch_tick_data_for_hour(
+    symbol: str,
+    dt: datetime,
+) -> Optional[pd.DataFrame]:
+    """
+    Fetch raw tick data for a single hour from Dukascopy.
+
+    Args:
+        symbol: Instrument symbol (e.g. "XAUUSD")
+        dt: UTC datetime for the hour (minute/second are ignored; only date+hour used)
+
+    Returns:
+        DataFrame with columns: datetime (UTC), ask, bid, ask_volume, bid_volume, price, volume.
+        None if no data is available.
+    """
+    duka_symbol = resolve_symbol(symbol)
+    point = POINT_VALUES.get(duka_symbol, 100000)
+
+    hour_dt = datetime(dt.year, dt.month, dt.day, dt.hour, tzinfo=timezone.utc)
+
+    frames, _ = _run_async(_fetch_all_hours(duka_symbol, [hour_dt], point, symbol))
+    if not frames:
+        return None
+
+    ticks = pd.concat(frames, ignore_index=True).sort_values("datetime")
+    ticks["price"] = (ticks["ask"] + ticks["bid"]) / 2
+    ticks["volume"] = ticks["ask_volume"] + ticks["bid_volume"]
+    ticks = ticks.set_index("datetime")
+    ticks = ticks[~ticks.index.duplicated(keep="first")]
+    return ticks.reset_index()
+
+
+def resample_ticks_to_1s(ticks: pd.DataFrame) -> pd.DataFrame:
+    """
+    Resample tick data to 1-second OHLCV bars.
+
+    Args:
+        ticks: DataFrame with columns: datetime, price, volume.
+               datetime must be timezone-aware (UTC).
+
+    Returns:
+        DataFrame with columns: datetime (UTC), open, high, low, close, volume.
+        Seconds with no ticks are dropped (NaN rows not included).
+    """
+    work = ticks.copy()
+    if "datetime" in work.columns:
+        work = work.set_index("datetime")
+
+    ohlcv = pd.DataFrame({
+        "open": work["price"].resample("1s").first(),
+        "high": work["price"].resample("1s").max(),
+        "low": work["price"].resample("1s").min(),
+        "close": work["price"].resample("1s").last(),
+        "volume": work["volume"].resample("1s").sum(),
+    })
+    ohlcv = ohlcv.dropna(subset=["open"]).reset_index()
+    return ohlcv
 
 
 def fetch_dukascopy(

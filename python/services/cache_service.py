@@ -182,6 +182,93 @@ def save_to_cache(
     raise RuntimeError("Failed to insert cache entry into Supabase")
 
 
+def find_cached_1s_entry(
+    symbol: str,
+    target_date: date,
+    hour: int,
+) -> Optional[Path]:
+    """
+    Check if 1-second OHLCV data for a specific hour is already cached locally.
+
+    The file path convention is:
+      DATA_DIR/parquet/dukascopy/{SYMBOL}/1s/{DATE}_h{HH}.parquet
+
+    Returns the Path if file exists, or None.
+    """
+    file_path = (
+        DATA_DIR
+        / "parquet"
+        / "dukascopy"
+        / symbol.upper()
+        / "1s"
+        / f"{target_date.isoformat()}_h{hour:02d}.parquet"
+    )
+    if file_path.exists():
+        return file_path
+    return None
+
+
+def save_1s_to_cache(
+    df: pd.DataFrame,
+    symbol: str,
+    target_date: date,
+    hour: int,
+    created_by: str = "system",
+) -> Path:
+    """
+    Save 1-second OHLCV data as a Parquet file and record metadata in Supabase.
+
+    Args:
+        df: 1-second OHLCV DataFrame
+        symbol: Instrument symbol
+        target_date: Date of the data
+        hour: UTC hour (0-23)
+        created_by: User ID who triggered the fetch
+
+    Returns:
+        The file path where the Parquet was saved.
+    """
+    file_path = (
+        DATA_DIR
+        / "parquet"
+        / "dukascopy"
+        / symbol.upper()
+        / "1s"
+        / f"{target_date.isoformat()}_h{hour:02d}.parquet"
+    )
+
+    # Ensure directory exists
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Save as Parquet
+    df.to_parquet(str(file_path), index=False, engine="pyarrow")
+    file_size = os.path.getsize(file_path)
+
+    logger.info(
+        f"Saved {len(df)} 1s bars to {file_path} ({file_size} bytes)"
+    )
+
+    # Insert metadata into Supabase
+    try:
+        client = _get_supabase_client()
+        entry = {
+            "symbol": symbol.upper(),
+            "source": "dukascopy",
+            "timeframe": "1s",
+            "date_from": target_date.isoformat(),
+            "date_to": target_date.isoformat(),
+            "file_path": str(file_path),
+            "file_size_bytes": file_size,
+            "row_count": len(df),
+            "created_by": created_by,
+        }
+        client.table("data_cache").insert(entry).execute()
+    except Exception as exc:
+        logger.warning(f"Failed to insert 1s cache metadata into Supabase: {exc}")
+
+    return file_path
+
+
 def delete_cache_entry(cache_id: str) -> bool:
     """
     Delete a cache entry: remove the Parquet file and the DB row.
