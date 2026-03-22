@@ -160,12 +160,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Stream the SSE response through to the client
-    return new NextResponse(upstream.body, {
+    // Stream the SSE response through to the client.
+    // TransformStream ensures chunks are flushed immediately (prevents Vercel buffering).
+    const { readable, writable } = new TransformStream();
+    upstream.body!.pipeTo(writable);
+
+    return new NextResponse(readable, {
       headers: {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
       },
     });
   } catch (error) {
