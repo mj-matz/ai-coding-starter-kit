@@ -42,7 +42,9 @@ function formatDateTime(dateStr: string): string {
 // Shift a UTC unix timestamp to local time so lightweight-charts (which renders
 // timestamps as-if UTC) displays the correct local time on the time axis.
 function toChartTime(utcSeconds: number): UTCTimestamp {
-  const tzOffsetSec = -new Date().getTimezoneOffset() * 60;
+  // Use the historical offset at the exact point in time so DST transitions
+  // (e.g. CET ↔ CEST) are handled correctly for any historical candle.
+  const tzOffsetSec = -new Date(utcSeconds * 1000).getTimezoneOffset() * 60;
   return (utcSeconds + tzOffsetSec) as UTCTimestamp;
 }
 
@@ -157,6 +159,8 @@ export function TradeChartDialog({
       borderDownColor: "#ef4444",
       wickUpColor: "#22c55e",
       wickDownColor: "#ef4444",
+      priceLineVisible: false,
+      lastValueVisible: false,
     });
 
     candleSeries.setData(
