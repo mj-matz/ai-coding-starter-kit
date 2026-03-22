@@ -1,11 +1,15 @@
 "use client";
 
-import { Clock } from "lucide-react";
+import { useState } from "react";
+import { Clock, ChevronDown, ChevronRight } from "lucide-react";
 import { type UseFormReturn } from "react-hook-form";
 
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   FormControl,
   FormField,
@@ -53,8 +57,11 @@ function TimeRangeBreakoutParams({
 }: {
   form: UseFormReturn<BacktestFormValues>;
 }) {
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
   return (
     <>
+      {/* Time windows */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <FormField
           control={form.control}
@@ -145,6 +152,7 @@ function TimeRangeBreakoutParams({
         />
       </div>
 
+      {/* SL / TP */}
       <div className="mt-4 grid grid-cols-2 gap-4">
         <FormField
           control={form.control}
@@ -171,9 +179,7 @@ function TimeRangeBreakoutParams({
           name="takeProfit"
           render={({ field }) => (
             <FormItem>
-              <FormLabel className="text-gray-300">
-                Take Profit (pips)
-              </FormLabel>
+              <FormLabel className="text-gray-300">Take Profit (pips)</FormLabel>
               <FormControl>
                 <Input
                   {...field}
@@ -187,199 +193,152 @@ function TimeRangeBreakoutParams({
             </FormItem>
           )}
         />
-
-        <FormField
-          control={form.control}
-          name="commission"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel className="text-gray-300">
-                Commission (per lot)
-              </FormLabel>
-              <FormControl>
-                <Input
-                  {...field}
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
-                  aria-label="Commission in account currency per trade"
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={form.control}
-          name="slippage"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel className="text-gray-300">Slippage (pips)</FormLabel>
-              <FormControl>
-                <Input
-                  {...field}
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
-                  aria-label="Slippage in pips"
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
       </div>
 
-      <div className="mt-4">
-        <FormField
-          control={form.control}
-          name="entryDelayBars"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel className="text-gray-300">
-                Entry Delay (bars after range end)
-              </FormLabel>
-              <FormControl>
-                <Input
-                  {...field}
-                  type="number"
-                  step="1"
-                  min="0"
-                  className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
-                  aria-label="Entry delay in bars after range end"
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
+      {/* Advanced Parameters (collapsed by default) */}
+      <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <CollapsibleTrigger className="mt-4 flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-200 transition-colors">
+          {advancedOpen ? (
+            <ChevronDown className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5" />
           )}
-        />
-      </div>
+          Advanced Parameters
+        </CollapsibleTrigger>
 
-      <div className="mt-4 grid grid-cols-2 gap-4">
-        <FormField
-          control={form.control}
-          name="trailTriggerPips"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel className="text-gray-300">
-                Trail Trigger (pips)
-              </FormLabel>
-              <FormControl>
-                <Input
-                  {...field}
-                  value={field.value ?? ""}
-                  onChange={(e) =>
-                    field.onChange(
-                      e.target.value === "" ? undefined : e.target.valueAsNumber
-                    )
-                  }
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  placeholder="e.g. 100"
-                  className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
-                  aria-label="Trail trigger in pips (profit level that activates profit lock)"
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={form.control}
-          name="trailLockPips"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel className="text-gray-300">
-                Trail Lock (pips)
-              </FormLabel>
-              <FormControl>
-                <Input
-                  {...field}
-                  value={field.value ?? ""}
-                  onChange={(e) =>
-                    field.onChange(
-                      e.target.value === "" ? undefined : e.target.valueAsNumber
-                    )
-                  }
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  placeholder="e.g. 50"
-                  className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
-                  aria-label="Trail lock in pips (SL moved to this offset from entry on trigger)"
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      </div>
-
-      <div className="mt-4">
-        <FormField
-          control={form.control}
-          name="direction"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel className="text-gray-300">Direction</FormLabel>
-              <FormControl>
-                <RadioGroup
-                  onValueChange={field.onChange}
-                  value={field.value}
-                  className="flex gap-4"
-                  aria-label="Trade direction"
-                >
-                  <div className="flex items-center gap-2">
-                    <RadioGroupItem
-                      value="long"
-                      id="dir-long"
-                      className="border-gray-600 text-blue-500"
+        <CollapsibleContent className="mt-3 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <FormField
+              control={form.control}
+              name="commission"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-gray-300">
+                    Commission (per lot)
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
+                      aria-label="Commission in account currency per trade"
                     />
-                    <Label
-                      htmlFor="dir-long"
-                      className="cursor-pointer text-gray-300"
-                    >
-                      Long
-                    </Label>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <RadioGroupItem
-                      value="short"
-                      id="dir-short"
-                      className="border-gray-600 text-blue-500"
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="slippage"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-gray-300">Slippage (pips)</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
+                      aria-label="Slippage in pips"
                     />
-                    <Label
-                      htmlFor="dir-short"
-                      className="cursor-pointer text-gray-300"
-                    >
-                      Short
-                    </Label>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <RadioGroupItem
-                      value="both"
-                      id="dir-both"
-                      className="border-gray-600 text-blue-500"
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+
+          <FormField
+            control={form.control}
+            name="entryDelayBars"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-gray-300">
+                  Entry Delay (bars after range end)
+                </FormLabel>
+                <FormControl>
+                  <Input
+                    {...field}
+                    type="number"
+                    step="1"
+                    min="0"
+                    className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
+                    aria-label="Entry delay in bars after range end"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <div className="grid grid-cols-2 gap-4">
+            <FormField
+              control={form.control}
+              name="trailTriggerPips"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-gray-300">
+                    Trail Trigger (pips)
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value ?? ""}
+                      onChange={(e) =>
+                        field.onChange(
+                          e.target.value === "" ? undefined : e.target.valueAsNumber
+                        )
+                      }
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      placeholder="e.g. 100"
+                      className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
+                      aria-label="Trail trigger in pips"
                     />
-                    <Label
-                      htmlFor="dir-both"
-                      className="cursor-pointer text-gray-300"
-                    >
-                      Both
-                    </Label>
-                  </div>
-                </RadioGroup>
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      </div>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="trailLockPips"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-gray-300">
+                    Trail Lock (pips)
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value ?? ""}
+                      onChange={(e) =>
+                        field.onChange(
+                          e.target.value === "" ? undefined : e.target.valueAsNumber
+                        )
+                      }
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      placeholder="e.g. 50"
+                      className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
+                      aria-label="Trail lock in pips"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
     </>
   );
 }

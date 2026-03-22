@@ -390,43 +390,35 @@ export function ConfigurationPanel({
                   />
                 )}
                 </div>
+
+                <FormField
+                  control={form.control}
+                  name="gapFill"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center justify-between rounded-md border border-white/10 bg-black/20 px-4 py-3">
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <FormLabel className="cursor-help text-gray-300 underline decoration-dotted underline-offset-2">
+                              Gap Fill
+                            </FormLabel>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" align="start" className="max-w-72">
+                            Gaps at market open lead to worse fills. Off = TradingView-compatible mode (default).
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                          aria-label="Enable Gap Fill"
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
               </div>
-            </div>
-
-            <Separator className="bg-white/10" />
-
-            {/* Simulation Options */}
-            <div>
-              <h3 className="mb-3 text-sm font-medium text-gray-400">
-                Simulation Options
-              </h3>
-              <FormField
-                control={form.control}
-                name="gapFill"
-                render={({ field }) => (
-                  <FormItem className="flex items-center justify-between rounded-md border border-white/10 bg-black/20 px-4 py-3">
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <FormLabel className="cursor-help text-gray-300 underline decoration-dotted underline-offset-2">
-                            Gap Fill
-                          </FormLabel>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" align="start" className="max-w-72">
-                          Gaps at market open lead to worse fills. Off = TradingView-compatible mode (default).
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                    <FormControl>
-                      <Switch
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                        aria-label="Enable Gap Fill"
-                      />
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
             </div>
 
             <Button
