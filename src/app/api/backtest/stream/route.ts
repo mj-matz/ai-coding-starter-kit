@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 
+export const runtime = "edge"; // Required for progressive SSE streaming on Vercel
 export const maxDuration = 300; // Vercel Pro: up to 300s
 
 const FASTAPI_URL = process.env.FASTAPI_URL;
