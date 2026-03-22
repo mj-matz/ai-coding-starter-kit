@@ -172,9 +172,11 @@ def run_backtest(
         _local_idx   = ohlcv.index.tz_convert(exit_tz)
         _exit_min    = exit_time.hour * 60 + exit_time.minute
         _bar_min     = _local_idx.hour * 60 + _local_idx.minute
+        _local_dates = np.array(_local_idx.date)
         exit_flags: Optional[np.ndarray] = (_bar_min >= _exit_min)
     else:
         exit_flags = None
+        _local_dates = None
 
     balance: float = config.initial_balance
     trades: List[Trade] = []
@@ -203,12 +205,29 @@ def run_backtest(
                 progress_callback(_day_count, _total_trading_days, bar_date.isoformat())
 
         # ── 1a. Time exit ───────────────────────────────────────────────────
-        if position is not None and exit_flags is not None and exit_flags[i]:
+        if position is not None and exit_flags is not None:
+            if exit_flags[i]:
+                # Normal case: first bar at or after exit_time → close at bar open
                 trade = close_position(position, bar_time, bar_open, "TIME", config)
                 trades.append(trade)
                 balance += trade.pnl_currency
                 equity_curve.append(
                     {"time": bar_time.isoformat(), "balance": round(balance, 2)}
+                )
+                position = None
+                pending_orders = []
+            elif i > 0 and _local_dates[i] != _local_dates[i - 1] and not exit_flags[i - 1]:
+                # Gap detection: day boundary crossed without exit_time being reached.
+                # The market closed before exit_time (e.g. data ends at 20:27, exit=21:00)
+                # and resumes next day before exit_time (e.g. 13:00 < 21:00).
+                # Close at the last bar's close before the gap.
+                prev_close = _closes[i - 1]
+                prev_time = ohlcv.index[i - 1]
+                trade = close_position(position, prev_time, prev_close, "TIME", config)
+                trades.append(trade)
+                balance += trade.pnl_currency
+                equity_curve.append(
+                    {"time": prev_time.isoformat(), "balance": round(balance, 2)}
                 )
                 position = None
                 pending_orders = []

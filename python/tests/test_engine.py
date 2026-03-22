@@ -310,6 +310,31 @@ class TestTimeExit:
         assert t.exit_reason == "TIME"
         assert t.exit_price == pytest.approx(1942.0, abs=0.01)
 
+    def test_time_exit_fires_at_last_bar_when_data_ends_before_exit_time(self):
+        """
+        When market data ends before exit_time and resumes next day before exit_time,
+        the trade must close at the last bar's close before the day gap.
+        Example: exit_time=21:00, data ends at 20:27, resumes next day at 13:00.
+        No bar is ever >= 21:00, so the gap detector must fire at previous bar's close.
+        """
+        ohlcv = make_ohlcv([
+            ("2024-01-02T10:00:00Z", 1950, 1956, 1948, 1954),  # signal
+            ("2024-01-02T10:01:00Z", 1954, 1958, 1953, 1956),  # entry
+            ("2024-01-02T20:27:00Z", 1956, 1960, 1955, 1959),  # last bar before market gap, close=1959
+            ("2024-01-03T13:00:00Z", 1959, 1965, 1957, 1963),  # next day, 13:00 < 21:00 → no normal exit flag
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T10:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 2000.0
+            },
+        })
+        result = run_backtest(ohlcv, signals, cfg(time_exit="21:00"))
+
+        assert len(result.trades) == 1
+        t = result.trades[0]
+        assert t.exit_reason == "TIME"
+        assert t.exit_price == pytest.approx(1959.0, abs=0.01)  # close of last bar before gap
+
 
 class TestTrailTrigger:
     def test_short_trail_trigger(self):
