@@ -88,26 +88,13 @@ class TestDownloadHourAsync:
         assert result is None
         assert client.get.call_count == 1
 
-    def test_empty_content_retries_and_returns_none(self):
-        # Empty body is treated as possible throttle — retried like a 429.
+    def test_empty_content_returns_none_without_retry(self):
+        # Empty body = no trades this hour (overnight, holiday). No retry.
         client = _make_mock_client(_make_response(200, b""))
         sem = asyncio.Semaphore(CONCURRENT_REQUESTS)
-        with patch("fetchers.dukascopy_fetcher.asyncio.sleep", new_callable=AsyncMock):
-            result = asyncio.run(_download_hour_async(client, sem, SYMBOL, DT, POINT))
+        result = asyncio.run(_download_hour_async(client, sem, SYMBOL, DT, POINT))
         assert result is None
-        assert client.get.call_count == 1 + MAX_RETRIES
-
-    def test_empty_content_succeeds_on_retry(self):
-        # If first attempt returns empty (throttle) but retry returns data, succeed.
-        client = _make_mock_client(
-            _make_response(200, b""),
-            _make_response(200, _make_bi5_bytes()),
-        )
-        sem = asyncio.Semaphore(CONCURRENT_REQUESTS)
-        with patch("fetchers.dukascopy_fetcher.asyncio.sleep", new_callable=AsyncMock):
-            result = asyncio.run(_download_hour_async(client, sem, SYMBOL, DT, POINT))
-        assert result is not None
-        assert client.get.call_count == 2
+        assert client.get.call_count == 1
 
     def test_429_retries_and_returns_none_after_exhaustion(self):
         client = _make_mock_client(_make_response(429, b"rate limited"))

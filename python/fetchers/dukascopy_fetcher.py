@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # ── Concurrency & Retry constants ────────────────────────────────────────────
 
-CONCURRENT_REQUESTS = 8
+CONCURRENT_REQUESTS = 12
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = [0.5, 1, 2]
@@ -190,27 +190,10 @@ async def _download_hour_async(
                                    iso_ts, 1 + MAX_RETRIES, exc)
                     return None
             else:
-                if resp.status_code == 404:
-                    return None  # Weekend / holiday — no retry
+                if resp.status_code == 404 or len(resp.content) == 0:
+                    return None  # Weekend / holiday / no trading this hour
 
-                if len(resp.content) == 0:
-                    # Empty body on a non-404 response is likely a server-side
-                    # throttle (Dukascopy returns 200+empty under high load).
-                    # Retry like a 429; only accept empty as genuine on last attempt.
-                    if attempt < MAX_RETRIES:
-                        backoff = RETRY_BACKOFF_SECONDS[attempt]
-                        logger.info(
-                            "Empty response for %s (attempt %d/%d) — possible throttle, retry in %gs",
-                            iso_ts, attempt + 1, 1 + MAX_RETRIES, backoff,
-                        )
-                    else:
-                        logger.warning(
-                            "Empty response for %s — all %d retries exhausted, hour skipped",
-                            iso_ts, 1 + MAX_RETRIES,
-                        )
-                        return None
-
-                elif resp.status_code == 200:
+                if resp.status_code == 200:
                     try:
                         return _decode_bi5(resp.content, dt, point)
                     except lzma.LZMAError as exc:
@@ -218,7 +201,7 @@ async def _download_hour_async(
                         return None
 
                 else:
-                    # Non-200, non-404, non-empty (e.g. 429, 503, 500)
+                    # Non-200, non-404 (e.g. 429, 503, 500)
                     if attempt < MAX_RETRIES:
                         backoff = RETRY_BACKOFF_SECONDS[attempt]
                         logger.info("HTTP %d for %s (attempt %d/%d) — retry in %gs",
