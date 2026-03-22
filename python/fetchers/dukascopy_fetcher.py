@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # ── Concurrency & Retry constants ────────────────────────────────────────────
 
-CONCURRENT_REQUESTS = 12
+CONCURRENT_REQUESTS = 6
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = [0.5, 1, 2]
