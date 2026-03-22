@@ -192,6 +192,7 @@ export interface TradeRecord {
   duration_minutes: number;
   entry_gap_pips: number;
   exit_gap: boolean;
+  used_1s_resolution: boolean;
   range_high: number;
   range_low: number;
   stop_loss: number;
