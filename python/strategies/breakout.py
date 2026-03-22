@@ -39,7 +39,7 @@ class BreakoutParams:
     direction_filter: Literal["long_only", "short_only", "both"] = "both"
     trail_trigger_pips: Optional[float] = None  # profit level (pips) that activates the lock
     trail_lock_pips: Optional[float] = None     # pips from entry to which SL is moved on trigger
-    entry_offset_pips: float = 1.0
+    entry_offset_pips: float = 0.0
     entry_delay_bars: int = 1  # bars to wait after range_end before entry is possible;
                                # 0 = first bar at range_end, 1 = one bar later (default), N = N bars later
 
