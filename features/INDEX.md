@@ -29,7 +29,7 @@
 | PROJ-15 | Intra-Bar Accuracy (Entry-Bar SL/TP + 1-Second Hybrid) | Deployed | [PROJ-15-intra-bar-accuracy.md](PROJ-15-intra-bar-accuracy.md) | 2026-03-22 |
 | PROJ-16 | Configurable Entry Offset (Pip Distance to Range) | Planned | [PROJ-16-configurable-entry-offset.md](PROJ-16-configurable-entry-offset.md) | 2026-03-22 |
 | PROJ-17 | Chart Screenshot Share | Planned | [PROJ-17-chart-screenshot-share.md](PROJ-17-chart-screenshot-share.md) | 2026-03-22 |
-| PROJ-18 | Dukascopy Candle-API (OHLCV statt Tick-Daten) | Planned | [PROJ-18-dukascopy-candle-api.md](PROJ-18-dukascopy-candle-api.md) | 2026-03-22 |
+| PROJ-18 | Dukascopy Candle-API (OHLCV statt Tick-Daten) | In Review | [PROJ-18-dukascopy-candle-api.md](PROJ-18-dukascopy-candle-api.md) | 2026-03-22 |
 
 <!-- Add features above this line -->
 

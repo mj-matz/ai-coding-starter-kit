@@ -26,6 +26,8 @@ A personal web-based backtesting platform for systematic trading strategies. The
 | P1 | GAP Fill Toggle | Deployed |
 | P1 | Dukascopy Download Reliability (Retry + Adaptive Concurrency) | Planned |
 | P1 | Cache Warming (Background Prefetch) | Planned |
+| P1 | Intra-Bar Accuracy (Entry-Bar SL/TP + 1-Second Hybrid) | Planned |
+| P2 | Chart Screenshot Share | Planned |
 
 ## Success Metrics
 - Backtesting engine produces identical results on repeated runs (deterministic)

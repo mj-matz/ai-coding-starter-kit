@@ -1,6 +1,6 @@
 # PROJ-18: Dukascopy Candle-API (OHLCV statt Tick-Daten)
 
-## Status: Planned
+## Status: In Review
 **Created:** 2026-03-22
 **Last Updated:** 2026-03-22
 
@@ -50,70 +50,103 @@ Geschätzte Verbesserung: **50× schneller** (~1–2s/Monat statt ~50s/Monat).
 
 ## Tech Design (Solution Architect)
 
-### Candle-Endpoint
-
-Dukascopy's undokumentierter OHLCV-Endpoint (genutzt von Drittanbieter-Bibliotheken wie `python-dukascopy`):
+### Candle-Endpoints (verifiziert 2026-03-22)
 
 ```
-GET https://datafeed.dukascopy.com/datafeed/{SYMBOL}/
-    candles/BID/{TIMEFRAME}/{UNIX_TIMESTAMP_MS}/{COUNT}
+GET https://datafeed.dukascopy.com/datafeed/{SYMBOL}/{YEAR}/{MONTH-1:02d}/{DAY:02d}/BID_candles_min_1.bi5
+GET https://datafeed.dukascopy.com/datafeed/{SYMBOL}/{YEAR}/{MONTH-1:02d}/{DAY:02d}/ASK_candles_min_1.bi5
 ```
 
-| Parameter | Wert |
-|-----------|------|
-| SYMBOL | z.B. `EURUSD`, `DEUIDXEUR` |
-| TIMEFRAME | `m1` (1 Minute), `h1`, `d1` |
-| UNIX_TIMESTAMP_MS | Start-Zeitstempel in Millisekunden (UTC) |
-| COUNT | Anzahl Candles pro Request (max. ~1.000) |
+**Gleiche URL-Konvention wie der Tick-Endpoint** (Monat 0-indexed). Eine Datei pro Handelstag pro Side (BID/ASK), enthält alle 1440 Minuten-Bars des Tages.
 
-**Response:** JSON-Array mit Arrays `[timestamp_ms, open, high, low, close, volume]`
+**MID-Preis:** Beide Endpoints werden parallel geladen. MID = (ASK + BID) / 2 per Bar — identische Qualität zum Tick-Endpoint.
 
-Beispiel-URL für Jan 2025, EURUSD, 1m, 1.000 Bars:
+Beispiel: EURUSD, 2. Januar 2025:
 ```
-https://datafeed.dukascopy.com/datafeed/EURUSD/candles/BID/m1/1735689600000/1000
+https://datafeed.dukascopy.com/datafeed/EURUSD/2025/00/02/BID_candles_min_1.bi5
+https://datafeed.dukascopy.com/datafeed/EURUSD/2025/00/02/ASK_candles_min_1.bi5
 ```
+
+### Binärformat (verifiziert)
+
+LZMA-komprimiert, identisch zur `.bi5`-Konvention des Tick-Endpoints.
+
+**24 Bytes pro Record, Big-Endian:**
+
+| Offset | Typ | Inhalt |
+|--------|-----|--------|
+| 0 | `uint32` | Sekunden vom Tagesanfang UTC (0, 60, 120, … 86340) |
+| 4 | `uint32` | Open (raw integer ÷ POINT_VALUE) |
+| 8 | `uint32` | Close |
+| 12 | `uint32` | Low |
+| 16 | `uint32` | High |
+| 20 | `float32` | Volume |
+
+**Feldformat:** `struct.unpack_from('>IIIIIf', data, i * 24)`
+
+**Wichtig:** Feldreihenfolge ist **O, C, L, H** — nicht OHLC.
+
+Datetime-Rekonstruktion:
+```python
+day_start = datetime(year, month, day, tzinfo=timezone.utc)
+dt = day_start + timedelta(seconds=ts)
+```
+
+POINT_VALUE: identisch zur bestehenden `POINT_VALUES`-Dict (z.B. EURUSD = 100000).
 
 ### Request-Strategie
 
-Statt 504 Requests (1 pro Stunde) → Batches von 1.000 Minuten-Bars:
-- 1 Monat = ~30.000 Minuten (Wochentage) → 30 Requests
-- 2 Monate → 60 Requests
-- Mit 6 Concurrent (bewährt, keine Throttles): 60 / 6 × 0.6s = **6s für 2 Monate**
+**2 Requests pro Handelstag** (BID + ASK parallel) statt 24 (ein Request pro Stunde):
+
+| Zeitraum | Bisherige Requests | Neue Requests | Reduktion |
+|----------|-------------------|---------------|-----------|
+| 1 Monat (~21 Tage) | 504 | 42 | 12× |
+| 2 Monate (~43 Tage) | 1.032 | 86 | 12× |
+
+Geschätzte Performance bei 6 concurrent, 0.6s/Request:
+- 1 Monat: `42 / 6 × 0.6s ≈ 4s`
+- 2 Monate: `86 / 6 × 0.6s ≈ 9s`
+
+**Vorteil gegenüber nur BID:** MID-Preis identisch zur bisherigen Tick-Implementierung → keine Änderung an Backtest-Ergebnissen.
+
+**Wochenenden:** Wochentag-Filter wie bisher auf Datums-Ebene (kein Request für Samstag/Sonntag).
 
 ### Komponentenstruktur
 
 ```
 dukascopy_fetcher.py
 └── fetch_dukascopy()  [Schnittstelle unverändert]
-    └── _fetch_candles_async()  [NEU — Candle-API]
-        ├── Berechne Batch-Timestamps für Range
-        ├── asyncio.gather() für alle Batch-Requests
-        ├── Dekodiere JSON → DataFrame
-        └── Bei Fehler: raise → Fallback greift
-    └── _fetch_ticks_async()  [bestehende Logik, umbenannt]
-        └── [wie bisher, nur als Fallback]
+    ├── _fetch_all_candles()  [NEU — primär]
+    │   ├── Generiere Liste aller Handelstage in [date_from, date_to]
+    │   ├── asyncio.Semaphore(6) + httpx.AsyncClient (wie bestehend)
+    │   ├── Pro Tag: Download BID + ASK _candles_min_1.bi5 (2 parallele Tasks)
+    │   ├── LZMA dekomprimieren
+    │   ├── struct.unpack_from('>IIIIIf', ...) → O/C/L/H/V je Side
+    │   ├── MID = (ASK + BID) / 2 per Bar
+    │   ├── Konvertiere ts → UTC datetime via timedelta(seconds=ts)
+    │   └── Filtere auf [hour_from, hour_to] falls gesetzt
+    └── _fetch_all_hours()  [bestehende Logik, Fallback]
 ```
 
 ### Fallback-Logik
 
 ```python
 try:
-    ohlcv = await _fetch_candles_async(duka_symbol, date_from, date_to, ...)
-    if ohlcv is None or len(ohlcv) == 0:
+    frames = await _fetch_candles_async(duka_symbol, days, point)
+    if not frames:
         raise ValueError("empty candle response")
 except Exception:
-    logger.warning("Candle-API failed, falling back to tick endpoint")
-    ohlcv = await _fetch_ticks_async(duka_symbol, date_from, date_to, ...)
+    logger.warning("Candle-API failed — falling back to tick endpoint")
+    frames, partial = await _fetch_ticks_async(duka_symbol, hours, point)
 ```
 
-### Offene Frage (vor Implementierung zu klären)
+### Offene Fragen
 
-Der Candle-Endpoint ist undokumentiert. Vor Implementierung muss verifiziert werden:
-1. Ist der Endpoint öffentlich erreichbar? (curl-Test)
-2. Entspricht das Response-Format der erwarteten Struktur?
-3. Unterstützt er alle benötigten Symbole (v.a. `DEUIDXEUR` für DAX)?
+1. **DAX-Symbol:** ✅ Geklärt (2026-03-22) — `DEUIDXEUR/BID_candles_min_1.bi5` funktioniert. Alle 32 Dukascopy-Symbole antworten mit HTTP 200, inklusive aller Indizes, Forex-Paare, Metals und Energy.
 
-**Empfehlung:** Vor `/frontend` oder `/backend` einen manuellen curl-Test durchführen und das Response-Format dokumentieren.
+2. **Wochenenden:** ✅ Geklärt (2026-03-22) — Endpoint gibt **nicht 404**, sondern HTTP 200 mit 1440 Placeholder-Candles zurück. Alle Wochenend-Candles haben `volume = 0` und einen konstanten Preis (letzter Freitags-Close). Konsequenz: Wochenend-Tage wie geplant auf Request-Ebene überspringen (`weekday < 5`) — nicht weil der Server 404 liefert, sondern um nutzlose Downloads zu vermeiden.
+
+3. **BID vs. MID:** ✅ Geklärt (2026-03-22) — ASK-Endpoint `ASK_candles_min_1.bi5` existiert und ist verifiziert. Implementierung verwendet **BID + ASK → MID** (identisch zur Tick-Implementierung). Kein Qualitätsverlust gegenüber bisheriger Methode.
 
 ## QA Test Results
 _To be added by /qa_

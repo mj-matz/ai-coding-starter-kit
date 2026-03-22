@@ -18,6 +18,8 @@ interface UseBacktestReturn {
   isTimedOut: boolean;
   progress: BacktestProgress | null;
   isStreaming: boolean;
+  warnings: string[];
+  clearWarnings: () => void;
   runBacktest: (config: BacktestFormValues) => Promise<void>;
   runBacktestStream: (config: BacktestFormValues) => Promise<void>;
   cancel: () => void;
@@ -32,6 +34,9 @@ export function useBacktest(): UseBacktestReturn {
   const [isTimedOut, setIsTimedOut] = useState(false);
   const [progress, setProgress] = useState<BacktestProgress | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [warnings, setWarnings] = useState<string[]>([]);
+
+  const clearWarnings = useCallback(() => setWarnings([]), []);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const timeoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -124,6 +129,7 @@ export function useBacktest(): UseBacktestReturn {
       setIsTimedOut(false);
       setProgress(null);
       setIsStreaming(true);
+      setWarnings([]);
 
       // Set timeout warning
       timeoutTimerRef.current = setTimeout(() => {
@@ -189,6 +195,8 @@ export function useBacktest(): UseBacktestReturn {
                 setStatus("success");
                 setProgress(null);
                 setIsStreaming(false);
+              } else if (event.type === "warning") {
+                setWarnings((prev) => [...prev, event.message as string]);
               } else if (event.type === "error") {
                 throw new Error(event.message || "Backtest stream error");
               }
@@ -237,6 +245,8 @@ export function useBacktest(): UseBacktestReturn {
     isTimedOut,
     progress,
     isStreaming,
+    warnings,
+    clearWarnings,
     runBacktest,
     runBacktestStream,
     cancel,

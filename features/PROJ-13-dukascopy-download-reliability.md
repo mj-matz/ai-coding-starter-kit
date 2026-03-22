@@ -1,8 +1,8 @@
 # PROJ-13: Dukascopy Download Reliability (Retry + Adaptive Concurrency)
 
-## Status: In Review
+## Status: Failed
 **Created:** 2026-03-21
-**Last Updated:** 2026-03-21
+**Last Updated:** 2026-03-22
 
 ## Dependencies
 - Requires: PROJ-1 (Data Fetcher) — optimiert die bestehende `fetch_dukascopy()`-Implementierung

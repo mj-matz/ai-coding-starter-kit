@@ -136,12 +136,12 @@ def _hour_url(duka_symbol: str, dt: datetime) -> str:
     )
 
 
-def _day_candle_url(duka_symbol: str, year: int, month: int, day: int) -> str:
+def _day_candle_url(duka_symbol: str, year: int, month: int, day: int, side: str = "BID") -> str:
     """Build the .bi5 candle URL for one trading day. Month is 0-indexed in Dukascopy URLs."""
     return (
         f"{_BASE_URL}/{duka_symbol}/"
         f"{year}/{month - 1:02d}/{day:02d}/"
-        f"BID_candles_min_1.bi5"
+        f"{side}_candles_min_1.bi5"
     )
 
 
@@ -189,6 +189,149 @@ def _decode_candle_bi5(
     if not rows:
         return None
     return pd.DataFrame(rows)
+
+
+async def _download_candle_raw(
+    client: httpx.AsyncClient,
+    semaphore: asyncio.Semaphore,
+    duka_symbol: str,
+    day: date,
+    side: str,
+) -> Optional[bytes]:
+    """Download raw .bi5 candle data for one day/side.
+
+    Returns None on HTTP 404 or empty body (holiday / no data).
+    Raises RuntimeError on HTTP errors or connection issues after all retries.
+    """
+    url = _day_candle_url(duka_symbol, day.year, day.month, day.day, side)
+    day_str = str(day)
+
+    for attempt in range(1 + MAX_RETRIES):
+        backoff: Optional[float] = None
+
+        async with semaphore:
+            try:
+                resp = await client.get(url, timeout=20)
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
+                if attempt < MAX_RETRIES:
+                    backoff = RETRY_BACKOFF_SECONDS[attempt]
+                    logger.info(
+                        "Connection error for %s %s (attempt %d/%d): %s — retry in %gs",
+                        side, day_str, attempt + 1, 1 + MAX_RETRIES, type(exc).__name__, backoff,
+                    )
+                else:
+                    raise RuntimeError(
+                        f"Connection error for {side} candle {day_str} after {1 + MAX_RETRIES} attempts: {exc}"
+                    ) from exc
+            else:
+                if resp.status_code == 404 or len(resp.content) == 0:
+                    return None  # Holiday / no data
+
+                if resp.status_code == 200:
+                    return resp.content
+
+                # Non-200, non-404 (e.g. 429, 503, 500)
+                if attempt < MAX_RETRIES:
+                    backoff = RETRY_BACKOFF_SECONDS[attempt]
+                    logger.info(
+                        "HTTP %d for %s %s (attempt %d/%d) — retry in %gs",
+                        resp.status_code, side, day_str, attempt + 1, 1 + MAX_RETRIES, backoff,
+                    )
+                else:
+                    raise RuntimeError(
+                        f"HTTP {resp.status_code} for {side} candle {day_str} after {1 + MAX_RETRIES} attempts"
+                    )
+
+        if backoff is not None:
+            await asyncio.sleep(backoff)
+
+    return None
+
+
+async def _fetch_all_candles(
+    duka_symbol: str,
+    days: list,
+    point: int,
+    hour_from: int,
+    hour_to: int,
+    symbol: str,
+) -> list[pd.DataFrame]:
+    """Download BID+ASK candles for all trading days concurrently and return MID DataFrames.
+
+    Raises RuntimeError if any download fails or the overall timeout is exceeded.
+    Caller should catch RuntimeError and fall back to the tick endpoint.
+    """
+    semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
+
+    async with httpx.AsyncClient(limits=_POOL_LIMITS) as client:
+        bid_tasks = {
+            d: asyncio.create_task(
+                _download_candle_raw(client, semaphore, duka_symbol, d, "BID")
+            )
+            for d in days
+        }
+        ask_tasks = {
+            d: asyncio.create_task(
+                _download_candle_raw(client, semaphore, duka_symbol, d, "ASK")
+            )
+            for d in days
+        }
+
+        all_tasks = list(bid_tasks.values()) + list(ask_tasks.values())
+        done, pending = await asyncio.wait(all_tasks, timeout=FETCH_TIMEOUT_SECONDS)
+
+        if pending:
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            raise RuntimeError(
+                f"Candle-API timeout after {FETCH_TIMEOUT_SECONDS}s: "
+                f"{len(pending)} of {len(all_tasks)} requests still pending for {symbol}"
+            )
+
+        # Collect raw bytes per day/side — task.result() re-raises any exception from the task
+        bid_raw: dict = {}
+        ask_raw: dict = {}
+        for d, task in bid_tasks.items():
+            bid_raw[d] = task.result()
+        for d, task in ask_tasks.items():
+            ask_raw[d] = task.result()
+
+    # Merge BID + ASK per day → MID DataFrame
+    frames: list[pd.DataFrame] = []
+    for d in days:
+        b = bid_raw[d]
+        a = ask_raw[d]
+
+        if b is None and a is None:
+            continue  # Holiday / no data — expected
+
+        if b is None or a is None:
+            raise RuntimeError(f"Only one side available for {symbol} on {d} — cannot compute MID")
+
+        bid_df = _decode_candle_bi5(b, d.year, d.month, d.day, point, hour_from, hour_to)
+        ask_df = _decode_candle_bi5(a, d.year, d.month, d.day, point, hour_from, hour_to)
+
+        if bid_df is None and ask_df is None:
+            continue
+
+        if bid_df is None or ask_df is None:
+            raise RuntimeError(f"Only one side decoded for {symbol} on {d}")
+
+        merged = bid_df.merge(ask_df, on="datetime", suffixes=("_bid", "_ask"))
+        if merged.empty:
+            continue
+
+        frames.append(pd.DataFrame({
+            "datetime": merged["datetime"],
+            "open":   (merged["open_bid"]  + merged["open_ask"])  / 2,
+            "high":   (merged["high_bid"]  + merged["high_ask"])  / 2,
+            "low":    (merged["low_bid"]   + merged["low_ask"])   / 2,
+            "close":  (merged["close_bid"] + merged["close_ask"]) / 2,
+            "volume":  merged["volume_bid"] + merged["volume_ask"],
+        }))
+
+    return frames
 
 
 def _decode_bi5(raw: bytes, dt: datetime, point: int) -> Optional[pd.DataFrame]:
@@ -408,27 +551,45 @@ def fetch_dukascopy(
     duka_symbol = resolve_symbol(symbol)
     point = POINT_VALUES.get(duka_symbol, 100000)
 
-    # Generate all hours in [date_from, date_to] inclusive, skipping weekends
-    # and optionally restricting to [hour_from, hour_to] (BUG-27).
+    hour_range_str = "all hours" if (hour_from == 0 and hour_to == 23) else f"h{hour_from:02d}-h{hour_to:02d} UTC"
+
+    # ── Generate trading days (for candle endpoint) ───────────────────────────
+    days = []
+    cur_day = date_from
+    while cur_day <= date_to:
+        if cur_day.weekday() < 5:  # 0=Mon … 4=Fri
+            days.append(cur_day)
+        cur_day += timedelta(days=1)
+
+    # ── Generate all hours (for tick fallback) ────────────────────────────────
     start = datetime(date_from.year, date_from.month, date_from.day, tzinfo=timezone.utc)
     end = datetime(date_to.year, date_to.month, date_to.day, 23, tzinfo=timezone.utc)
     hours = []
     cur = start
     while cur <= end:
-        if cur.weekday() < 5 and hour_from <= cur.hour <= hour_to:  # 0=Mon … 4=Fri
+        if cur.weekday() < 5 and hour_from <= cur.hour <= hour_to:
             hours.append(cur)
         cur += timedelta(hours=1)
 
-    hour_range_str = "all hours" if (hour_from == 0 and hour_to == 23) else f"h{hour_from:02d}-h{hour_to:02d} UTC"
     logger.info(
-        "Downloading %d hours of %s (%s) from Dukascopy [%s]",
-        len(hours),
-        symbol,
-        duka_symbol,
-        hour_range_str,
+        "Downloading %s (%s) from Dukascopy [%s] — trying candle endpoint (%d days)",
+        symbol, duka_symbol, hour_range_str, len(days),
     )
 
-    frames, partial_timeout = _run_async(_fetch_all_hours(duka_symbol, hours, point, symbol))
+    # ── Try candle endpoint first (fast: 2 req/day vs 24) ────────────────────
+    candle_fallback = False
+    partial_timeout = False
+    frames: list[pd.DataFrame] = []
+
+    try:
+        frames = _run_async(_fetch_all_candles(duka_symbol, days, point, hour_from, hour_to, symbol))
+        logger.info("Candle-API: %d day-frames for %s", len(frames), symbol)
+    except Exception as exc:
+        logger.warning(
+            "Candle-API failed for %s — falling back to tick endpoint: %s", symbol, exc
+        )
+        candle_fallback = True
+        frames, partial_timeout = _run_async(_fetch_all_hours(duka_symbol, hours, point, symbol))
 
     if not frames:
         raise ValueError(
@@ -439,35 +600,37 @@ def fetch_dukascopy(
 
     if partial_timeout:
         logger.warning(
-            "Returning partial data for %s (%d of %d hours) — cache will NOT be written for incomplete fetch",
+            "Returning partial data for %s — cache will NOT be written for incomplete fetch",
             symbol,
-            len(frames),
-            len(hours),
         )
 
-    ticks = pd.concat(frames, ignore_index=True).sort_values("datetime")
-
-    # Mid price
-    ticks["price"] = (ticks["ask"] + ticks["bid"]) / 2
-    ticks["volume"] = ticks["ask_volume"] + ticks["bid_volume"]
-
-    ticks = ticks.set_index("datetime")
-    ticks = ticks[~ticks.index.duplicated(keep="first")]
-
-    # Resample to 1-minute OHLCV
-    ohlcv = pd.DataFrame(
-        {
-            "open": ticks["price"].resample("1min").first(),
-            "high": ticks["price"].resample("1min").max(),
-            "low": ticks["price"].resample("1min").min(),
-            "close": ticks["price"].resample("1min").last(),
-            "volume": ticks["volume"].resample("1min").sum(),
-        }
-    )
-    ohlcv = ohlcv.dropna(subset=["open"]).reset_index()
+    # ── Build OHLCV DataFrame ─────────────────────────────────────────────────
+    if candle_fallback:
+        # Tick path: frames contain raw tick DataFrames — resample to 1-minute OHLCV
+        ticks = pd.concat(frames, ignore_index=True).sort_values("datetime")
+        ticks["price"] = (ticks["ask"] + ticks["bid"]) / 2
+        ticks["volume"] = ticks["ask_volume"] + ticks["bid_volume"]
+        ticks = ticks.set_index("datetime")
+        ticks = ticks[~ticks.index.duplicated(keep="first")]
+        ohlcv = pd.DataFrame(
+            {
+                "open":   ticks["price"].resample("1min").first(),
+                "high":   ticks["price"].resample("1min").max(),
+                "low":    ticks["price"].resample("1min").min(),
+                "close":  ticks["price"].resample("1min").last(),
+                "volume": ticks["volume"].resample("1min").sum(),
+            }
+        )
+        ohlcv = ohlcv.dropna(subset=["open"]).reset_index()
+    else:
+        # Candle path: frames are already 1-minute OHLCV DataFrames
+        ohlcv = pd.concat(frames, ignore_index=True).sort_values("datetime")
+        ohlcv = ohlcv.drop_duplicates(subset=["datetime"]).reset_index(drop=True)
 
     if partial_timeout:
         ohlcv.attrs["partial"] = True
+    if candle_fallback:
+        ohlcv.attrs["candle_fallback"] = True
 
     logger.info("Fetched %d 1-minute bars for %s", len(ohlcv), symbol)
     return ohlcv

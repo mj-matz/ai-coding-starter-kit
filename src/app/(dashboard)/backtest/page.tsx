@@ -5,9 +5,18 @@ import { ConfigurationPanel } from "@/components/backtest/configuration-panel";
 import { ResultsPanel } from "@/components/backtest/results-panel";
 import { useBacktest } from "@/hooks/use-backtest";
 import type { BacktestFormValues } from "@/lib/backtest-types";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function BacktestPage() {
-  const { status, result, error, isTimedOut, progress, isStreaming, runBacktestStream, cancel } =
+  const { status, result, error, isTimedOut, progress, isStreaming, warnings, clearWarnings, runBacktestStream, cancel } =
     useBacktest();
   const [initialCapital, setInitialCapital] = useState(10000);
   const [rangeStart, setRangeStart] = useState("02:00");
@@ -21,6 +30,24 @@ export default function BacktestPage() {
   }
 
   return (
+    <>
+    <AlertDialog open={warnings.length > 0} onOpenChange={(open) => { if (!open) clearWarnings(); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Hinweis zum Datendownload</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-1">
+              {warnings.map((msg, i) => (
+                <p key={i}>{msg}</p>
+              ))}
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogAction onClick={clearWarnings}>OK</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-white">
@@ -57,5 +84,6 @@ export default function BacktestPage() {
         </div>
       </div>
     </div>
+    </>
   );
 }

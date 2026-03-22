@@ -221,6 +221,12 @@ async def fetch_data(
             "Fetch timed out — partial data returned. Re-fetch to download the full date range."
         )
 
+    # Candle-API fallback — data is complete but was fetched via the slower tick endpoint
+    if df.attrs.get("candle_fallback"):
+        warnings.append(
+            "Candle-API not available — tick data used as fallback. Download was slower than usual."
+        )
+
     # Save to cache (skip for partial fetches to avoid caching incomplete data)
     cache_entry = None
     if not df.attrs.get("partial"):
@@ -1338,6 +1344,9 @@ async def backtest_stream(
                     logger.warning(f"Cache save failed (non-fatal): {e}")
             else:
                 logger.info("Skipping cache write for %s — partial fetch (timeout)", symbol)
+
+            if base_df.attrs.get("candle_fallback"):
+                yield f"data: {json.dumps({'type': 'warning', 'message': 'Candle-API nicht verfügbar — Tick-Daten als Fallback verwendet. Der Download war langsamer als gewöhnlich.'})}\n\n"
 
         # ── Normalize & filter data ───────────────────────────────────────
         if "datetime" in df.columns:
