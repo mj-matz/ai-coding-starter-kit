@@ -4,7 +4,7 @@ Public entry point: run_backtest(ohlcv, signals, config) -> BacktestResult
 """
 
 from datetime import time
-from typing import List, Optional
+from typing import Callable, List, Optional
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -90,6 +90,7 @@ def run_backtest(
     ohlcv: pd.DataFrame,
     signals: pd.DataFrame,
     config: BacktestConfig,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> BacktestResult:
     """
     Simulate a trading strategy bar-by-bar.
@@ -173,11 +174,24 @@ def run_backtest(
     pending_orders: List[PendingOrder] = []
     expired_order_dates: List[str] = []
 
+    # ── Progress tracking (PROJ-10) ─────────────────────────────────────────
+    _current_day = None
+    _day_count = 0
+    _total_trading_days = len(set(ohlcv.index.date)) if progress_callback else 0
+
     for i in range(len(ohlcv)):
         bar_time = ohlcv.index[i]
         bar_open = _opens[i]
         bar_high = _highs[i]
         bar_low  = _lows[i]
+
+        # ── Progress callback (one event per day) ────────────────────────
+        if progress_callback:
+            bar_date = bar_time.date()
+            if bar_date != _current_day:
+                _current_day = bar_date
+                _day_count += 1
+                progress_callback(_day_count, _total_trading_days, bar_date.isoformat())
 
         # ── 1a. Time exit ───────────────────────────────────────────────────
         if position is not None and exit_flags is not None and exit_flags[i]:

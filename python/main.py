@@ -4,8 +4,11 @@ Provides endpoints for fetching/caching historical OHLCV data and running
 backtests against cached data sets.
 """
 
+import asyncio
+import json
 import logging
 import os
+import queue
 import threading
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
@@ -16,6 +19,7 @@ import numpy as np
 import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from models import FetchRequest, FetchResponse, ErrorResponse, SkippedDayOut
@@ -1210,6 +1214,382 @@ async def backtest_orchestrate(
         symbol=symbol,
         timeframe=request.timeframe,
     )
+
+
+# ── /backtest/stream SSE endpoint (PROJ-10) ──────────────────────────────────
+
+@app.post("/backtest/stream")
+async def backtest_stream(
+    request: BacktestOrchestrationRequest,
+    token: dict = Depends(verify_jwt),
+):
+    """
+    Full orchestration with SSE progress streaming.
+
+    Same logic as POST /backtest but streams progress events per trading day
+    via Server-Sent Events before yielding the final result.
+
+    Rate limit: 30 requests / minute per user (shared with /backtest).
+    """
+    user_id: str = token["sub"]
+
+    if not _check_backtest_rate_limit(user_id):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded: max 30 backtest requests per minute.",
+        )
+
+    # ── 1. Validate strategy ──────────────────────────────────────────────────
+    if request.strategy != "time_range_breakout":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown strategy '{request.strategy}'. Supported: time_range_breakout",
+        )
+
+    symbol = request.symbol.upper()
+
+    # ── 2. Resolve instrument config from Supabase (validates symbol) ─────────
+    instrument = await _resolve_instrument(symbol)
+
+    # ── 3. Parse and validate date range ──────────────────────────────────────
+    try:
+        date_from = date.fromisoformat(request.startDate)
+        date_to = date.fromisoformat(request.endDate)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date: {e}")
+
+    _validate_date_range(date_from, date_to)
+    _validate_timeframe("dukascopy", request.timeframe)
+
+    # ── 4. Fetch / load cached data ───────────────────────────────────────────
+    _range_start_h = int(request.rangeStart.split(":")[0])
+    _time_exit_h = int(request.timeExit.split(":")[0])
+    hour_from, hour_to = _local_to_utc_hour_range(
+        _range_start_h, _time_exit_h,
+        instrument["timezone"],
+        date_from, date_to,
+    )
+
+    df = None
+    resolved_cache_id: Optional[str] = None
+    cached = find_cached_entry(symbol, "dukascopy", request.timeframe, date_from, date_to, hour_from, hour_to)
+    if cached:
+        try:
+            df = load_cached_data(cached["file_path"])
+            resolved_cache_id = cached["id"]
+        except Exception as e:
+            logger.warning(f"Cache load failed for {symbol}, re-fetching: {e}")
+            df = None
+
+    if df is None:
+        try:
+            base_df = fetch_dukascopy(symbol, date_from, date_to, hour_from=hour_from, hour_to=hour_to)
+            df = resample_ohlcv(base_df, request.timeframe) if request.timeframe != "1m" else base_df
+        except TimeoutError as e:
+            raise HTTPException(status_code=504, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.error(f"Fetch error for {symbol}: {e}", exc_info=True)
+            raise HTTPException(status_code=502, detail="Failed to fetch data.")
+
+        if df.empty:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No data available for {symbol} between {date_from} and {date_to}",
+            )
+
+        if not base_df.attrs.get("partial"):
+            try:
+                cache_entry = save_to_cache(df, symbol, "dukascopy", request.timeframe, date_from, date_to, user_id, hour_from, hour_to)
+                if cache_entry:
+                    resolved_cache_id = cache_entry["id"]
+            except Exception as e:
+                logger.warning(f"Cache save failed (non-fatal): {e}")
+        else:
+            logger.info("Skipping cache write for %s — partial fetch (timeout)", symbol)
+
+    # Normalize to DatetimeIndex
+    if "datetime" in df.columns:
+        df = df.set_index("datetime")
+    df.index = pd.to_datetime(df.index, utc=True)
+    df.columns = [c.lower() for c in df.columns]
+
+    required_cols = {"open", "high", "low", "close"}
+    if not required_cols.issubset(set(df.columns)):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Data is missing required columns: {required_cols - set(df.columns)}",
+        )
+
+    # Filter to requested date range
+    df = df[(df.index.date >= date_from) & (df.index.date <= date_to)]
+    if df.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No data in range {date_from} to {date_to}",
+        )
+
+    # Filter to relevant UTC hours
+    df = df[(df.index.hour >= hour_from) & (df.index.hour <= hour_to)]
+    if df.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No data in UTC hour range {hour_from:02d}:00-{hour_to:02d}:00 for {symbol}",
+        )
+
+    # ── 5. Generate breakout signals ──────────────────────────────────────────
+    breakout_params = BreakoutParams(
+        asset=symbol,
+        range_start=time.fromisoformat(request.rangeStart),
+        range_end=time.fromisoformat(request.rangeEnd),
+        trigger_deadline=time.fromisoformat(request.triggerDeadline),
+        stop_loss_pips=request.stopLoss,
+        take_profit_pips=request.takeProfit,
+        pip_size=instrument["pip_size"],
+        timezone=instrument["timezone"],
+        direction_filter=_DIRECTION_MAP[request.direction],
+        entry_delay_bars=request.entryDelayBars,
+        trail_trigger_pips=request.trailTriggerPips,
+        trail_lock_pips=request.trailLockPips,
+    )
+
+    strategy = BreakoutStrategy()
+    try:
+        signals_df, skipped_days = strategy.generate_signals(df, breakout_params)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    present_dates = set(df.index.date)
+    d = date_from
+    while d <= date_to:
+        if d.weekday() < 5 and d not in present_dates:
+            skipped_days.append(SkippedDay(date=str(d), reason="NO_BARS"))
+        d += timedelta(days=1)
+
+    # ── 6. Build engine config ────────────────────────────────────────────────
+    engine_config = BacktestConfig(
+        initial_balance=request.initialCapital,
+        sizing_mode=request.sizingMode,
+        instrument=InstrumentConfig(
+            pip_size=instrument["pip_size"],
+            pip_value_per_lot=instrument["pip_value_per_lot"],
+        ),
+        fixed_lot=request.fixedLot,
+        risk_percent=request.riskPercent,
+        commission=request.commission,
+        slippage_pips=request.slippage,
+        time_exit=request.timeExit,
+        timezone=instrument["timezone"],
+        gap_fill=request.gapFill,
+    )
+
+    # ── 7. Stream SSE events ──────────────────────────────────────────────────
+    # Capture all needed references for the closure (df, signals_df, etc.)
+    _stream_df = df
+    _stream_signals = signals_df
+    _stream_skipped = skipped_days
+    _stream_breakout_params = breakout_params
+
+    async def event_stream():
+        progress_queue: queue.Queue = queue.Queue()
+        result_holder: list = []  # [0] = result or Exception
+
+        def on_progress(days_done: int, total_days: int, current_date: str):
+            progress_queue.put(("progress", days_done, total_days, current_date))
+
+        def run_engine():
+            try:
+                res = run_backtest(_stream_df, _stream_signals, engine_config, progress_callback=on_progress)
+                result_holder.append(res)
+            except Exception as exc:
+                result_holder.append(exc)
+            finally:
+                progress_queue.put(None)  # sentinel
+
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(None, run_engine)
+
+        total_days_init = int(_stream_df.index.normalize().nunique())
+        yield f"data: {json.dumps({'type': 'init', 'total_days': total_days_init})}\n\n"
+
+        # Yield progress events from the queue
+        while True:
+            # Poll the queue with a short timeout to stay async-friendly
+            try:
+                item = await loop.run_in_executor(None, lambda: progress_queue.get(timeout=0.1))
+            except queue.Empty:
+                continue
+
+            if item is None:
+                # Engine finished
+                break
+
+            _, days_done, total_days, current_date = item
+            yield f"data: {json.dumps({'type': 'progress', 'daysDone': days_done, 'totalDays': total_days, 'currentDate': current_date})}\n\n"
+
+        # Check for engine error
+        if not result_holder:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Engine returned no result.'})}\n\n"
+            return
+
+        engine_result = result_holder[0]
+        if isinstance(engine_result, Exception):
+            yield f"data: {json.dumps({'type': 'error', 'message': str(engine_result)})}\n\n"
+            return
+
+        result = engine_result
+
+        # Days where pending orders expired without triggering
+        for d_str in result.expired_order_dates:
+            _stream_skipped.append(SkippedDay(date=d_str, reason="TRIGGER_EXPIRED"))
+
+        # Calculate analytics
+        try:
+            analytics_result = calculate_analytics(result)
+        except Exception as e:
+            logger.error(f"Analytics error: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Analytics calculation failed.'})}\n\n"
+            return
+
+        # Build response (same logic as /backtest)
+        m = {metric.name: metric.value for metric in analytics_result.summary}
+
+        def _f(v, default: float = 0.0) -> float:
+            if v is None:
+                return default
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return default
+            return default if (f != f or f == float("inf")) else f
+
+        cagr_val = _f(m.get("CAGR"))
+        dd_val = _f(m.get("Max Drawdown"))
+        calmar_val = round(cagr_val / abs(dd_val), 2) if dd_val != 0.0 else 0.0
+
+        metrics_out = BacktestMetricsOut(
+            total_return_pct=_f(m.get("Total Return")),
+            cagr_pct=cagr_val,
+            sharpe_ratio=_f(m.get("Sharpe Ratio")),
+            sortino_ratio=_f(m.get("Sortino Ratio")),
+            max_drawdown_pct=dd_val,
+            calmar_ratio=calmar_val,
+            longest_drawdown_days=_f(m.get("Max Drawdown Duration")),
+            total_trades=int(m.get("Total Trades") or 0),
+            winning_trades=int(m.get("Winning Trades") or 0),
+            losing_trades=int(m.get("Losing Trades") or 0),
+            win_rate_pct=_f(m.get("Win Rate")),
+            gross_profit=_f(m.get("Gross Profit")),
+            gross_loss=_f(m.get("Gross Loss")),
+            gross_profit_pips=_f(m.get("Gross Profit (Pips)")),
+            gross_loss_pips=_f(m.get("Gross Loss (Pips)")),
+            avg_win=_f(m.get("Avg Win")),
+            avg_loss=_f(m.get("Avg Loss")),
+            avg_win_pips=_f(m.get("Avg Win (Pips)")),
+            avg_loss_pips=_f(m.get("Avg Loss (Pips)")),
+            avg_win_loss_ratio=_f(m.get("Avg Win / Avg Loss")),
+            profit_factor=_f(m.get("Profit Factor (Pips)")),
+            avg_r_multiple=_f(m.get("Avg R per Trade")),
+            total_r=_f(m.get("Total R")),
+            avg_r_per_month=_f(m.get("Avg R per Month")),
+            expectancy_pips=_f(m.get("Expectancy (Pips)")),
+            best_trade=_f(m.get("Best Trade")),
+            worst_trade=_f(m.get("Worst Trade")),
+            consecutive_wins=int(m.get("Consecutive Wins") or 0),
+            consecutive_losses=int(m.get("Consecutive Losses") or 0),
+            avg_trade_duration_hours=_f(m.get("Avg Trade Duration")),
+            final_balance=result.final_balance,
+        )
+
+        equity_curve_out = [
+            EquityCurveOut(date=pt["time"], balance=pt["balance"])
+            for pt in result.equity_curve
+        ]
+
+        peak = result.initial_balance
+        drawdown_curve_out: list[DrawdownCurveOut] = []
+        for pt in result.equity_curve:
+            bal = pt["balance"]
+            if bal > peak:
+                peak = bal
+            dd_pct = round((bal - peak) / peak * 100, 4) if peak > 0 else 0.0
+            drawdown_curve_out.append(DrawdownCurveOut(date=pt["time"], drawdown_pct=dd_pct))
+
+        trades_out: list[TradeDetailOut] = []
+        for i, t in enumerate(result.trades):
+            duration_minutes = int((t.exit_time - t.entry_time).total_seconds() / 60)
+            direction_prefix = "long" if t.direction == "long" else "short"
+            entry_col = f"{direction_prefix}_entry"
+            sl_col = f"{direction_prefix}_sl"
+            tp_col = f"{direction_prefix}_tp"
+
+            signal_before_entry = _stream_signals.loc[:t.entry_time, entry_col].dropna()
+            if not signal_before_entry.empty:
+                sig_ts = signal_before_entry.index[-1]
+                range_high_val = float(_stream_signals.at[sig_ts, "long_entry"]) if pd.notna(_stream_signals.at[sig_ts, "long_entry"]) else 0.0
+                range_low_val = float(_stream_signals.at[sig_ts, "short_entry"]) if pd.notna(_stream_signals.at[sig_ts, "short_entry"]) else 0.0
+                entry_offset = _stream_breakout_params.entry_offset_pips * _stream_breakout_params.pip_size
+                range_high_val = range_high_val - entry_offset if range_high_val != 0.0 else 0.0
+                range_low_val = range_low_val + entry_offset if range_low_val != 0.0 else 0.0
+                stop_loss_val = float(_stream_signals.at[sig_ts, sl_col]) if pd.notna(_stream_signals.at[sig_ts, sl_col]) else 0.0
+                take_profit_val = float(_stream_signals.at[sig_ts, tp_col]) if pd.notna(_stream_signals.at[sig_ts, tp_col]) else 0.0
+            else:
+                range_high_val = 0.0
+                range_low_val = 0.0
+                stop_loss_val = 0.0
+                take_profit_val = 0.0
+
+            trades_out.append(TradeDetailOut(
+                id=i + 1,
+                entry_time=t.entry_time.isoformat(),
+                exit_time=t.exit_time.isoformat(),
+                direction=t.direction,
+                entry_price=t.entry_price,
+                exit_price=t.exit_price,
+                lot_size=t.lot_size,
+                pnl_pips=t.pnl_pips,
+                pnl_currency=t.pnl_currency,
+                r_multiple=_f(compute_r_multiple(t)),
+                exit_reason=t.exit_reason,
+                duration_minutes=duration_minutes,
+                entry_gap_pips=t.entry_gap_pips,
+                exit_gap=t.exit_gap,
+                range_high=range_high_val,
+                range_low=range_low_val,
+                stop_loss=stop_loss_val,
+                take_profit=take_profit_val,
+            ))
+
+        skipped_days_out = [
+            SkippedDayOut(date=sd.date, reason=sd.reason)
+            for sd in _stream_skipped
+        ]
+
+        monthly_r_out = [
+            MonthlyRResponse(
+                month=mr.month,
+                r_earned=mr.r_earned,
+                trade_count=mr.trade_count,
+            )
+            for mr in analytics_result.monthly_r
+        ]
+
+        result_data = BacktestOrchestrationResponse(
+            metrics=metrics_out,
+            equity_curve=equity_curve_out,
+            drawdown_curve=drawdown_curve_out,
+            trades=trades_out,
+            skipped_days=skipped_days_out,
+            monthly_r=monthly_r_out,
+            cache_id=resolved_cache_id,
+            symbol=symbol,
+            timeframe=request.timeframe,
+        )
+
+        yield f"data: {json.dumps({'type': 'result', 'data': result_data.model_dump()})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.get("/backtest/candles", response_model=List[CandleOut])

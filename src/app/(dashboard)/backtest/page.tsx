@@ -7,7 +7,7 @@ import { useBacktest } from "@/hooks/use-backtest";
 import type { BacktestFormValues } from "@/lib/backtest-types";
 
 export default function BacktestPage() {
-  const { status, result, error, isTimedOut, runBacktest, cancel } =
+  const { status, result, error, isTimedOut, progress, isStreaming, runBacktestStream, cancel } =
     useBacktest();
   const [initialCapital, setInitialCapital] = useState(10000);
   const [rangeStart, setRangeStart] = useState("02:00");
@@ -17,7 +17,7 @@ export default function BacktestPage() {
     setInitialCapital(config.initialCapital);
     setRangeStart(config.rangeStart);
     setRangeEnd(config.rangeEnd);
-    runBacktest(config);
+    runBacktestStream(config);
   }
 
   return (
@@ -51,6 +51,8 @@ export default function BacktestPage() {
             initialCapital={initialCapital}
             rangeStart={rangeStart}
             rangeEnd={rangeEnd}
+            progress={progress}
+            isStreaming={isStreaming}
           />
         </div>
       </div>

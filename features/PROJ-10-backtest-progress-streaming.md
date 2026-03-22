@@ -1,8 +1,9 @@
 # PROJ-10: Backtest Progress Streaming
 
-## Status: Planned
+## Status: Deployed
 **Created:** 2026-03-20
-**Last Updated:** 2026-03-20
+**Last Updated:** 2026-03-22
+**Deployed:** 2026-03-22
 
 ## Dependencies
 - Requires: PROJ-2 (Backtesting Engine) — engine muss Fortschritts-Events emittieren
@@ -208,3 +209,76 @@ Bestehender `LoadingState` mit `Loader2`-Spinner wird ersetzt durch `BacktestPro
 
 1. **Synchroner Engine vs. Thread:** Soll `run_backtest()` via `asyncio.run_in_executor` in einem Thread laufen, oder wird die Engine-Schleife zu einem synchronen Generator refactored? → Empfehlung: `run_in_executor` mit `queue.Queue` — minimale Änderung an der Engine.
 2. **Granularität:** Ein Event pro Tag oder pro N Tagen (z.B. alle 5 Tage)? → Ein Event pro Tag ist sauber und erzeugt bei 365 Tagen nur ~15 KB Extra-Overhead.
+
+---
+
+## QA Report — Re-Test (2026-03-22)
+
+**Datum:** 2026-03-22
+**Ergebnis:** DEPLOYMENT-BEREIT
+**Acceptance Criteria:** 26 / 26 bestanden
+**Bugs gefunden:** 0
+**Security:** Bestanden
+
+### Alle vorherigen Bugs behoben
+
+| Bug | Schwere | Status | Nachweis |
+|-----|---------|--------|----------|
+| BUG-1: Cancel-Button nur nach 60s sichtbar | Medium | GEFIXT | `results-panel.tsx:110-118` — Button jetzt außerhalb des `isTimedOut`-Blocks |
+| BUG-2: Kein `init`-Event im Backend | Medium | GEFIXT | `main.py:1413-1414` — `init`-Event mit `total_days` wird gesendet |
+| BUG-3: Kein `init`-Handler im Frontend | Low | GEFIXT | `use-backtest.ts:178-179` — Handler für `event.type === "init"` vorhanden |
+| BUG-4: Endloser Spinner bei Stream-Abbruch | High | GEFIXT | `use-backtest.ts:205-208` — `gotResult`-Flag prüft auf unerwartetes Stream-Ende |
+| BUG-5: `asyncio.get_event_loop()` deprecated | Low | GEFIXT | `main.py:1410` — `asyncio.get_running_loop()` wird verwendet |
+
+### Security Audit: Bestanden
+
+- Doppelte Authentifizierung (Next.js Supabase + FastAPI JWT)
+- Rate-Limiting auf beiden Ebenen
+- Zod-Validierung vor Weiterleitung an FastAPI
+- SSE-Events via `json.dumps()` serialisiert (kein Injection-Risiko)
+- Kein Secret-Leak (`FASTAPI_URL` ist server-side only)
+
+### Regressionen: Keine
+
+- PROJ-2, PROJ-5, PROJ-8 weiterhin funktional
+
+---
+
+## QA Report — Initial (2026-03-22)
+
+**Datum:** 2026-03-22
+**Ergebnis:** NICHT DEPLOYMENT-BEREIT
+**Acceptance Criteria:** 22 / 26 bestanden
+**Bugs gefunden:** 5 (0 Critical, 1 High, 2 Medium, 2 Low)
+**Security:** Bestanden
+
+### Fehlgeschlagene Acceptance Criteria
+
+| # | Criterion | Grund |
+|---|-----------|-------|
+| AC-1 | Cancel-Button jederzeit sichtbar | Nur nach 60s Timeout sichtbar (BUG-1) |
+| AC-2 | Streaming-Fehler → Error State | Kein Handler für unerwartetes Stream-Ende (BUG-4) |
+| AC-3 | `init`-Event wird gesendet | Backend sendet kein `init`-Event (BUG-2) |
+| AC-4 | `init`-Event wird verarbeitet | Hook hat keinen `init`-Handler (BUG-3) |
+
+### Bug-Liste
+
+#### BUG-1 (Medium) — Cancel-Button nur nach 60s Timeout sichtbar
+- **Datei:** `src/components/backtest/results-panel.tsx:101`
+- **Fix:** Cancel-Button außerhalb des `isTimedOut`-Blocks platzieren.
+
+#### BUG-4 (High) — Status bleibt auf „loading" bei unerwartetem Stream-Ende
+- **Datei:** `src/hooks/use-backtest.ts` nach der while-Schleife (~Zeile 199)
+- **Fix:** Nach der while-Schleife prüfen: Falls `done && status === 'loading'`, Status auf `error` setzen.
+
+#### BUG-2 (Medium) — Fehlendes `init`-Event im Backend
+- **Datei:** `python/main.py`
+- **Fix:** Vor der Engine-Schleife ein `init`-Event senden: `{"type": "init", "total_days": total_days}`
+
+#### BUG-3 (Low) — Kein `init`-Event Handler im Frontend-Hook
+- **Datei:** `src/hooks/use-backtest.ts`
+- **Fix:** `case "init": setTotalDays(event.total_days); break;` im Event-Dispatcher ergänzen.
+
+#### BUG-5 (Low) — `asyncio.get_event_loop()` deprecated
+- **Datei:** `python/main.py:1410`
+- **Fix:** `asyncio.get_event_loop()` durch `asyncio.get_running_loop()` ersetzen.
