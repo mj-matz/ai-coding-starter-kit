@@ -1218,6 +1218,7 @@ async def get_trade_candles(
     entry_time: str,
     exit_time: str,
     timeframe: str,
+    range_start_time: Optional[str] = None,
     token: dict = Depends(verify_jwt),
 ):
     """
@@ -1226,6 +1227,9 @@ async def get_trade_candles(
     Loads the cached Parquet file identified by cache_id (must belong to the
     authenticated user) and slices out a timeframe-dependent buffer around
     [entry_time, exit_time].
+
+    If range_start_time is provided, window_start is extended to include it so
+    that range-formation candles are visible in the trade chart dialog.
 
     Buffer per timeframe:
       1m  → ±30 min
@@ -1283,6 +1287,12 @@ async def get_trade_candles(
     df.columns = [c.lower() for c in df.columns]
 
     window_start = entry_dt - buffer
+    if range_start_time:
+        try:
+            range_start_dt = pd.Timestamp(range_start_time).tz_convert("UTC")
+            window_start = min(window_start, range_start_dt)
+        except Exception:
+            pass  # invalid range_start_time → fall back to default buffer
     window_end = exit_dt + buffer
     candle_df = df.loc[(df.index >= window_start) & (df.index <= window_end)]
 

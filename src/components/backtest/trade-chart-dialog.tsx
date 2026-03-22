@@ -92,6 +92,13 @@ export function TradeChartDialog({
       exit_time: trade.exit_time,
       timeframe,
     });
+    if (rangeStart) {
+      // Extend the candle window to include range-formation bars
+      const rangeStartIso = new Date(
+        buildLocalTimestamp(trade.entry_time, rangeStart) * 1000
+      ).toISOString();
+      params.set("range_start_time", rangeStartIso);
+    }
 
     fetch(`/api/backtest/candles?${params}`, { signal: controller.signal })
       .then(async (res) => {
@@ -163,6 +170,9 @@ export function TradeChartDialog({
     );
 
     const isLong = trade.direction === "long";
+    const isWinLocal = trade.pnl_currency >= 0;
+    const entryUtc = Math.floor(new Date(trade.entry_time).getTime() / 1000);
+    const exitUtc  = Math.floor(new Date(trade.exit_time).getTime() / 1000);
 
     // ── Range box (light blue) — from rangeStart to rangeEnd, range_low to range_high ──
     if (trade.range_high > 0 && trade.range_low > 0 && rangeStart && rangeEnd) {
@@ -171,13 +181,14 @@ export function TradeChartDialog({
 
       const rangeSeries = chart.addSeries(BaselineSeries, {
         baseValue: { type: "price", price: trade.range_low },
-        topFillColor1: "rgba(96, 165, 250, 0.25)",
-        topFillColor2: "rgba(96, 165, 250, 0.25)",
+        topFillColor1: "rgba(96, 165, 250, 0.2)",
+        topFillColor2: "rgba(96, 165, 250, 0.2)",
         bottomFillColor1: "rgba(0,0,0,0)",
         bottomFillColor2: "rgba(0,0,0,0)",
         topLineColor: "rgba(96, 165, 250, 0.8)",
         bottomLineColor: "rgba(96, 165, 250, 0.8)",
         lineWidth: 1,
+        baseLineVisible: false,
         lastValueVisible: false,
         priceLineVisible: false,
         crosshairMarkerVisible: false,
@@ -187,12 +198,27 @@ export function TradeChartDialog({
         { time: toChartTime(rangeStartUtc), value: trade.range_high },
         { time: toChartTime(rangeEndUtc),   value: trade.range_high },
       ]);
+
+      // Blue axis labels for range_high and range_low (no visible line through chart)
+      candleSeries.createPriceLine({
+        price: trade.range_high,
+        color: "rgba(96, 165, 250, 0.0)",
+        lineWidth: 1,
+        lineStyle: 2, // dashed
+        axisLabelVisible: true,
+        title: `${trade.range_high.toFixed(2)}`,
+      });
+      candleSeries.createPriceLine({
+        price: trade.range_low,
+        color: "rgba(96, 165, 250, 0.0)",
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: true,
+        title: `${trade.range_low.toFixed(2)}`,
+      });
     }
 
     // ── Trade zones (green TP / red SL) — from entry to exit ─────────────────
-    const entryUtc = Math.floor(new Date(trade.entry_time).getTime() / 1000);
-    const exitUtc  = Math.floor(new Date(trade.exit_time).getTime() / 1000);
-
     if (trade.take_profit > 0 && trade.stop_loss > 0) {
       // Green zone: profit area between entry_price and take_profit
       // Long:  baseline=entry_price, value=take_profit  (tp > entry)
@@ -209,6 +235,7 @@ export function TradeChartDialog({
         topLineColor: "rgba(0,0,0,0)",
         bottomLineColor: "rgba(0,0,0,0)",
         lineWidth: 1,
+        baseLineVisible: false,
         lastValueVisible: false,
         priceLineVisible: false,
         crosshairMarkerVisible: false,
@@ -234,6 +261,7 @@ export function TradeChartDialog({
         topLineColor: "rgba(0,0,0,0)",
         bottomLineColor: "rgba(0,0,0,0)",
         lineWidth: 1,
+        baseLineVisible: false,
         lastValueVisible: false,
         priceLineVisible: false,
         crosshairMarkerVisible: false,
@@ -245,6 +273,28 @@ export function TradeChartDialog({
       ]);
     }
 
+    // ── Price lines: Entry (black), Exit (green/red) ──────────────────────────
+    // Black line at entry_price = divider between green and red zone
+    candleSeries.createPriceLine({
+      price: trade.entry_price,
+      color: "#000000",
+      lineWidth: 1,
+      lineStyle: 0, // solid
+      axisLabelVisible: true,
+      title: `Entry ${trade.entry_price.toFixed(2)}`,
+    });
+
+    // Colored line at exit_price = shows where the exit was taken
+    const exitColor = isWinLocal ? "#22c55e" : "#ef4444";
+    candleSeries.createPriceLine({
+      price: trade.exit_price,
+      color: exitColor,
+      lineWidth: 1,
+      lineStyle: 0,
+      axisLabelVisible: true,
+      title: `Exit ${trade.exit_price.toFixed(2)}`,
+    });
+
     // ── Entry / Exit markers ──────────────────────────────────────────────────
     const closestEntryCandle = candles.reduce((prev, curr) =>
       Math.abs(curr.time - entryUtc) < Math.abs(prev.time - entryUtc) ? curr : prev
@@ -252,8 +302,6 @@ export function TradeChartDialog({
     const closestExitCandle = candles.reduce((prev, curr) =>
       Math.abs(curr.time - exitUtc) < Math.abs(prev.time - exitUtc) ? curr : prev
     );
-
-    const isWinLocal = trade.pnl_currency >= 0;
 
     const markers = [
       {

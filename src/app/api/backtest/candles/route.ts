@@ -10,6 +10,7 @@ const CandlesQuerySchema = z.object({
   entry_time: z.string().min(1, "entry_time is required"),
   exit_time: z.string().min(1, "exit_time is required"),
   timeframe: z.enum(["1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"]),
+  range_start_time: z.string().optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -31,6 +32,7 @@ export async function GET(request: NextRequest) {
     entry_time: searchParams.get("entry_time"),
     exit_time: searchParams.get("exit_time"),
     timeframe: searchParams.get("timeframe"),
+    range_start_time: searchParams.get("range_start_time") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -65,6 +67,9 @@ export async function GET(request: NextRequest) {
       exit_time: parsed.data.exit_time,
       timeframe: parsed.data.timeframe,
     });
+    if (parsed.data.range_start_time) {
+      upstreamParams.set("range_start_time", parsed.data.range_start_time);
+    }
 
     const response = await fetch(
       `${FASTAPI_URL}/backtest/candles?${upstreamParams}`,
