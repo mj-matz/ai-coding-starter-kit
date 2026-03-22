@@ -161,7 +161,10 @@ def _decode_candle_bi5(
       uint32 low, uint32 high, float32 volume.
     Field order is O, C, L, H (not standard OHLC).
     """
-    data = lzma.decompress(raw)
+    try:
+        data = lzma.decompress(raw)
+    except lzma.LZMAError as exc:
+        raise RuntimeError(f"LZMA decode error for candle data: {exc}") from exc
     n = len(data) // _CANDLE_SIZE
     if n == 0:
         return None
@@ -177,7 +180,7 @@ def _decode_candle_bi5(
             continue
         rows.append(
             {
-                "datetime": pd.Timestamp(dt, tz="UTC"),
+                "datetime": pd.Timestamp(dt),  # dt is already UTC-aware
                 "open": open_raw / point,
                 "high": high_raw / point,
                 "low": low_raw / point,
