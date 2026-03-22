@@ -19,6 +19,7 @@ from .position_tracker import (
     check_sl_tp,
     close_position,
     is_sl_tp_ambiguous,
+    resolve_entry_bar_exit_with_1s_data,
     resolve_exit_with_1s_data,
 )
 from .sizing import calculate_lot_size
@@ -320,6 +321,7 @@ def run_backtest(
                     direction=triggered.direction,
                     entry_time=bar_time,
                     entry_price=actual_entry,
+                    order_trigger_price=triggered.entry_price,
                     sl_price=triggered.sl_price,
                     tp_price=triggered.tp_price,
                     lot_size=lot_size,
@@ -338,63 +340,68 @@ def run_backtest(
                 entry_bar_exit = check_sl_tp(position, bar_high, bar_low)
                 if entry_bar_exit is not None:
                     used_1s = False
-                    # If ambiguous, try 1-second zoom-in
-                    if (
-                        is_sl_tp_ambiguous(position, bar_high, bar_low)
-                        and get_1s_data is not None
-                    ):
+                    # PROJ-15 (BUG-6 fix): On the entry bar, a SL hit may have
+                    # occurred BEFORE the entry was triggered (bar moved to SL
+                    # first, then reversed to entry price). In that case the SL
+                    # does NOT apply — the trade continues.
+                    # Zoom in with 1s data whenever SL is in range so we can
+                    # determine whether entry happened before SL.
+                    # TP-only hits need no zoom-in: TP is on the same side as
+                    # the entry movement, so entry is always reached first.
+                    if entry_bar_exit in ("SL", "SL_TRAILED") and get_1s_data is not None:
                         ohlcv_1s = get_1s_data(bar_time)
                         if ohlcv_1s is not None and not ohlcv_1s.empty:
-                            resolved = resolve_exit_with_1s_data(position, ohlcv_1s)
-                            if resolved is not None:
-                                entry_bar_exit = resolved
-                                used_1s = True
+                            entry_bar_exit = resolve_entry_bar_exit_with_1s_data(
+                                position, ohlcv_1s, fallback_exit=entry_bar_exit
+                            )
+                            used_1s = True
                         else:
                             _engine_logger.warning(
-                                "1s data unavailable for entry-bar %s — falling back to worst-case SL",
+                                "1s data unavailable for entry-bar %s — cannot verify entry/SL sequence, assuming entry first",
                                 bar_time.isoformat(),
                             )
 
-                    # Determine exit price — apply gap_fill consistently
-                    # with the normal SL/TP exit logic (lines 240-266).
-                    entry_exit_gap = False
-                    if entry_bar_exit in ("SL", "SL_TRAILED"):
-                        sl = position.sl_price
-                        if config.gap_fill:
-                            if position.direction == "long" and bar_open < sl:
-                                exit_price = bar_open
-                                entry_exit_gap = True
-                            elif position.direction == "short" and bar_open > sl:
-                                exit_price = bar_open
-                                entry_exit_gap = True
+                    if entry_bar_exit is not None:
+                        # Determine exit price — apply gap_fill consistently
+                        # with the normal SL/TP exit logic (lines 240-266).
+                        entry_exit_gap = False
+                        if entry_bar_exit in ("SL", "SL_TRAILED"):
+                            sl = position.sl_price
+                            if config.gap_fill:
+                                if position.direction == "long" and bar_open < sl:
+                                    exit_price = bar_open
+                                    entry_exit_gap = True
+                                elif position.direction == "short" and bar_open > sl:
+                                    exit_price = bar_open
+                                    entry_exit_gap = True
+                                else:
+                                    exit_price = sl
                             else:
                                 exit_price = sl
-                        else:
-                            exit_price = sl
-                    else:  # TP
-                        tp = position.tp_price
-                        if config.gap_fill:
-                            if position.direction == "long" and bar_open > tp:
-                                exit_price = bar_open
-                                entry_exit_gap = True
-                            elif position.direction == "short" and bar_open < tp:
-                                exit_price = bar_open
-                                entry_exit_gap = True
+                        else:  # TP
+                            tp = position.tp_price
+                            if config.gap_fill:
+                                if position.direction == "long" and bar_open > tp:
+                                    exit_price = bar_open
+                                    entry_exit_gap = True
+                                elif position.direction == "short" and bar_open < tp:
+                                    exit_price = bar_open
+                                    entry_exit_gap = True
+                                else:
+                                    exit_price = tp
                             else:
                                 exit_price = tp
-                        else:
-                            exit_price = tp
 
-                    trade = close_position(
-                        position, bar_time, exit_price, entry_bar_exit, config,
-                        exit_gap=entry_exit_gap, used_1s_resolution=used_1s,
-                    )
-                    trades.append(trade)
-                    balance += trade.pnl_currency
-                    equity_curve.append(
-                        {"time": bar_time.isoformat(), "balance": round(balance, 2)}
-                    )
-                    position = None
+                        trade = close_position(
+                            position, bar_time, exit_price, entry_bar_exit, config,
+                            exit_gap=entry_exit_gap, used_1s_resolution=used_1s,
+                        )
+                        trades.append(trade)
+                        balance += trade.pnl_currency
+                        equity_curve.append(
+                            {"time": bar_time.isoformat(), "balance": round(balance, 2)}
+                        )
+                        position = None
 
         # ── 3. New signal for next bar ──────────────────────────────────────
         # Signals are intentionally discarded while a position is open (max 1

@@ -21,6 +21,7 @@ class OpenPosition:
     tp_price: Optional[float]
     lot_size: float
     initial_sl_price: float  # frozen at entry; used for initial-risk reporting
+    order_trigger_price: Optional[float] = None  # original stop-order level (pre-slippage, pre-gap); used for entry-bar 1s zoom-in
     entry_gap_pips: float = 0.0  # pips gapped past stop level on entry
     trail_applied: bool = False
     trail_trigger_pips: Optional[float] = None  # per-signal override; falls back to BacktestConfig
@@ -158,6 +159,46 @@ def resolve_exit_with_1s_data(
             return "TP"
 
     return None
+
+
+def resolve_entry_bar_exit_with_1s_data(
+    position: OpenPosition,
+    ohlcv_1s: pd.DataFrame,
+    fallback_exit: Optional[Literal["SL", "SL_TRAILED", "TP"]],
+) -> Optional[Literal["SL", "SL_TRAILED", "TP"]]:
+    """
+    Determine whether a SL hit on the entry bar occurred BEFORE or AFTER entry.
+
+    Iterates 1-second bars to find the first moment the stop-order trigger price
+    was reached (= trade opens). Then checks SL/TP only from that point onward.
+
+    Returns:
+        - Exit reason ("SL", "SL_TRAILED", "TP") if trade closes on the entry bar.
+        - None if neither SL nor TP was hit after entry (trade continues).
+        - fallback_exit if the entry trigger is not found in the 1s data (data gap).
+    """
+    trigger = position.order_trigger_price
+    if trigger is None:
+        # No trigger price stored — fall back to original result
+        return fallback_exit
+
+    entry_row_idx: Optional[int] = None
+    rows = list(ohlcv_1s.itertuples(index=False))
+    for i, row in enumerate(rows):
+        if position.direction == "long" and row.high >= trigger:
+            entry_row_idx = i
+            break
+        elif position.direction == "short" and row.low <= trigger:
+            entry_row_idx = i
+            break
+
+    if entry_row_idx is None:
+        # Entry trigger not found in 1s data — use fallback
+        return fallback_exit
+
+    # Check SL/TP from the 1s bar where entry was triggered onward
+    post_entry_1s = ohlcv_1s.iloc[entry_row_idx:]
+    return resolve_exit_with_1s_data(position, post_entry_1s)
 
 
 def close_position(

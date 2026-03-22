@@ -180,6 +180,29 @@ Bestanden — keine neuen Angriffsvektoren, keine neuen API-Endpunkte, keine Sec
 
 Alle 5 Bugs wurden im Re-Test geprüft (4 behoben, 1 Low offen). Details siehe Re-Test oben.
 
+## Known Bugs
+
+### BUG-6 (High): Entry-Bar SL/TP Reihenfolge nicht geprüft — OFFEN
+
+**Beschreibung:**
+Wenn auf der Entry-Bar der SL-Level innerhalb der Bar-Range liegt (bar_low ≤ sl_price bei Long), schließt die Engine den Trade mit SL-Loss — auch wenn der SL-Level *vor* dem Entry-Preis berührt wurde.
+
+**Szenario (Long Buy-Stop):**
+```
+Bar: Open → fällt bis SL → steigt dann bis Entry-Preis
+```
+In diesem Fall öffnet der Trade NACH dem SL-Level. Der SL-Hit zählt nicht (war vor dem Entry). Der Trade sollte weiterlaufen — die Engine bucht aber fälschlicherweise einen SL-Loss.
+
+**Warum TP-only kein Problem ist:**
+TP liegt auf derselben Seite wie die Entry-Bewegung (für Long: beide nach oben). Die Bar muss durch den Entry-Preis hindurch, um TP zu erreichen — Entry kommt also immer zuerst. Kein Zoom-In nötig.
+
+**Betroffene Fälle:**
+- Entry-Bar: nur SL in Range → Zoom-In nötig (bisher NICHT gemacht)
+- Entry-Bar: SL + TP in Range → Zoom-In nötig (bisher gemacht, aber Entry-Reihenfolge nicht geprüft)
+
+**Fix:**
+Auf der Entry-Bar: immer 1s-Zoom wenn SL in Range, um Entry-vor-SL-Reihenfolge zu verifizieren. Neue Funktion `resolve_entry_bar_exit_with_1s_data()` iteriert 1s-Bars, findet den Moment wo Entry-Preis zuerst berührt wird, prüft dann erst SL/TP.
+
 ## Deployment
 
 **Deployed:** 2026-03-22
