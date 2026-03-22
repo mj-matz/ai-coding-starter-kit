@@ -26,9 +26,11 @@
 | PROJ-12 | GAP Fill Toggle | Deployed | [PROJ-12-gap-fill-toggle.md](PROJ-12-gap-fill-toggle.md) | 2026-03-20 |
 | PROJ-13 | Dukascopy Download Reliability (Retry + Adaptive Concurrency) | Deployed | [PROJ-13-dukascopy-download-reliability.md](PROJ-13-dukascopy-download-reliability.md) | 2026-03-21 |
 | PROJ-14 | Cache Warming (Background Prefetch) | Planned | [PROJ-14-cache-warming.md](PROJ-14-cache-warming.md) | 2026-03-21 |
-| PROJ-15 | Intra-Bar Accuracy (Entry-Bar SL/TP + 1-Second Hybrid) | Planned | [PROJ-15-intra-bar-accuracy.md](PROJ-15-intra-bar-accuracy.md) | 2026-03-22 |
+| PROJ-15 | Intra-Bar Accuracy (Entry-Bar SL/TP + 1-Second Hybrid) | In Progress | [PROJ-15-intra-bar-accuracy.md](PROJ-15-intra-bar-accuracy.md) | 2026-03-22 |
 | PROJ-16 | Configurable Entry Offset (Pip Distance to Range) | Planned | [PROJ-16-configurable-entry-offset.md](PROJ-16-configurable-entry-offset.md) | 2026-03-22 |
+| PROJ-17 | Chart Screenshot Share | Planned | [PROJ-17-chart-screenshot-share.md](PROJ-17-chart-screenshot-share.md) | 2026-03-22 |
+| PROJ-18 | Dukascopy Candle-API (OHLCV statt Tick-Daten) | Planned | [PROJ-18-dukascopy-candle-api.md](PROJ-18-dukascopy-candle-api.md) | 2026-03-22 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-17
+## Next Available ID: PROJ-19
