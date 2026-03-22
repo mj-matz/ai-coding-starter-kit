@@ -27,10 +27,10 @@ logger = logging.getLogger(__name__)
 
 # ── Concurrency & Retry constants ────────────────────────────────────────────
 
-CONCURRENT_REQUESTS = 12
+CONCURRENT_REQUESTS = 8
 
 MAX_RETRIES = 3
-RETRY_BACKOFF_SECONDS = [1, 2, 4]
+RETRY_BACKOFF_SECONDS = [0.5, 1, 2]
 
 _POOL_LIMITS = httpx.Limits(max_connections=25, max_keepalive_connections=20)
 
