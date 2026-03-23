@@ -69,6 +69,7 @@ export function TradeChartDialog({
 }: TradeChartDialogProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const ohlcOverlayRef = useRef<HTMLDivElement>(null);
 
   const [candleCache, setCandleCache] = useState<CandleCache | null>(null);
 
@@ -127,7 +128,7 @@ export function TradeChartDialog({
     }
 
     const container = chartContainerRef.current;
-    const chartHeight = container.clientWidth < 400 ? 250 : 400;
+    const chartHeight = container.clientWidth < 400 ? 375 : 600;
 
     const chart = createChart(container, {
       width: container.clientWidth,
@@ -325,12 +326,32 @@ export function TradeChartDialog({
       [...markers].sort((a, b) => (a.time as number) - (b.time as number))
     );
 
+    // ── OHLC overlay on crosshair move ────────────────────────────────────────
+    chart.subscribeCrosshairMove((param) => {
+      const overlay = ohlcOverlayRef.current;
+      if (!overlay) return;
+      if (!param.time || !param.seriesData.has(candleSeries)) {
+        overlay.innerHTML = "";
+        return;
+      }
+      const d = param.seriesData.get(candleSeries) as {
+        open: number; high: number; low: number; close: number;
+      };
+      const closeColor = d.close >= d.open ? "#22c55e" : "#ef4444";
+      const fmt = (v: number) => v.toFixed(2);
+      overlay.innerHTML =
+        `<span style="color:#9ca3af">O</span> <span>${fmt(d.open)}</span>` +
+        `&nbsp;&nbsp;<span style="color:#9ca3af">H</span> <span style="color:#22c55e">${fmt(d.high)}</span>` +
+        `&nbsp;&nbsp;<span style="color:#9ca3af">L</span> <span style="color:#ef4444">${fmt(d.low)}</span>` +
+        `&nbsp;&nbsp;<span style="color:#9ca3af">C</span> <span style="color:${closeColor}">${fmt(d.close)}</span>`;
+    });
+
     chart.timeScale().fitContent();
 
     const handleResize = () => {
       if (chartContainerRef.current) {
         const w = chartContainerRef.current.clientWidth;
-        chart.applyOptions({ width: w, height: w < 400 ? 250 : 400 });
+        chart.applyOptions({ width: w, height: w < 400 ? 375 : 600 });
       }
     };
     window.addEventListener("resize", handleResize);
@@ -349,7 +370,7 @@ export function TradeChartDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[900px] border-gray-800 bg-[#0a0a10] text-gray-100">
+      <DialogContent className="max-w-[1350px] border-gray-800 bg-[#0a0a10] text-gray-100">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3 text-gray-100">
             <span>
@@ -377,17 +398,24 @@ export function TradeChartDialog({
 
         {/* Chart */}
         {isLoadingCandles ? (
-          <div className="flex h-[250px] items-center justify-center rounded border border-gray-800 bg-[#111118] sm:h-[400px]">
+          <div className="flex h-[375px] items-center justify-center rounded border border-gray-800 bg-[#111118] sm:h-[600px]">
             <p className="text-sm text-gray-500">Loading chart data...</p>
           </div>
         ) : candleError ? (
-          <div className="flex h-[250px] items-center justify-center rounded border border-gray-800 bg-[#111118] sm:h-[400px]">
+          <div className="flex h-[375px] items-center justify-center rounded border border-gray-800 bg-[#111118] sm:h-[600px]">
             <p className="text-sm text-red-400">{candleError}</p>
           </div>
         ) : candles.length > 0 ? (
-          <div ref={chartContainerRef} className="w-full rounded border border-gray-200" />
+          <div className="relative">
+            <div ref={chartContainerRef} className="w-full rounded border border-gray-200" />
+            <div
+              ref={ohlcOverlayRef}
+              className="pointer-events-none absolute left-2 top-2 font-mono text-xs text-gray-200"
+              style={{ textShadow: "0 0 4px rgba(0,0,0,0.8)" }}
+            />
+          </div>
         ) : (
-          <div className="flex h-[250px] items-center justify-center rounded border border-gray-800 bg-[#111118] sm:h-[400px]">
+          <div className="flex h-[375px] items-center justify-center rounded border border-gray-800 bg-[#111118] sm:h-[600px]">
             <p className="text-sm text-gray-500">No candle data available for this trade.</p>
           </div>
         )}
