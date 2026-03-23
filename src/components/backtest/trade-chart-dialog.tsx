@@ -69,9 +69,9 @@ export function TradeChartDialog({
 }: TradeChartDialogProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const ohlcOverlayRef = useRef<HTMLDivElement>(null);
 
   const [candleCache, setCandleCache] = useState<CandleCache | null>(null);
+  const [ohlcHover, setOhlcHover] = useState<Candle | null>(null);
 
   const cacheHit = open && trade != null && candleCache?.tradeId === trade.id;
   const isLoadingCandles = open && trade != null && cacheId != null && !cacheHit;
@@ -308,7 +308,7 @@ export function TradeChartDialog({
       {
         time: toChartTime(closestEntryCandle.time),
         position: isLong ? "belowBar" : "aboveBar",
-        color: isLong ? "#22c55e" : "#ef4444",
+        color: "#1a1a1a",
         shape: isLong ? "arrowUp" : "arrowDown",
         text: "Entry",
       },
@@ -327,27 +327,15 @@ export function TradeChartDialog({
     );
 
     // ── OHLC overlay on crosshair move ────────────────────────────────────────
+    const candlesByTime = new Map<number, Candle>(
+      candles.map((c) => [toChartTime(c.time) as number, c])
+    );
+    let lastHoveredTime: number | null = null;
     chart.subscribeCrosshairMove((param) => {
-      const overlay = ohlcOverlayRef.current;
-      if (!overlay) return;
-      if (!param.time) {
-        overlay.innerHTML = "";
-        return;
-      }
-      // Look up candle by chart time (more reliable than seriesData map in v5)
-      const chartT = param.time as number;
-      const d = candles.find((c) => toChartTime(c.time) === chartT);
-      if (!d) {
-        overlay.innerHTML = "";
-        return;
-      }
-      const closeColor = d.close >= d.open ? "#22c55e" : "#ef4444";
-      const fmt = (v: number) => v.toFixed(2);
-      overlay.innerHTML =
-        `<span style="color:#6b7280">O</span> <span style="color:#111827">${fmt(d.open)}</span>` +
-        `&nbsp;&nbsp;<span style="color:#6b7280">H</span> <span style="color:#16a34a">${fmt(d.high)}</span>` +
-        `&nbsp;&nbsp;<span style="color:#6b7280">L</span> <span style="color:#dc2626">${fmt(d.low)}</span>` +
-        `&nbsp;&nbsp;<span style="color:#6b7280">C</span> <span style="color:${closeColor}">${fmt(d.close)}</span>`;
+      const t = param.time != null ? (param.time as number) : null;
+      if (t === lastHoveredTime) return;
+      lastHoveredTime = t;
+      setOhlcHover(t != null ? (candlesByTime.get(t) ?? null) : null);
     });
 
     chart.timeScale().fitContent();
@@ -364,6 +352,7 @@ export function TradeChartDialog({
       window.removeEventListener("resize", handleResize);
       chart.remove();
       chartRef.current = null;
+      setOhlcHover(null);
     };
   }, [open, trade, candles, rangeStart, rangeEnd]);
 
@@ -412,10 +401,14 @@ export function TradeChartDialog({
         ) : candles.length > 0 ? (
           <div className="relative">
             <div ref={chartContainerRef} className="w-full rounded border border-gray-200" />
-            <div
-              ref={ohlcOverlayRef}
-              className="pointer-events-none absolute left-2 top-2 font-mono text-xs"
-            />
+            {ohlcHover && (
+              <div className="pointer-events-none absolute left-2 top-2 z-10 flex gap-3 rounded bg-white/80 px-2 py-1 font-mono text-xs backdrop-blur-sm">
+                <span><span className="text-gray-500">O</span> <span className="text-gray-900">{ohlcHover.open.toFixed(2)}</span></span>
+                <span><span className="text-gray-500">H</span> <span className="text-green-700">{ohlcHover.high.toFixed(2)}</span></span>
+                <span><span className="text-gray-500">L</span> <span className="text-red-600">{ohlcHover.low.toFixed(2)}</span></span>
+                <span><span className="text-gray-500">C</span> <span className={ohlcHover.close >= ohlcHover.open ? "text-green-700" : "text-red-600"}>{ohlcHover.close.toFixed(2)}</span></span>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex h-[375px] items-center justify-center rounded border border-gray-800 bg-[#111118] sm:h-[600px]">
