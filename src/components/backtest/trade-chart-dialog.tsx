@@ -330,20 +330,24 @@ export function TradeChartDialog({
     chart.subscribeCrosshairMove((param) => {
       const overlay = ohlcOverlayRef.current;
       if (!overlay) return;
-      if (!param.time || !param.seriesData.has(candleSeries)) {
+      if (!param.time) {
         overlay.innerHTML = "";
         return;
       }
-      const d = param.seriesData.get(candleSeries) as {
-        open: number; high: number; low: number; close: number;
-      };
+      // Look up candle by chart time (more reliable than seriesData map in v5)
+      const chartT = param.time as number;
+      const d = candles.find((c) => toChartTime(c.time) === chartT);
+      if (!d) {
+        overlay.innerHTML = "";
+        return;
+      }
       const closeColor = d.close >= d.open ? "#22c55e" : "#ef4444";
       const fmt = (v: number) => v.toFixed(2);
       overlay.innerHTML =
-        `<span style="color:#9ca3af">O</span> <span>${fmt(d.open)}</span>` +
-        `&nbsp;&nbsp;<span style="color:#9ca3af">H</span> <span style="color:#22c55e">${fmt(d.high)}</span>` +
-        `&nbsp;&nbsp;<span style="color:#9ca3af">L</span> <span style="color:#ef4444">${fmt(d.low)}</span>` +
-        `&nbsp;&nbsp;<span style="color:#9ca3af">C</span> <span style="color:${closeColor}">${fmt(d.close)}</span>`;
+        `<span style="color:#6b7280">O</span> <span style="color:#111827">${fmt(d.open)}</span>` +
+        `&nbsp;&nbsp;<span style="color:#6b7280">H</span> <span style="color:#16a34a">${fmt(d.high)}</span>` +
+        `&nbsp;&nbsp;<span style="color:#6b7280">L</span> <span style="color:#dc2626">${fmt(d.low)}</span>` +
+        `&nbsp;&nbsp;<span style="color:#6b7280">C</span> <span style="color:${closeColor}">${fmt(d.close)}</span>`;
     });
 
     chart.timeScale().fitContent();
@@ -410,8 +414,7 @@ export function TradeChartDialog({
             <div ref={chartContainerRef} className="w-full rounded border border-gray-200" />
             <div
               ref={ohlcOverlayRef}
-              className="pointer-events-none absolute left-2 top-2 font-mono text-xs text-gray-200"
-              style={{ textShadow: "0 0 4px rgba(0,0,0,0.8)" }}
+              className="pointer-events-none absolute left-2 top-2 font-mono text-xs"
             />
           </div>
         ) : (
