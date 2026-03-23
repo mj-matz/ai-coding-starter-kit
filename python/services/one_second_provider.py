@@ -85,8 +85,8 @@ def create_1s_data_provider(
 
         # Collect data from all calendar hours that overlap with [minute_start, minute_end).
         # A bar wider than ~60 min (e.g. 1h timeframe) may span two consecutive hours.
-        start_hour_ts = minute_start.floor("H")
-        end_hour_ts = (minute_end - pd.Timedelta(seconds=1)).floor("H")
+        start_hour_ts = minute_start.floor("h")
+        end_hour_ts = (minute_end - pd.Timedelta(seconds=1)).floor("h")
 
         frames: List[pd.DataFrame] = []
         cur = start_hour_ts
