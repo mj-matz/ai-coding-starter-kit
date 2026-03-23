@@ -253,6 +253,11 @@ def run_backtest(
                         if resolved is not None:
                             exit_reason = resolved
                             used_1s = True
+                            _engine_logger.info(
+                                "[1sec-zoom] %s ambiguous-bar %s | SL=%.5f TP=%.5f | resolved → %s",
+                                position.direction.upper(), bar_time.isoformat(),
+                                position.sl_price, position.tp_price, exit_reason,
+                            )
                     else:
                         _engine_logger.warning(
                             "1s data unavailable for ambiguous bar %s — falling back to worst-case SL",
@@ -377,6 +382,19 @@ def run_backtest(
                             )
                             used_1s = True
                             position.any_1s_used = True  # persist across bars if trade continues
+                            if entry_bar_exit is None:
+                                _engine_logger.info(
+                                    "[1sec-zoom] %s entry-bar %s | trigger=%.5f | SL(%.5f) not hit after entry → trade continues",
+                                    position.direction.upper(), bar_time.isoformat(),
+                                    position.order_trigger_price or position.entry_price, position.sl_price,
+                                )
+                            else:
+                                _engine_logger.info(
+                                    "[1sec-zoom] %s entry-bar %s | trigger=%.5f | SL(%.5f) hit after entry → exit %s",
+                                    position.direction.upper(), bar_time.isoformat(),
+                                    position.order_trigger_price or position.entry_price, position.sl_price,
+                                    entry_bar_exit,
+                                )
                         else:
                             _engine_logger.warning(
                                 "1s data unavailable for entry-bar %s — cannot verify entry/SL sequence, assuming entry first",
