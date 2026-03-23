@@ -190,11 +190,13 @@ class TestRMultiples:
         assert trade_metrics.r_multiple(t) is None
 
     def test_total_r(self):
-        # R-multiples: 2.0, -1.0, 3.0, -0.5, 1.5 => total = 5.0
-        assert trade_metrics.total_r(SAMPLE_TRADES) == pytest.approx(5.0)
+        # R-multiples: 2.0, -1.0, 3.0, -1.0, 1.5 => total = 4.5
+        # Note: SL exits always return -1.0R regardless of pnl (trade 4: pnl=-50 still = -1.0R)
+        assert trade_metrics.total_r(SAMPLE_TRADES) == pytest.approx(4.5)
 
     def test_avg_r(self):
-        assert trade_metrics.avg_r_per_trade(SAMPLE_TRADES) == pytest.approx(1.0)
+        # 4.5 / 5 trades = 0.9
+        assert trade_metrics.avg_r_per_trade(SAMPLE_TRADES) == pytest.approx(0.9)
 
 
 class TestExpectancy:
@@ -329,8 +331,8 @@ class TestMonthlyR:
         assert result[0].r_earned == pytest.approx(4.0)
         assert result[0].trade_count == 3
 
-        # Feb: R = (-0.5) + 1.5 = 1.0, count = 2
-        assert result[1].r_earned == pytest.approx(1.0)
+        # Feb: R = (-1.0) + 1.5 = 0.5, count = 2  (SL exit = -1.0R)
+        assert result[1].r_earned == pytest.approx(0.5)
         assert result[1].trade_count == 2
 
     def test_empty(self):
@@ -339,8 +341,8 @@ class TestMonthlyR:
     def test_avg_r_per_month(self):
         monthly = monthly_metrics.monthly_r_breakdown(SAMPLE_TRADES)
         result = monthly_metrics.avg_r_per_month(SAMPLE_TRADES, monthly)
-        # Total R = 5.0, months = 2 -> 2.5
-        assert result == pytest.approx(2.5)
+        # Total R = 4.5, months = 2 -> 2.25
+        assert result == pytest.approx(2.25)
 
 
 # ===========================================================================
@@ -354,6 +356,7 @@ class TestCalculateAnalytics:
             equity_curve=SAMPLE_EQUITY,
             final_balance=10500.0,
             initial_balance=10000.0,
+            expired_order_dates=[],
         )
         analytics = calculate_analytics(result)
         assert isinstance(analytics, AnalyticsResult)
@@ -365,7 +368,7 @@ class TestCalculateAnalytics:
         assert metrics_dict["Total Trades"].value == 5
         assert metrics_dict["Win Rate"].value == pytest.approx(60.0)
         assert metrics_dict["Total Return"].value == pytest.approx(5.0)
-        assert metrics_dict["Total R"].value == pytest.approx(5.0)
+        assert metrics_dict["Total R"].value == pytest.approx(4.5)
 
     def test_zero_trades(self):
         """Edge case: no trades should return all zeroes/nulls with no errors."""
@@ -374,6 +377,7 @@ class TestCalculateAnalytics:
             equity_curve=[{"time": "2025-01-01T00:00:00+00:00", "balance": 10000.0}],
             final_balance=10000.0,
             initial_balance=10000.0,
+            expired_order_dates=[],
         )
         analytics = calculate_analytics(result)
         metrics_dict = {m.name: m for m in analytics.summary}
@@ -394,6 +398,7 @@ class TestCalculateAnalytics:
             equity_curve=ec,
             final_balance=10200.0,
             initial_balance=10000.0,
+            expired_order_dates=[],
         )
         analytics = calculate_analytics(result)
         metrics_dict = {m.name: m for m in analytics.summary}
@@ -417,6 +422,7 @@ class TestCalculateAnalytics:
             equity_curve=ec,
             final_balance=9850.0,
             initial_balance=10000.0,
+            expired_order_dates=[],
         )
         analytics = calculate_analytics(result)
         metrics_dict = {m.name: m for m in analytics.summary}
@@ -439,6 +445,7 @@ class TestCalculateAnalytics:
             equity_curve=ec,
             final_balance=10200.0,
             initial_balance=10000.0,
+            expired_order_dates=[],
         )
         analytics = calculate_analytics(result)
         metrics_dict = {m.name: m for m in analytics.summary}

@@ -260,10 +260,15 @@ def total_r(trades: List[Trade]) -> Optional[float]:
 
 
 def avg_r_per_trade(trades: List[Trade]) -> Optional[float]:
-    """Total R / Total Trades (including trades with zero risk counted as 0 R)."""
+    """Total R / Total Trades (including trades with zero risk counted as 0 R).
+
+    Returns None if no valid R-multiples exist (all trades have zero risk).
+    """
     if not trades:
         return None
     valid = _valid_r_multiples(trades)
+    if not valid:
+        return None
     return sum(valid) / len(trades)
 
 
