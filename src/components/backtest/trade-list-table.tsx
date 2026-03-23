@@ -347,7 +347,7 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, r
                       )}
                       {trade.used_1s_resolution && (
                         <Badge className="bg-sky-500/20 text-sky-300 border-0 hover:bg-sky-500/20 text-[10px] px-1 py-0">
-                          1s
+                          1sec Check
                         </Badge>
                       )}
                     </span>
