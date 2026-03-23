@@ -1599,6 +1599,7 @@ async def backtest_stream(
                 duration_minutes=duration_minutes,
                 entry_gap_pips=t.entry_gap_pips,
                 exit_gap=t.exit_gap,
+                used_1s_resolution=t.used_1s_resolution,
                 range_high=range_high_val,
                 range_low=range_low_val,
                 stop_loss=stop_loss_val,
