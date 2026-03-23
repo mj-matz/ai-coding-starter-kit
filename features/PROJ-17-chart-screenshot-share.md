@@ -1,6 +1,6 @@
 # PROJ-17: Chart Screenshot Share
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-03-22
 **Last Updated:** 2026-03-23
 
@@ -150,4 +150,6 @@ Keine neuen Pakete nötig – alles bereits vorhanden:
 2. BUG-4 → `/frontend` (Auth-Check im `useChartShare` Hook)
 
 ## Deployment
-_To be added by /deploy_
+**Deployed:** 2026-03-23
+**Commit:** `8efa082`
+**Trigger:** Vercel auto-deploy via push to `main`
