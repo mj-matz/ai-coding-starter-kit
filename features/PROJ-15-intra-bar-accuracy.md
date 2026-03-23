@@ -1,6 +1,6 @@
 # PROJ-15: Intra-Bar Accuracy (Entry-Bar SL/TP + 1-Second Hybrid)
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-03-22
 **Last Updated:** 2026-03-22
 
