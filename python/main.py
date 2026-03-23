@@ -65,6 +65,18 @@ app.add_middleware(
 )
 
 
+def _timeframe_to_minutes(tf: str) -> int:
+    """Convert a timeframe string (e.g. '2m', '1h') to the number of minutes per bar."""
+    tf = tf.strip().lower()
+    if tf.endswith("d"):
+        return int(tf[:-1]) * 1440
+    if tf.endswith("h"):
+        return int(tf[:-1]) * 60
+    if tf.endswith("m"):
+        return int(tf[:-1])
+    return 1
+
+
 # Valid timeframes per source
 DUKASCOPY_TIMEFRAMES = {"1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"}
 
@@ -554,10 +566,14 @@ async def backtest_run(
         gap_fill=cfg.gap_fill,
     )
 
+    _bar_minutes = (
+        int(round((df.index[1] - df.index[0]).total_seconds() / 60))
+        if len(df) >= 2 else 1
+    )
     try:
         result = run_backtest(
             df, signals_df, engine_config,
-            get_1s_data=create_1s_data_provider(symbol) if symbol else None,
+            get_1s_data=create_1s_data_provider(symbol, bar_duration_minutes=_bar_minutes) if symbol else None,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1070,7 +1086,7 @@ async def backtest_orchestrate(
     try:
         result = run_backtest(
             df, signals_df, engine_config,
-            get_1s_data=create_1s_data_provider(symbol),
+            get_1s_data=create_1s_data_provider(symbol, bar_duration_minutes=_timeframe_to_minutes(request.timeframe)),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1428,7 +1444,7 @@ async def backtest_stream(
                 res = run_backtest(
                     df, signals_df, engine_config,
                     progress_callback=on_progress,
-                    get_1s_data=create_1s_data_provider(symbol),
+                    get_1s_data=create_1s_data_provider(symbol, bar_duration_minutes=_timeframe_to_minutes(request.timeframe)),
                 )
                 result_holder.append(res)
             except Exception as exc:

@@ -208,7 +208,8 @@ def run_backtest(
         if position is not None and exit_flags is not None:
             if exit_flags[i]:
                 # Normal case: first bar at or after exit_time → close at bar open
-                trade = close_position(position, bar_time, bar_open, "TIME", config)
+                trade = close_position(position, bar_time, bar_open, "TIME", config,
+                                       used_1s_resolution=position.any_1s_used)
                 trades.append(trade)
                 balance += trade.pnl_currency
                 equity_curve.append(
@@ -223,7 +224,8 @@ def run_backtest(
                 # Close at the last bar's close before the gap.
                 prev_close = _closes[i - 1]
                 prev_time = ohlcv.index[i - 1]
-                trade = close_position(position, prev_time, prev_close, "TIME", config)
+                trade = close_position(position, prev_time, prev_close, "TIME", config,
+                                       used_1s_resolution=position.any_1s_used)
                 trades.append(trade)
                 balance += trade.pnl_currency
                 equity_curve.append(
@@ -286,7 +288,7 @@ def run_backtest(
                         exit_price = tp
                 trade = close_position(
                     position, bar_time, exit_price, exit_reason, config,
-                    exit_gap=exit_gap, used_1s_resolution=used_1s,
+                    exit_gap=exit_gap, used_1s_resolution=position.any_1s_used or used_1s,
                 )
                 trades.append(trade)
                 balance += trade.pnl_currency
@@ -374,6 +376,7 @@ def run_backtest(
                                 position, ohlcv_1s, fallback_exit=entry_bar_exit
                             )
                             used_1s = True
+                            position.any_1s_used = True  # persist across bars if trade continues
                         else:
                             _engine_logger.warning(
                                 "1s data unavailable for entry-bar %s — cannot verify entry/SL sequence, assuming entry first",
@@ -469,7 +472,8 @@ def run_backtest(
     if position is not None:
         last_time = ohlcv.index[-1]
         trade = close_position(
-            position, last_time, _closes[-1], "TIME", config
+            position, last_time, _closes[-1], "TIME", config,
+            used_1s_resolution=position.any_1s_used,
         )
         trades.append(trade)
         balance += trade.pnl_currency

@@ -26,6 +26,7 @@ class OpenPosition:
     trail_applied: bool = False
     trail_trigger_pips: Optional[float] = None  # per-signal override; falls back to BacktestConfig
     trail_lock_pips: Optional[float] = None     # per-signal override; falls back to BacktestConfig
+    any_1s_used: bool = False  # True if a 1s zoom-in was performed at any point during this trade
 
 
 def apply_trail_if_triggered(
