@@ -4,8 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { format, parseISO } from "date-fns";
 import { createChart, CandlestickSeries, BaselineSeries, LineSeries, createSeriesMarkers } from "lightweight-charts";
 import type { IChartApi, UTCTimestamp } from "lightweight-charts";
+import { Share2, Loader2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -13,7 +15,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
 import type { Candle, TradeRecord } from "@/lib/backtest-types";
+import { useChartShare } from "@/hooks/use-chart-share";
 
 interface TradeChartDialogProps {
   trade: TradeRecord | null;
@@ -72,6 +85,11 @@ export function TradeChartDialog({
 
   const [candleCache, setCandleCache] = useState<CandleCache | null>(null);
   const [ohlcHover, setOhlcHover] = useState<Candle | null>(null);
+
+  const { isUploading, fallbackUrl, onShare, onCloseFallback } = useChartShare({
+    tradeId: trade?.id ?? 0,
+    tradeDate: trade?.entry_time ?? "",
+  });
 
   const cacheHit = open && trade != null && candleCache?.tradeId === trade.id;
   const isLoadingCandles = open && trade != null && cacheId != null && !cacheHit;
@@ -362,6 +380,7 @@ export function TradeChartDialog({
   const isWin = trade.pnl_currency >= 0;
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[1350px] border-gray-800 bg-[#0a0a10] text-gray-100">
         <DialogHeader>
@@ -383,6 +402,20 @@ export function TradeChartDialog({
               {trade.pnl_currency.toFixed(2)} ({isWin ? "+" : ""}
               {trade.pnl_pips.toFixed(1)} pips)
             </Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-auto border-gray-700 bg-transparent text-gray-300 hover:bg-gray-800 hover:text-gray-100"
+              disabled={isUploading || candles.length === 0}
+              onClick={() => chartRef.current && onShare(chartRef.current)}
+            >
+              {isUploading ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Share2 className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Share
+            </Button>
           </DialogTitle>
           <DialogDescription className="text-gray-500">
             {trade.exit_reason} exit
@@ -449,5 +482,21 @@ export function TradeChartDialog({
         </div>
       </DialogContent>
     </Dialog>
+
+    <AlertDialog open={fallbackUrl !== null} onOpenChange={(open) => { if (!open) onCloseFallback(); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Link zum Screenshot</AlertDialogTitle>
+          <AlertDialogDescription>
+            Die Zwischenablage ist in diesem Browser nicht verfügbar. Bitte kopiere den Link manuell:
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <Input readOnly value={fallbackUrl ?? ""} className="font-mono text-xs" onClick={(e) => (e.target as HTMLInputElement).select()} />
+        <AlertDialogFooter>
+          <AlertDialogAction onClick={onCloseFallback}>Schließen</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }

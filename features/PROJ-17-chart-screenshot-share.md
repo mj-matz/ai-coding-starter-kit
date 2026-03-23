@@ -1,8 +1,8 @@
 # PROJ-17: Chart Screenshot Share
 
-## Status: Planned
+## Status: In Review
 **Created:** 2026-03-22
-**Last Updated:** 2026-03-22
+**Last Updated:** 2026-03-23
 
 ## Dependencies
 - Requires: PROJ-5 (Backtest UI) — Trade-Chart-Dialog, in dem der Button platziert wird
@@ -117,7 +117,37 @@ Keine neuen Pakete nötig – alles bereits vorhanden:
 - shadcn `alert-dialog` (Clipboard-Fallback)
 
 ## QA Test Results
-_To be added by /qa_
+**Datum:** 2026-03-23
+**Ergebnis:** ✅ APPROVED — alle Critical/High Bugs gefixt (2026-03-23)
+
+### Acceptance Criteria: 8/8 bestanden
+
+| AC | Beschreibung | Status |
+|----|-------------|--------|
+| AC-1 | Share-Button im Dialog | PASS |
+| AC-2 | Screenshot via takeScreenshot() | PASS |
+| AC-3 | Upload zu Supabase Storage | PASS (Migration + RLS gefixt) |
+| AC-4 | Dateiname mit Trade-ID + Hex | PASS |
+| AC-5 | URL in Zwischenablage | PASS |
+| AC-6 | Toast "Link kopiert!" | PASS |
+| AC-7 | Ladezustand während Upload | PASS |
+| AC-8 | Fehlermeldung bei Fehler | PASS |
+
+### Bugs
+
+| Bug | Severity | Beschreibung | Priorität |
+|-----|----------|-------------|-----------|
+| BUG-1 | **Critical** | ~~Kein Supabase Storage Bucket `chart-screenshots` als Migration definiert. Ohne Bucket schlägt jeder Upload fehl.~~ ✅ Gefixt: `20260323_chart_screenshots_bucket.sql` | Fix before deployment |
+| BUG-2 | **Critical** | ~~Keine RLS-Policies für `storage.objects`. Weder INSERT (auth) noch SELECT (public) Policy existiert.~~ ✅ Gefixt: `20260323_chart_screenshots_bucket.sql` | Fix before deployment |
+| BUG-3 | Low | Keine Screenshot-Auflösungs-Begrenzung auf max 2x DPR (Edge-Case aus Spec). | Nice to have |
+| BUG-4 | **High** | ~~`useChartShare` Hook prüft nicht ob User eingeloggt ist. Spec verlangt Auth als Dependency (PROJ-8).~~ ✅ Gefixt: `use-chart-share.ts` | Fix before deployment |
+| BUG-5 | Medium | ~~Keine serverseitige Content-Type-Validierung. Angreifer könnte HTML/JS statt PNG hochladen (Stored XSS via Storage-Domain).~~ ✅ Gefixt: `allowed_mime_types` im Bucket | Fix in next sprint |
+| BUG-6 | Low | Kein Rate-Limiting auf Uploads. User könnte Storage-Quota ausschöpfen. | Nice to have |
+| BUG-7 | Low | ESLint-Warning: `rangeStart` fehlt im useEffect-Dependency-Array (Zeile 140). Existierender Bug aus PROJ-5. | Fix in next sprint |
+
+### Empfohlene Fix-Reihenfolge
+1. BUG-1 + BUG-2 → `/backend` (Supabase Migration: Bucket + RLS-Policies)
+2. BUG-4 → `/frontend` (Auth-Check im `useChartShare` Hook)
 
 ## Deployment
 _To be added by /deploy_
