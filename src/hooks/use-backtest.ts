@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { BacktestFormValues, BacktestResult } from "@/lib/backtest-types";
+import { getCurrenciesForInstrument } from "@/lib/instrument-currencies";
 
 export type BacktestStatus = "idle" | "loading" | "success" | "error";
 
@@ -138,26 +139,28 @@ export function useBacktest(): UseBacktestReturn {
       }, TIMEOUT_WARNING_MS);
 
       try {
-        // Connect directly to FastAPI to bypass Vercel proxy buffering.
-        // FastAPI verifies the JWT independently — security is maintained.
-        const fastapiUrl = process.env.NEXT_PUBLIC_FASTAPI_URL;
-        if (!fastapiUrl) {
-          throw new Error("NEXT_PUBLIC_FASTAPI_URL is not configured");
-        }
-
         const supabase = createClient();
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) {
-          throw new Error("Not authenticated");
+
+        // Resolve news dates from Supabase when the user wants to skip news days
+        let newsDates: string[] | undefined;
+        if (!config.tradeNewsDays) {
+          const currencies = getCurrenciesForInstrument(config.symbol);
+          const { data } = await supabase
+            .from("economic_calendar")
+            .select("date")
+            .gte("date", config.startDate)
+            .lte("date", config.endDate)
+            .eq("impact", "High")
+            .in("currency", currencies);
+          newsDates = [...new Set((data ?? []).map((r: { date: string }) => r.date))];
         }
 
-        const response = await fetch(`${fastapiUrl}/backtest/stream`, {
+        const payload = newsDates ? { ...config, newsDates } : config;
+
+        const response = await fetch("/api/backtest/stream", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify(config),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
           signal: controller.signal,
         });
 
