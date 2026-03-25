@@ -48,13 +48,14 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS — allow Next.js frontend (the proxy routes) to communicate.
-# In production, Next.js calls this API server-to-server, so CORS only
-# matters for local dev. CORS_ALLOWED_ORIGIN can be set to the Vercel URL
-# if direct browser access is ever needed.
+# CORS — comma-separated list of allowed origins via CORS_ALLOWED_ORIGINS.
+# Example: https://your-app.vercel.app,https://preview.vercel.app
 _cors_origins = ["http://localhost:3000"]
-if _extra := os.environ.get("CORS_ALLOWED_ORIGIN"):
-    _cors_origins.append(_extra)
+if _extra := os.environ.get("CORS_ALLOWED_ORIGINS", os.environ.get("CORS_ALLOWED_ORIGIN", "")):
+    for _origin in _extra.split(","):
+        _origin = _origin.strip()
+        if _origin:
+            _cors_origins.append(_origin)
 
 app.add_middleware(
     CORSMiddleware,
