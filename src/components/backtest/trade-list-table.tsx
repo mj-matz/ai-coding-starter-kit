@@ -48,14 +48,22 @@ function getWeekday(dateStr: string): string {
   }
 }
 
-// Returns the Monday of the week containing dateStr (YYYY-MM-DD)
+// Format a Date as local YYYY-MM-DD (avoids UTC offset shifting from toISOString)
+function localDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// Returns the Monday of the week containing dateStr, as local YYYY-MM-DD
 function getWeekMonday(dateStr: string): string {
   try {
     const d = parseISO(dateStr);
     const dayOfWeek = d.getDay(); // 0=So, 1=Mo, ..., 6=Sa
     const monday = new Date(d);
     monday.setDate(d.getDate() - ((dayOfWeek + 6) % 7));
-    return monday.toISOString().slice(0, 10);
+    return localDateStr(monday);
   } catch {
     return dateStr;
   }
@@ -154,18 +162,19 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, r
       const dateStr = row.kind === "trade" ? row.data.entry_time : row.kind === "skipped" ? row.data.date : row.date;
       const monday = getWeekMonday(dateStr);
       if (lastMonday !== null && monday !== lastMonday) {
-        // Insert Sa and So for the previous week
-        const prevMonday = parseISO(lastMonday);
+        // Insert Sa and So for the previous week.
+        // Parse lastMonday at local noon to avoid DST/UTC-offset issues.
+        const prevMonday = new Date(`${lastMonday}T12:00:00`);
         const sat = new Date(prevMonday);
         sat.setDate(prevMonday.getDate() + 5);
         const sun = new Date(prevMonday);
         sun.setDate(prevMonday.getDate() + 6);
         if (sortDir === "asc") {
-          withWeekends.push({ kind: "weekend", date: sat.toISOString().slice(0, 10) });
-          withWeekends.push({ kind: "weekend", date: sun.toISOString().slice(0, 10) });
+          withWeekends.push({ kind: "weekend", date: localDateStr(sat) });
+          withWeekends.push({ kind: "weekend", date: localDateStr(sun) });
         } else {
-          withWeekends.push({ kind: "weekend", date: sun.toISOString().slice(0, 10) });
-          withWeekends.push({ kind: "weekend", date: sat.toISOString().slice(0, 10) });
+          withWeekends.push({ kind: "weekend", date: localDateStr(sun) });
+          withWeekends.push({ kind: "weekend", date: localDateStr(sat) });
         }
       }
       lastMonday = monday;
