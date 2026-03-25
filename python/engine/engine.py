@@ -238,6 +238,18 @@ def run_backtest(
         if position is not None:
             apply_trail_if_triggered(position, bar_high, bar_low, config)
 
+            # Update MAE: track worst adverse price seen during the trade
+            if position.direction == "long":
+                if position.mae_adverse_price == 0.0:
+                    position.mae_adverse_price = bar_low
+                else:
+                    position.mae_adverse_price = min(position.mae_adverse_price, bar_low)
+            else:
+                if position.mae_adverse_price == 0.0:
+                    position.mae_adverse_price = bar_high
+                else:
+                    position.mae_adverse_price = max(position.mae_adverse_price, bar_high)
+
             exit_reason = check_sl_tp(position, bar_high, bar_low)
             if exit_reason is not None:
                 used_1s = False
@@ -357,6 +369,12 @@ def run_backtest(
                     trail_lock_pips=triggered.trail_lock_pips,
                 )
                 pending_orders = []  # cancel OCO partner
+
+                # Initialize MAE with the entry bar's adverse extreme
+                if position.direction == "long":
+                    position.mae_adverse_price = bar_low
+                else:
+                    position.mae_adverse_price = bar_high
 
                 # ── PROJ-15: Entry-Bar SL/TP check ────────────────────────
                 # Immediately check SL/TP on the same bar where the trade opened.

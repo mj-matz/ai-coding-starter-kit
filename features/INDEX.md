@@ -36,6 +36,8 @@
 | PROJ-22 | MQL Converter | Planned | [PROJ-22-mql-converter.md](PROJ-22-mql-converter.md) | 2026-03-25 |
 | PROJ-23 | Trading Day & News Day Filter | Deployed | [PROJ-23-trading-day-news-filter.md](PROJ-23-trading-day-news-filter.md) | 2026-03-25 |
 
+| PROJ-24 | Trade List & Results UI Enhancements | Deployed | [PROJ-24-trade-list-results-ui-enhancements.md](PROJ-24-trade-list-results-ui-enhancements.md) | 2026-03-25 |
+
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-24
+## Next Available ID: PROJ-25

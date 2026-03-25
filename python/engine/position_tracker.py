@@ -27,6 +27,7 @@ class OpenPosition:
     trail_trigger_pips: Optional[float] = None  # per-signal override; falls back to BacktestConfig
     trail_lock_pips: Optional[float] = None     # per-signal override; falls back to BacktestConfig
     any_1s_used: bool = False  # True if a 1s zoom-in was performed at any point during this trade
+    mae_adverse_price: float = 0.0  # Worst adverse price seen during the trade (min low for long, max high for short)
 
 
 def apply_trail_if_triggered(
@@ -242,6 +243,14 @@ def close_position(
         position.lot_size, pip_value_per_lot
     )
 
+    # Compute MAE (Maximum Adverse Excursion) in pips
+    if position.mae_adverse_price == 0.0:
+        mae_pips = 0.0
+    elif position.direction == "long":
+        mae_pips = max(0.0, (position.entry_price - position.mae_adverse_price) / pip_size)
+    else:
+        mae_pips = max(0.0, (position.mae_adverse_price - position.entry_price) / pip_size)
+
     return Trade(
         entry_time=position.entry_time,
         entry_price=position.entry_price,
@@ -257,4 +266,5 @@ def close_position(
         entry_gap_pips=position.entry_gap_pips,
         exit_gap=exit_gap,
         used_1s_resolution=used_1s_resolution,
+        mae_pips=round(mae_pips, 1),
     )

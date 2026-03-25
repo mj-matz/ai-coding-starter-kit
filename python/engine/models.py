@@ -53,6 +53,7 @@ class Trade:
     entry_gap_pips: float = 0.0  # > 0 when bar opened past the stop level (BUG-8)
     exit_gap: bool = False        # True when bar opened past SL/TP level (BUG-15)
     used_1s_resolution: bool = False  # True when 1-second zoom-in resolved this trade's exit (PROJ-15)
+    mae_pips: float = 0.0  # Maximum Adverse Excursion in pips (worst drawdown during the trade)
 
 
 @dataclass

@@ -289,6 +289,7 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, r
               <TableHead className="text-right text-xs font-medium text-slate-400">PnL ($)</TableHead>
               <TableHead className="text-right text-xs font-medium text-slate-400">R</TableHead>
               <TableHead className="text-xs font-medium text-slate-400">Exit Reason</TableHead>
+              <TableHead className="text-right text-xs font-medium text-slate-400">MAE</TableHead>
               <TableHead className="text-right text-xs font-medium text-slate-400">Duration</TableHead>
             </TableRow>
           </TableHeader>
@@ -307,7 +308,7 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, r
                       <span className="font-medium">{dayName}</span>
                     </TableCell>
                     <TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" />
-                    <TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" />
+                    <TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" />
                   </TableRow>
                 );
               }
@@ -361,6 +362,7 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, r
                         </span>
                       )}
                     </TableCell>
+                    <TableCell />
                     <TableCell />
                   </TableRow>
                 );
@@ -458,6 +460,9 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, r
                         </Badge>
                       )}
                     </span>
+                  </TableCell>
+                  <TableCell className="text-right text-sm text-rose-400">
+                    {trade.mae_pips > 0 ? `-${trade.mae_pips.toFixed(0)}p` : "\u2014"}
                   </TableCell>
                   <TableCell className="text-right text-sm text-slate-400">
                     {formatDuration(trade.duration_minutes)}

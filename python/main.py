@@ -407,6 +407,7 @@ class TradeResponse(BaseModel):
     initial_risk_currency: float
     r_multiple: Optional[float] = None
     used_1s_resolution: bool = False
+    mae_pips: float = 0.0
 
 
 class MetricResponse(BaseModel):
@@ -627,6 +628,7 @@ async def backtest_run(
             initial_risk_currency=t.initial_risk_currency,
             r_multiple=compute_r_multiple(t),
             used_1s_resolution=t.used_1s_resolution,
+            mae_pips=t.mae_pips,
         )
         for t in result.trades
     ]

@@ -206,6 +206,7 @@ export interface TradeRecord {
   entry_gap_pips: number;
   exit_gap: boolean;
   used_1s_resolution: boolean;
+  mae_pips: number;
   range_high: number;
   range_low: number;
   stop_loss: number;
