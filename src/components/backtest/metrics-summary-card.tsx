@@ -351,7 +351,7 @@ export function MetricsSummaryCard({ metrics, monthlyR }: MetricsSummaryCardProp
                   color: (row.win_rate_pct ?? 0) >= 50 ? EMERALD : ROSE,
                 }}
               >
-                {(row.win_rate_pct ?? 0).toFixed(0)}%
+                {(row.win_rate_pct ?? 0).toFixed(2)}%
               </span>
               <span style={{ fontSize: "12px", textAlign: "right", color: "rgba(244,63,94,0.8)" }}>
                 {row.avg_mae_pips != null ? `-${row.avg_mae_pips.toFixed(0)}p` : "—"}
