@@ -53,7 +53,7 @@ def monthly_r_breakdown(trades: List[Trade]) -> List[MonthlyR]:
                 month=month_key,
                 r_earned=round(r_sum, 4),
                 trade_count=count,
-                win_rate_pct=round(win_rate, 1),
+                win_rate_pct=round(win_rate, 2),
                 avg_loss_pips=round(avg_loss, 1) if avg_loss is not None else None,
                 avg_mae_pips=round(avg_mae, 0) if avg_mae is not None else None,
             )
