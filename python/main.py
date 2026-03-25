@@ -885,6 +885,7 @@ class TradeDetailOut(BaseModel):
     entry_gap_pips: float = 0.0
     exit_gap: bool = False
     used_1s_resolution: bool = False
+    mae_pips: float = 0.0
     range_high: float = 0.0
     range_low: float = 0.0
     stop_loss: float = 0.0
@@ -1238,6 +1239,7 @@ async def backtest_orchestrate(
             entry_gap_pips=t.entry_gap_pips,
             exit_gap=t.exit_gap,
             used_1s_resolution=t.used_1s_resolution,
+            mae_pips=t.mae_pips,
             range_high=range_high_val,
             range_low=range_low_val,
             stop_loss=stop_loss_val,
@@ -1638,6 +1640,7 @@ async def backtest_stream(
                 entry_gap_pips=t.entry_gap_pips,
                 exit_gap=t.exit_gap,
                 used_1s_resolution=t.used_1s_resolution,
+                mae_pips=t.mae_pips,
                 range_high=range_high_val,
                 range_low=range_low_val,
                 stop_loss=stop_loss_val,

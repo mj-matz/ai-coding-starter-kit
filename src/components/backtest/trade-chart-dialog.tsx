@@ -62,6 +62,20 @@ function toChartTime(utcSeconds: number): UTCTimestamp {
   return (utcSeconds + tzOffsetSec) as UTCTimestamp;
 }
 
+// Convert timeframe string (e.g. "1m", "5m", "1h") to seconds
+function timeframeToSeconds(tf: string): number {
+  const m = tf.match(/^(\d+)([smhd])$/);
+  if (!m) return 60;
+  const n = parseInt(m[1]);
+  switch (m[2]) {
+    case "s": return n;
+    case "m": return n * 60;
+    case "h": return n * 3600;
+    case "d": return n * 86400;
+    default: return 60;
+  }
+}
+
 // Build the UTC unix timestamp for a given HH:MM local time on the same
 // calendar day as `referenceDateStr` (an ISO date-time or date string).
 function buildLocalTimestamp(referenceDateStr: string, timeHHMM: string): number {
@@ -90,7 +104,7 @@ export function TradeChartDialog({
   // For share: only available on trade charts
   const { isUploading, fallbackUrl, onShare, onCloseFallback } = useChartShare({
     tradeId: trade?.id ?? 0,
-    tradeDate: trade?.entry_time ?? "",
+    tradeDate: trade?.entry_time ?? skippedDay?.date ?? "",
   });
 
   // Unique cache key for the current subject
@@ -373,9 +387,11 @@ export function TradeChartDialog({
         [...markers].sort((a, b) => (a.time as number) - (b.time as number))
       );
     } else if (skippedDay != null && triggerDeadline) {
-      // ── Skipped day chart: vertical marker at trigger deadline ────────────
+      // ── Skipped day chart: arrow + thin vertical line at trigger deadline ─
       const deadlineUtc = buildLocalTimestamp(skippedDay.date, triggerDeadline);
-      // Find the candle closest to the trigger deadline
+      const deadlineChartTime = toChartTime(deadlineUtc);
+
+      // Arrow marker at deadline candle
       const closestCandle = candles.reduce((prev, curr) =>
         Math.abs(curr.time - deadlineUtc) < Math.abs(prev.time - deadlineUtc) ? curr : prev
       );
@@ -388,6 +404,35 @@ export function TradeChartDialog({
           text: `Trigger Deadline ${triggerDeadline}`,
         },
       ]);
+
+      // Thin vertical orange line using a series primitive
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (candleSeries as any).attachPrimitive({
+        updateAllViews() {},
+        paneViews() {
+          const x = chart.timeScale().timeToCoordinate(deadlineChartTime);
+          if (x === null) return [];
+          return [{
+            renderer: () => ({
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              draw(target: any) {
+                target.useBitmapCoordinateSpace(({ context: ctx, bitmapSize, horizontalPixelRatio }: { context: CanvasRenderingContext2D; bitmapSize: { height: number }; horizontalPixelRatio: number }) => {
+                  const bx = Math.round(x * horizontalPixelRatio);
+                  ctx.save();
+                  ctx.strokeStyle = "#f97316";
+                  ctx.lineWidth = Math.max(1, horizontalPixelRatio);
+                  ctx.globalAlpha = 0.75;
+                  ctx.beginPath();
+                  ctx.moveTo(bx, 0);
+                  ctx.lineTo(bx, bitmapSize.height);
+                  ctx.stroke();
+                  ctx.restore();
+                });
+              }
+            })
+          }];
+        }
+      });
     }
 
     // ── OHLC overlay on crosshair move ────────────────────────────────────────
@@ -402,7 +447,27 @@ export function TradeChartDialog({
       setOhlcHover(t != null ? (candlesByTime.get(t) ?? null) : null);
     });
 
+    // fitContent first so the axis auto-scales, then narrow the initial view
     chart.timeScale().fitContent();
+
+    const barSec = timeframeToSeconds(timeframe);
+    if (trade != null) {
+      // Trade chart: entry – exit+30 bars on open; full day accessible on zoom-out
+      const eUtc = Math.floor(new Date(trade.entry_time).getTime() / 1000);
+      const xUtc = Math.floor(new Date(trade.exit_time).getTime() / 1000);
+      chart.timeScale().setVisibleRange({
+        from: toChartTime(eUtc - 2 * barSec),
+        to:   toChartTime(xUtc + 30 * barSec),
+      });
+    } else if (skippedDay != null && rangeStart && triggerDeadline) {
+      // Skipped-day chart: rangeStart−10 bars → deadline+30 bars on open
+      const rsUtc = buildLocalTimestamp(skippedDay.date, rangeStart);
+      const dlUtc = buildLocalTimestamp(skippedDay.date, triggerDeadline);
+      chart.timeScale().setVisibleRange({
+        from: toChartTime(rsUtc - 10 * barSec),
+        to:   toChartTime(dlUtc + 30 * barSec),
+      });
+    }
 
     const handleResize = () => {
       if (chartContainerRef.current) {
@@ -418,7 +483,7 @@ export function TradeChartDialog({
       chartRef.current = null;
       setOhlcHover(null);
     };
-  }, [open, trade, skippedDay, candles, rangeStart, rangeEnd, triggerDeadline]);
+  }, [open, trade, skippedDay, candles, rangeStart, rangeEnd, triggerDeadline, timeframe]);
 
   const isSkippedMode = trade == null && skippedDay != null;
 
@@ -459,22 +524,20 @@ export function TradeChartDialog({
                 </Badge>
               </>
             )}
-            {!isSkippedMode && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="ml-auto border-gray-700 bg-transparent text-gray-300 hover:bg-gray-800 hover:text-gray-100"
-                disabled={isUploading || candles.length === 0}
-                onClick={() => chartRef.current && onShare(chartRef.current)}
-              >
-                {isUploading ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Share2 className="mr-1.5 h-3.5 w-3.5" />
-                )}
-                Share
-              </Button>
-            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-auto mr-8 border-gray-700 bg-transparent text-gray-300 hover:bg-gray-800 hover:text-gray-100"
+              disabled={isUploading || candles.length === 0}
+              onClick={() => chartRef.current && onShare(chartRef.current)}
+            >
+              {isUploading ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Share2 className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Share
+            </Button>
           </DialogTitle>
           <DialogDescription className="text-gray-500">
             {isSkippedMode

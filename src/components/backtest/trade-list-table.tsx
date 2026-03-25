@@ -322,7 +322,7 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, r
                     key={`skipped-${s.date}`}
                     className={
                       isTriggerExpired
-                        ? "border-white/5 opacity-60 hover:opacity-90 hover:bg-white/5 cursor-pointer transition-colors"
+                        ? "border-white/5 hover:bg-white/5 cursor-pointer transition-colors"
                         : "border-white/5 opacity-50 hover:opacity-70 hover:bg-transparent"
                     }
                     onClick={isTriggerExpired ? () => openSkippedChart(s) : undefined}
