@@ -421,6 +421,8 @@ class MonthlyRResponse(BaseModel):
     month: str
     r_earned: Optional[float]
     trade_count: int
+    win_rate_pct: float = 0.0
+    avg_loss_pips: Optional[float] = None
 
 
 class AnalyticsResponse(BaseModel):
@@ -795,6 +797,8 @@ class BacktestOrchestrationRequest(BaseModel):
     trailTriggerPips: Optional[float] = Field(default=None, gt=0)
     trailLockPips: Optional[float] = Field(default=None, gt=0)
     gapFill: bool = False
+    tradingDays: List[int] = Field(default=[0, 1, 2, 3, 4])  # 0=Mon … 4=Fri (Python weekday)
+    newsDates: Optional[List[str]] = None  # YYYY-MM-DD strings; present only when tradeNewsDays=False
 
 
 class BacktestMetricsOut(BaseModel):
@@ -1035,6 +1039,19 @@ async def backtest_orchestrate(
             detail=f"No data in UTC hour range {hour_from:02d}:00-{hour_to:02d}:00 for {symbol} ({date_from} to {date_to})",
         )
 
+    # ── 4d. Filter by selected trading days (PROJ-23) ─────────────────────────
+    trading_days_set = set(request.tradingDays)
+    df = df[df.index.weekday.isin(trading_days_set)]
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No data after trading-day filter")
+
+    # ── 4e. Filter out news dates (PROJ-23) ───────────────────────────────────
+    news_dates_set: set[str] = set(request.newsDates) if request.newsDates else set()
+    if news_dates_set:
+        df = df[~df.index.strftime("%Y-%m-%d").isin(news_dates_set)]
+        if df.empty:
+            raise HTTPException(status_code=404, detail="No data after news-date filter")
+
     # ── 5. Generate breakout signals ──────────────────────────────────────────
     breakout_params = BreakoutParams(
         asset=symbol,
@@ -1059,11 +1076,12 @@ async def backtest_orchestrate(
 
     # Weekdays in [date_from, date_to] with zero bars in the filtered df get
     # reported as NO_BARS so they appear in the trade list as no-trade days.
+    # Excluded trading days and news days are intentional — don't report them.
     from datetime import timedelta
     present_dates = set(df.index.date)
     d = date_from
     while d <= date_to:
-        if d.weekday() < 5 and d not in present_dates:
+        if d.weekday() in trading_days_set and str(d) not in news_dates_set and d not in present_dates:
             skipped_days.append(SkippedDay(date=str(d), reason="NO_BARS"))
         d += timedelta(days=1)
 
@@ -1234,6 +1252,8 @@ async def backtest_orchestrate(
             month=mr.month,
             r_earned=mr.r_earned,
             trade_count=mr.trade_count,
+            win_rate_pct=mr.win_rate_pct,
+            avg_loss_pips=mr.avg_loss_pips,
         )
         for mr in analytics_result.monthly_r
     ]
@@ -1386,6 +1406,21 @@ async def backtest_stream(
             yield f"data: {json.dumps({'type': 'error', 'message': f'No data in UTC hour range {hour_from:02d}:00-{hour_to:02d}:00 for {symbol}'})}\n\n"
             return
 
+        # ── Filter by selected trading days (PROJ-23) ─────────────────────
+        trading_days_set = set(request.tradingDays)
+        df = df[df.index.weekday.isin(trading_days_set)]
+        if df.empty:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'No data after trading-day filter'})}\n\n"
+            return
+
+        # ── Filter out news dates (PROJ-23) ───────────────────────────────
+        news_dates_set: set[str] = set(request.newsDates) if request.newsDates else set()
+        if news_dates_set:
+            df = df[~df.index.strftime("%Y-%m-%d").isin(news_dates_set)]
+            if df.empty:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'No data after news-date filter'})}\n\n"
+                return
+
         # ── Generate breakout signals ─────────────────────────────────────
         breakout_params = BreakoutParams(
             asset=symbol,
@@ -1412,7 +1447,7 @@ async def backtest_stream(
         present_dates = set(df.index.date)
         d = date_from
         while d <= date_to:
-            if d.weekday() < 5 and d not in present_dates:
+            if d.weekday() in trading_days_set and str(d) not in news_dates_set and d not in present_dates:
                 skipped_days.append(SkippedDay(date=str(d), reason="NO_BARS"))
             d += timedelta(days=1)
 
@@ -1617,6 +1652,8 @@ async def backtest_stream(
                 month=mr.month,
                 r_earned=mr.r_earned,
                 trade_count=mr.trade_count,
+                win_rate_pct=mr.win_rate_pct,
+                avg_loss_pips=mr.avg_loss_pips,
             )
             for mr in analytics_result.monthly_r
         ]

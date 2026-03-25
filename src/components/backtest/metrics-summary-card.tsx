@@ -309,27 +309,59 @@ export function MetricsSummaryCard({ metrics, monthlyR }: MetricsSummaryCardProp
           >
             Monthly R
           </h3>
+          {/* Header row */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 50px 70px 80px",
+              gap: "8px",
+              padding: "0 0 6px 0",
+              borderBottom: "1px solid rgba(255,255,255,0.08)",
+              marginBottom: "4px",
+            }}
+          >
+            <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.3)" }}>Monat</span>
+            <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.3)", textAlign: "right" }}>Trades</span>
+            <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.3)", textAlign: "right" }}>Winrate</span>
+            <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.3)", textAlign: "right" }}>R</span>
+          </div>
           {monthlyR.map((row) => (
             <div
               key={row.month}
               style={{
-                display: "flex",
-                justifyContent: "space-between",
+                display: "grid",
+                gridTemplateColumns: "1fr 50px 70px 80px",
+                gap: "8px",
                 alignItems: "center",
                 padding: "5px 0",
               }}
             >
               <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.5)" }}>
-                {row.month} ({row.trade_count} trades)
+                {row.month}
               </span>
-              {row.r_earned != null ? (
-                <GlowBadge
-                  value={`${row.r_earned.toFixed(2)}R`}
-                  positive={row.r_earned >= 0}
-                />
-              ) : (
-                <span style={{ color: "rgba(255,255,255,0.3)", fontSize: "13px" }}>—</span>
-              )}
+              <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.4)", textAlign: "right" }}>
+                {row.trade_count}
+              </span>
+              <span
+                style={{
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  textAlign: "right",
+                  color: (row.win_rate_pct ?? 0) >= 50 ? EMERALD : ROSE,
+                }}
+              >
+                {(row.win_rate_pct ?? 0).toFixed(0)}%
+              </span>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                {row.r_earned != null ? (
+                  <GlowBadge
+                    value={`${row.r_earned.toFixed(2)}R`}
+                    positive={row.r_earned >= 0}
+                  />
+                ) : (
+                  <span style={{ color: "rgba(255,255,255,0.3)", fontSize: "13px" }}>—</span>
+                )}
+              </div>
             </div>
           ))}
         </div>

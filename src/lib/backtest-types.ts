@@ -37,6 +37,15 @@ export const backtestFormSchema = z
     trailTriggerPips: z.coerce.number().positive("Trail trigger must be > 0").optional(),
     trailLockPips: z.coerce.number().positive("Trail lock must be > 0").optional(),
 
+    // Trading day filter (0=Mo, 1=Di, 2=Mi, 3=Do, 4=Fr — Python weekday())
+    tradingDays: z
+      .array(z.number().int().min(0).max(4))
+      .min(1, "At least one trading day required")
+      .default([0, 1, 2, 3, 4]),
+
+    // News day filter — when true, days with high-impact events are skipped
+    tradeNewsDays: z.boolean().default(true),
+
     // Simulation options
     gapFill: z.boolean().default(false),
 
@@ -110,6 +119,8 @@ export const defaultFormValues: BacktestFormValues = {
   entryDelayBars: 1,
   trailTriggerPips: undefined,
   trailLockPips: undefined,
+  tradingDays: [0, 1, 2, 3, 4],
+  tradeNewsDays: true,
   gapFill: false,
   initialCapital: 10000,
   sizingMode: "risk_percent",
@@ -157,6 +168,8 @@ export interface MonthlyR {
   month: string;
   r_earned: number | null;
   trade_count: number;
+  win_rate_pct: number;
+  avg_loss_pips: number | null;
 }
 
 export interface EquityCurvePoint {

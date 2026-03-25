@@ -16,16 +16,18 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export default function BacktestPage() {
-  const { status, result, error, isTimedOut, progress, isStreaming, warnings, clearWarnings, runBacktestStream, cancel } =
+  const { status, result, error, isTimedOut, progress, isStreaming, warnings, newsDates, clearWarnings, runBacktestStream, cancel } =
     useBacktest();
   const [initialCapital, setInitialCapital] = useState(10000);
   const [rangeStart, setRangeStart] = useState("02:00");
   const [rangeEnd, setRangeEnd] = useState("06:00");
+  const [triggerDeadline, setTriggerDeadline] = useState("12:00");
 
   function handleRunBacktest(config: BacktestFormValues) {
     setInitialCapital(config.initialCapital);
     setRangeStart(config.rangeStart);
     setRangeEnd(config.rangeEnd);
+    setTriggerDeadline(config.triggerDeadline);
     runBacktestStream(config);
   }
 
@@ -78,8 +80,10 @@ export default function BacktestPage() {
             initialCapital={initialCapital}
             rangeStart={rangeStart}
             rangeEnd={rangeEnd}
+            triggerDeadline={triggerDeadline}
             progress={progress}
             isStreaming={isStreaming}
+            newsDates={newsDates}
           />
         </div>
       </div>

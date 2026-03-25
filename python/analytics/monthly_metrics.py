@@ -22,8 +22,8 @@ def monthly_r_breakdown(trades: List[Trade]) -> List[MonthlyR]:
     if not trades:
         return []
 
-    # month_key -> (sum_r, count, has_valid_r)
-    monthly: Dict[str, Tuple[float, int]] = defaultdict(lambda: [0.0, 0])
+    # month_key -> [sum_r, count, win_count, sum_loss_pips, loss_count]
+    monthly: Dict[str, list] = defaultdict(lambda: [0.0, 0, 0, 0.0, 0])
 
     for t in trades:
         month_key = t.exit_time.strftime("%Y-%m")
@@ -31,15 +31,25 @@ def monthly_r_breakdown(trades: List[Trade]) -> List[MonthlyR]:
         monthly[month_key][1] += 1
         if r is not None:
             monthly[month_key][0] += r
+        # Win/loss tracking based on pnl_pips
+        if t.pnl_pips >= 0:
+            monthly[month_key][2] += 1
+        else:
+            monthly[month_key][3] += abs(t.pnl_pips)
+            monthly[month_key][4] += 1
 
     result = []
     for month_key in sorted(monthly.keys()):
-        r_sum, count = monthly[month_key]
+        r_sum, count, win_count, sum_loss_pips, loss_count = monthly[month_key]
+        win_rate = (win_count / count * 100) if count > 0 else 0.0
+        avg_loss = (sum_loss_pips / loss_count) if loss_count > 0 else None
         result.append(
             MonthlyR(
                 month=month_key,
                 r_earned=round(r_sum, 4),
                 trade_count=count,
+                win_rate_pct=round(win_rate, 1),
+                avg_loss_pips=round(avg_loss, 1) if avg_loss is not None else None,
             )
         )
 

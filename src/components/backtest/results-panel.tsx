@@ -33,8 +33,10 @@ interface ResultsPanelProps {
   initialCapital: number;
   rangeStart: string;
   rangeEnd: string;
+  triggerDeadline?: string;
   progress?: BacktestProgress | null;
   isStreaming?: boolean;
+  newsDates?: string[];
 }
 
 function EmptyState() {
@@ -162,8 +164,10 @@ export function ResultsPanel({
   initialCapital,
   rangeStart,
   rangeEnd,
+  triggerDeadline,
   progress,
   isStreaming,
+  newsDates,
 }: ResultsPanelProps) {
   if (status === "loading") {
     return <LoadingState isTimedOut={isTimedOut} onCancel={onCancel} progress={progress} isStreaming={isStreaming} />;
@@ -216,6 +220,8 @@ export function ResultsPanel({
             timeframe={result.timeframe}
             rangeStart={rangeStart}
             rangeEnd={rangeEnd}
+            triggerDeadline={triggerDeadline}
+            newsDates={newsDates}
           />
         </TabsContent>
       </Tabs>

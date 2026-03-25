@@ -26,14 +26,18 @@ class MonthlyR:
     """R earned in a single calendar month.
 
     Attributes:
-        month:       "YYYY-MM" string.
-        r_earned:    Sum of R-multiples for trades exiting in this month.
-        trade_count: Number of trades exiting in this month.
+        month:          "YYYY-MM" string.
+        r_earned:       Sum of R-multiples for trades exiting in this month.
+        trade_count:    Number of trades exiting in this month.
+        win_rate_pct:   Percentage of winning trades (0-100).
+        avg_loss_pips:  Average absolute loss in pips for losing trades (MAE proxy).
     """
 
     month: str
     r_earned: Optional[float]
     trade_count: int
+    win_rate_pct: float = 0.0
+    avg_loss_pips: Optional[float] = None
 
 
 @dataclass
