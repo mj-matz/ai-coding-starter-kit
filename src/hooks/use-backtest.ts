@@ -2,8 +2,8 @@
 
 import { useState, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { BacktestFormValues, BacktestResult } from "@/lib/backtest-types";
 import { getCurrenciesForInstrument } from "@/lib/instrument-currencies";
+import type { BacktestFormValues, BacktestResult } from "@/lib/backtest-types";
 
 export type BacktestStatus = "idle" | "loading" | "success" | "error";
 
@@ -21,6 +21,7 @@ interface UseBacktestReturn {
   progress: BacktestProgress | null;
   isStreaming: boolean;
   warnings: string[];
+  newsDates: string[];
   clearWarnings: () => void;
   runBacktest: (config: BacktestFormValues) => Promise<void>;
   runBacktestStream: (config: BacktestFormValues) => Promise<void>;
@@ -37,6 +38,7 @@ export function useBacktest(): UseBacktestReturn {
   const [progress, setProgress] = useState<BacktestProgress | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [newsDates, setNewsDates] = useState<string[]>([]);
 
   const clearWarnings = useCallback(() => setWarnings([]), []);
 
@@ -53,6 +55,7 @@ export function useBacktest(): UseBacktestReturn {
     setIsTimedOut(false);
     setProgress(null);
     setIsStreaming(false);
+    setNewsDates([]);
   }, []);
 
   const runBacktest = useCallback(
@@ -141,21 +144,22 @@ export function useBacktest(): UseBacktestReturn {
       try {
         const supabase = createClient();
 
-        // Resolve news dates from Supabase when the user wants to skip news days
-        let newsDates: string[] | undefined;
-        if (!config.tradeNewsDays) {
-          const currencies = getCurrenciesForInstrument(config.symbol);
-          const { data } = await supabase
-            .from("economic_calendar")
-            .select("date")
-            .gte("date", config.startDate)
-            .lte("date", config.endDate)
-            .eq("impact", "High")
-            .in("currency", currencies);
-          newsDates = [...new Set((data ?? []).map((r: { date: string }) => r.date))];
-        }
+        // Always fetch news dates: needed for badge display + optional filter
+        const currencies = getCurrenciesForInstrument(config.symbol);
+        const { data: newsData } = await supabase
+          .from("economic_calendar")
+          .select("date")
+          .gte("date", config.startDate)
+          .lte("date", config.endDate)
+          .eq("impact", "High")
+          .in("currency", currencies);
+        const resolvedNewsDates = [...new Set((newsData ?? []).map((r: { date: string }) => r.date))];
+        setNewsDates(resolvedNewsDates);
 
-        const payload = newsDates ? { ...config, newsDates } : config;
+        // Include in payload only when FastAPI should filter them out
+        const payload = !config.tradeNewsDays
+          ? { ...config, newsDates: resolvedNewsDates }
+          : config;
 
         const response = await fetch("/api/backtest/stream", {
           method: "POST",
@@ -266,6 +270,7 @@ export function useBacktest(): UseBacktestReturn {
     progress,
     isStreaming,
     warnings,
+    newsDates,
     clearWarnings,
     runBacktest,
     runBacktestStream,

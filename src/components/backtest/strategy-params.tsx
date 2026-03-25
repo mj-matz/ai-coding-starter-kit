@@ -5,6 +5,8 @@ import { Clock, ChevronDown, ChevronRight } from "lucide-react";
 import { type UseFormReturn } from "react-hook-form";
 
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { cn } from "@/lib/utils";
 import {
   Collapsible,
   CollapsibleContent,
@@ -207,6 +209,81 @@ function TimeRangeBreakoutParams({
         </CollapsibleTrigger>
 
         <CollapsibleContent className="mt-3 space-y-4">
+          {/* Trading Days */}
+          <FormField
+            control={form.control}
+            name="tradingDays"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-gray-300">Handelstage</FormLabel>
+                <FormControl>
+                  <div className="flex gap-1.5">
+                    {(
+                      [
+                        { label: "Mo", value: 0 },
+                        { label: "Di", value: 1 },
+                        { label: "Mi", value: 2 },
+                        { label: "Do", value: 3 },
+                        { label: "Fr", value: 4 },
+                      ] as const
+                    ).map((day) => {
+                      const selected = (field.value as number[]).includes(day.value);
+                      return (
+                        <button
+                          key={day.value}
+                          type="button"
+                          onClick={() => {
+                            const current = field.value as number[];
+                            if (selected) {
+                              if (current.length > 1) {
+                                field.onChange(current.filter((d) => d !== day.value));
+                              }
+                            } else {
+                              field.onChange([...current, day.value].sort((a, b) => a - b));
+                            }
+                          }}
+                          aria-pressed={selected}
+                          className={cn(
+                            "flex-1 rounded-md py-1.5 text-xs font-medium transition-colors",
+                            selected
+                              ? "bg-white text-black"
+                              : "border border-white/10 bg-black/20 text-gray-400 hover:text-gray-200"
+                          )}
+                        >
+                          {day.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          {/* News-Tage */}
+          <FormField
+            control={form.control}
+            name="tradeNewsDays"
+            render={({ field }) => (
+              <FormItem>
+                <div className="flex items-center gap-2">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                      className="border-white/20 data-[state=checked]:bg-white data-[state=checked]:text-black"
+                    />
+                  </FormControl>
+                  <FormLabel className="cursor-pointer text-gray-300">
+                    Handel an News-Tagen
+                  </FormLabel>
+                </div>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
           <div className="grid grid-cols-2 gap-4">
             <FormField
               control={form.control}

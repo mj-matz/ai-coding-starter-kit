@@ -28,6 +28,10 @@ A personal web-based backtesting platform for systematic trading strategies. The
 | P1 | Cache Warming (Background Prefetch) | Planned |
 | P1 | Intra-Bar Accuracy (Entry-Bar SL/TP + 1-Second Hybrid) | Planned |
 | P2 | Chart Screenshot Share | Planned |
+| P1 | Strategy Optimizer (Step-by-Step Parameter Optimization) | Planned |
+| P1 | SMC Price Action Strategy (Market Structure, BoS, S&D, FVG) | Planned |
+| P2 | AI Strategy Generator (Text + Screenshot → Backtest) | Planned |
+| P2 | MQL Converter (MQL4/MQL5 EA → Python Backtest) | Planned |
 
 ## Success Metrics
 - Backtesting engine produces identical results on repeated runs (deterministic)

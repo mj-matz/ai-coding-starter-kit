@@ -34,6 +34,9 @@ const BacktestRequestSchema = z
     entryDelayBars: z.number().int().min(0).default(1),
     trailTriggerPips: z.number().positive().optional(),
     trailLockPips: z.number().positive().optional(),
+    tradingDays: z.array(z.number().int().min(0).max(4)).min(1).default([0, 1, 2, 3, 4]),
+    tradeNewsDays: z.boolean().default(true),
+    newsDates: z.array(z.string()).optional(),
     gapFill: z.boolean().default(false),
   })
   .refine((data) => new Date(data.endDate) > new Date(data.startDate), {
