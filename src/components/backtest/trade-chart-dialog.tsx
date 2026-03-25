@@ -452,11 +452,11 @@ export function TradeChartDialog({
 
     const barSec = timeframeToSeconds(timeframe);
     if (trade != null) {
-      // Trade chart: entry – exit+30 bars on open; full day accessible on zoom-out
-      const eUtc = Math.floor(new Date(trade.entry_time).getTime() / 1000);
-      const xUtc = Math.floor(new Date(trade.exit_time).getTime() / 1000);
+      // Trade chart: show from rangeStart (range box visible) to exit+30 bars
+      const rsUtc = rangeStart ? buildLocalTimestamp(trade.entry_time, rangeStart) : Math.floor(new Date(trade.entry_time).getTime() / 1000);
+      const xUtc  = Math.floor(new Date(trade.exit_time).getTime() / 1000);
       chart.timeScale().setVisibleRange({
-        from: toChartTime(eUtc - 2 * barSec),
+        from: toChartTime(rsUtc - 5 * barSec),
         to:   toChartTime(xUtc + 30 * barSec),
       });
     } else if (skippedDay != null && rangeStart && triggerDeadline) {

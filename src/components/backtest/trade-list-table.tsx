@@ -33,8 +33,7 @@ type SortDir = "asc" | "desc";
 
 type Row =
   | { kind: "trade"; data: TradeRecord }
-  | { kind: "skipped"; data: SkippedDay }
-  | { kind: "weekend"; date: string };
+  | { kind: "skipped"; data: SkippedDay };
 
 const PAGE_SIZE = 50;
 
@@ -48,26 +47,6 @@ function getWeekday(dateStr: string): string {
   }
 }
 
-// Format a Date as local YYYY-MM-DD (avoids UTC offset shifting from toISOString)
-function localDateStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-// Returns the Monday of the week containing dateStr, as local YYYY-MM-DD
-function getWeekMonday(dateStr: string): string {
-  try {
-    const d = parseISO(dateStr);
-    const dayOfWeek = d.getDay(); // 0=So, 1=Mo, ..., 6=Sa
-    const monday = new Date(d);
-    monday.setDate(d.getDate() - ((dayOfWeek + 6) % 7));
-    return localDateStr(monday);
-  } catch {
-    return dateStr;
-  }
-}
 
 function formatDateTime(dateStr: string): string {
   try {
@@ -148,40 +127,12 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, r
       ? skippedDays.map((s) => ({ kind: "skipped", data: s }))
       : [];
 
-    const combined = [...tradeRows, ...skippedRows].sort((a, b) => {
-      const dateA = a.kind === "trade" ? a.data.entry_time : a.kind === "skipped" ? a.data.date : a.date;
-      const dateB = b.kind === "trade" ? b.data.entry_time : b.kind === "skipped" ? b.data.date : b.date;
+    return [...tradeRows, ...skippedRows].sort((a, b) => {
+      const dateA = a.kind === "trade" ? a.data.entry_time : a.data.date;
+      const dateB = b.kind === "trade" ? b.data.entry_time : b.data.date;
       const cmp = dateA.localeCompare(dateB);
       return sortDir === "asc" ? cmp : -cmp;
     });
-
-    // Insert weekend rows between calendar weeks
-    const withWeekends: Row[] = [];
-    let lastMonday: string | null = null;
-    for (const row of combined) {
-      const dateStr = row.kind === "trade" ? row.data.entry_time : row.kind === "skipped" ? row.data.date : row.date;
-      const monday = getWeekMonday(dateStr);
-      if (lastMonday !== null && monday !== lastMonday) {
-        // Insert Sa and So for the previous week.
-        // Parse lastMonday at local noon to avoid DST/UTC-offset issues.
-        const prevMonday = new Date(`${lastMonday}T12:00:00`);
-        const sat = new Date(prevMonday);
-        sat.setDate(prevMonday.getDate() + 5);
-        const sun = new Date(prevMonday);
-        sun.setDate(prevMonday.getDate() + 6);
-        if (sortDir === "asc") {
-          withWeekends.push({ kind: "weekend", date: localDateStr(sat) });
-          withWeekends.push({ kind: "weekend", date: localDateStr(sun) });
-        } else {
-          withWeekends.push({ kind: "weekend", date: localDateStr(sun) });
-          withWeekends.push({ kind: "weekend", date: localDateStr(sat) });
-        }
-      }
-      lastMonday = monday;
-      withWeekends.push(row);
-    }
-
-    return withWeekends;
   }, [sortedTrades, skippedDays, sortField, sortDir, showNoTrade]);
 
   const totalPages = Math.ceil(mergedRows.length / PAGE_SIZE);
@@ -295,24 +246,6 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, r
           </TableHeader>
           <TableBody>
             {paginatedRows.map((row) => {
-              if (row.kind === "weekend") {
-                const dayName = DE_WEEKDAY[parseISO(row.date).getDay()];
-                return (
-                  <TableRow
-                    key={`weekend-${row.date}`}
-                    className="border-white/5 hover:bg-transparent opacity-30"
-                  >
-                    <TableCell className="text-slate-700 py-1">—</TableCell>
-                    <TableCell className="whitespace-nowrap text-xs text-slate-600 py-1">
-                      {formatDateShort(row.date)}{" "}
-                      <span className="font-medium">{dayName}</span>
-                    </TableCell>
-                    <TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" />
-                    <TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" /><TableCell className="py-1" />
-                  </TableRow>
-                );
-              }
-
               if (row.kind === "skipped") {
                 const s = row.data;
                 const isTriggerExpired = s.reason === "TRIGGER_EXPIRED";
@@ -329,8 +262,8 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, r
                   >
                     <TableCell className="text-slate-500">—</TableCell>
                     <TableCell className="whitespace-nowrap text-sm text-slate-500">
-                      {formatDateShort(s.date)}{" "}
-                      <span className="text-slate-600 font-medium text-xs">{weekday}</span>
+                      <span className="text-slate-600 font-medium text-xs mr-1">{weekday}</span>
+                      {formatDateShort(s.date)}
                     </TableCell>
                     <TableCell />
                     <TableCell>
@@ -378,8 +311,8 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, r
                 >
                   <TableCell className="text-slate-500">{trade.id}</TableCell>
                   <TableCell className="whitespace-nowrap text-sm text-slate-200">
-                    {formatDateTime(trade.entry_time)}{" "}
-                    <span className="text-slate-500 font-medium text-xs">{weekday}</span>
+                    <span className="text-slate-500 font-medium text-xs mr-1">{weekday}</span>
+                    {formatDateTime(trade.entry_time)}
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-sm text-slate-400">
                     {formatTimeOnly(trade.exit_time)}
@@ -455,7 +388,7 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, r
                         </Badge>
                       )}
                       {newsDatesSet.has(trade.entry_time.split("T")[0]) && (
-                        <Badge className="bg-yellow-500/20 text-yellow-300 border-0 hover:bg-yellow-500/20 text-[10px] px-1 py-0">
+                        <Badge className="bg-white/10 text-slate-400 border-0 hover:bg-white/10 text-[10px] px-1 py-0">
                           News-Tag
                         </Badge>
                       )}
