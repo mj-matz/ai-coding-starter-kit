@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
+import { createClient } from "@/lib/supabase/client";
 import type { BacktestFormValues, BacktestResult } from "@/lib/backtest-types";
 
 export type BacktestStatus = "idle" | "loading" | "success" | "error";
@@ -137,9 +138,25 @@ export function useBacktest(): UseBacktestReturn {
       }, TIMEOUT_WARNING_MS);
 
       try {
-        const response = await fetch("/api/backtest/stream", {
+        // Connect directly to FastAPI to bypass Vercel proxy buffering.
+        // FastAPI verifies the JWT independently — security is maintained.
+        const fastapiUrl = process.env.NEXT_PUBLIC_FASTAPI_URL;
+        if (!fastapiUrl) {
+          throw new Error("NEXT_PUBLIC_FASTAPI_URL is not configured");
+        }
+
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          throw new Error("Not authenticated");
+        }
+
+        const response = await fetch(`${fastapiUrl}/backtest/stream`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${session.access_token}`,
+          },
           body: JSON.stringify(config),
           signal: controller.signal,
         });
