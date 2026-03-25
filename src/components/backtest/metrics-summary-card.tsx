@@ -313,7 +313,7 @@ export function MetricsSummaryCard({ metrics, monthlyR }: MetricsSummaryCardProp
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 50px 70px 80px",
+              gridTemplateColumns: "1fr 50px 65px 65px 80px",
               gap: "8px",
               padding: "0 0 6px 0",
               borderBottom: "1px solid rgba(255,255,255,0.08)",
@@ -323,6 +323,7 @@ export function MetricsSummaryCard({ metrics, monthlyR }: MetricsSummaryCardProp
             <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.3)" }}>Monat</span>
             <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.3)", textAlign: "right" }}>Trades</span>
             <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.3)", textAlign: "right" }}>Winrate</span>
+            <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.3)", textAlign: "right" }}>Ø MAE</span>
             <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.3)", textAlign: "right" }}>R</span>
           </div>
           {monthlyR.map((row) => (
@@ -330,7 +331,7 @@ export function MetricsSummaryCard({ metrics, monthlyR }: MetricsSummaryCardProp
               key={row.month}
               style={{
                 display: "grid",
-                gridTemplateColumns: "1fr 50px 70px 80px",
+                gridTemplateColumns: "1fr 50px 65px 65px 80px",
                 gap: "8px",
                 alignItems: "center",
                 padding: "5px 0",
@@ -351,6 +352,9 @@ export function MetricsSummaryCard({ metrics, monthlyR }: MetricsSummaryCardProp
                 }}
               >
                 {(row.win_rate_pct ?? 0).toFixed(0)}%
+              </span>
+              <span style={{ fontSize: "12px", textAlign: "right", color: "rgba(244,63,94,0.8)" }}>
+                {row.avg_mae_pips != null ? `-${row.avg_mae_pips.toFixed(0)}p` : "—"}
               </span>
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 {row.r_earned != null ? (

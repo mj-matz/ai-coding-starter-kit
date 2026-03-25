@@ -424,6 +424,7 @@ class MonthlyRResponse(BaseModel):
     trade_count: int
     win_rate_pct: float = 0.0
     avg_loss_pips: Optional[float] = None
+    avg_mae_pips: Optional[float] = None
 
 
 class AnalyticsResponse(BaseModel):
@@ -604,6 +605,9 @@ async def backtest_run(
                     month=mr.month,
                     r_earned=mr.r_earned,
                     trade_count=mr.trade_count,
+                    win_rate_pct=mr.win_rate_pct,
+                    avg_loss_pips=mr.avg_loss_pips,
+                    avg_mae_pips=mr.avg_mae_pips,
                 )
                 for mr in analytics_result.monthly_r
             ],
@@ -1258,6 +1262,7 @@ async def backtest_orchestrate(
             trade_count=mr.trade_count,
             win_rate_pct=mr.win_rate_pct,
             avg_loss_pips=mr.avg_loss_pips,
+            avg_mae_pips=mr.avg_mae_pips,
         )
         for mr in analytics_result.monthly_r
     ]
@@ -1659,6 +1664,7 @@ async def backtest_stream(
                 trade_count=mr.trade_count,
                 win_rate_pct=mr.win_rate_pct,
                 avg_loss_pips=mr.avg_loss_pips,
+                avg_mae_pips=mr.avg_mae_pips,
             )
             for mr in analytics_result.monthly_r
         ]

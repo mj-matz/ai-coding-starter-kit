@@ -170,6 +170,7 @@ export interface MonthlyR {
   trade_count: number;
   win_rate_pct: number;
   avg_loss_pips: number | null;
+  avg_mae_pips: number | null;
 }
 
 export interface EquityCurvePoint {

@@ -38,6 +38,7 @@ class MonthlyR:
     trade_count: int
     win_rate_pct: float = 0.0
     avg_loss_pips: Optional[float] = None
+    avg_mae_pips: Optional[float] = None
 
 
 @dataclass

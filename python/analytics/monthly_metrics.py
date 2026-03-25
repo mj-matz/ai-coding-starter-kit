@@ -22,8 +22,8 @@ def monthly_r_breakdown(trades: List[Trade]) -> List[MonthlyR]:
     if not trades:
         return []
 
-    # month_key -> [sum_r, count, win_count, sum_loss_pips, loss_count]
-    monthly: Dict[str, list] = defaultdict(lambda: [0.0, 0, 0, 0.0, 0])
+    # month_key -> [sum_r, count, win_count, sum_loss_pips, loss_count, sum_mae_pips, mae_count]
+    monthly: Dict[str, list] = defaultdict(lambda: [0.0, 0, 0, 0.0, 0, 0.0, 0])
 
     for t in trades:
         month_key = t.exit_time.strftime("%Y-%m")
@@ -37,12 +37,17 @@ def monthly_r_breakdown(trades: List[Trade]) -> List[MonthlyR]:
         else:
             monthly[month_key][3] += abs(t.pnl_pips)
             monthly[month_key][4] += 1
+        # MAE tracking
+        if hasattr(t, "mae_pips") and t.mae_pips > 0:
+            monthly[month_key][5] += t.mae_pips
+            monthly[month_key][6] += 1
 
     result = []
     for month_key in sorted(monthly.keys()):
-        r_sum, count, win_count, sum_loss_pips, loss_count = monthly[month_key]
+        r_sum, count, win_count, sum_loss_pips, loss_count, sum_mae_pips, mae_count = monthly[month_key]
         win_rate = (win_count / count * 100) if count > 0 else 0.0
         avg_loss = (sum_loss_pips / loss_count) if loss_count > 0 else None
+        avg_mae = (sum_mae_pips / mae_count) if mae_count > 0 else None
         result.append(
             MonthlyR(
                 month=month_key,
@@ -50,6 +55,7 @@ def monthly_r_breakdown(trades: List[Trade]) -> List[MonthlyR]:
                 trade_count=count,
                 win_rate_pct=round(win_rate, 1),
                 avg_loss_pips=round(avg_loss, 1) if avg_loss is not None else None,
+                avg_mae_pips=round(avg_mae, 0) if avg_mae is not None else None,
             )
         )
 

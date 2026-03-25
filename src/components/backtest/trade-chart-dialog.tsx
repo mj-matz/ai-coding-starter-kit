@@ -133,11 +133,14 @@ export function TradeChartDialog({
     const params = new URLSearchParams({ cache_id: cacheId, timeframe });
 
     if (trade != null) {
-      // Use end-of-day as exit window so candles for the full trading day are visible
+      // Load from 14:00 so candles before rangeStart are available on zoom-out
+      const dayStartIso = new Date(
+        buildLocalTimestamp(trade.entry_time, "14:00") * 1000
+      ).toISOString();
       const endOfDayIso = new Date(
         buildLocalTimestamp(trade.entry_time, "23:59") * 1000
       ).toISOString();
-      params.set("entry_time", trade.entry_time);
+      params.set("entry_time", dayStartIso);
       params.set("exit_time", endOfDayIso);
       if (rangeStart) {
         const rangeStartIso = new Date(
@@ -456,7 +459,7 @@ export function TradeChartDialog({
       const rsUtc = rangeStart ? buildLocalTimestamp(trade.entry_time, rangeStart) : Math.floor(new Date(trade.entry_time).getTime() / 1000);
       const xUtc  = Math.floor(new Date(trade.exit_time).getTime() / 1000);
       chart.timeScale().setVisibleRange({
-        from: toChartTime(rsUtc - 5 * barSec),
+        from: toChartTime(rsUtc - 10 * barSec),
         to:   toChartTime(xUtc + 30 * barSec),
       });
     } else if (skippedDay != null && rangeStart && triggerDeadline) {

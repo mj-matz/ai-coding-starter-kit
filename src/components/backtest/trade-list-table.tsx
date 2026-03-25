@@ -261,8 +261,8 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, r
                     onClick={isTriggerExpired ? () => openSkippedChart(s) : undefined}
                   >
                     <TableCell className="text-slate-500">—</TableCell>
-                    <TableCell className="whitespace-nowrap text-sm text-slate-500">
-                      <span className="text-slate-600 font-medium text-xs mr-1">{weekday}</span>
+                    <TableCell className={`whitespace-nowrap text-sm ${isTriggerExpired ? "text-slate-200" : "text-slate-500"}`}>
+                      <span className={`font-medium text-xs mr-1 ${isTriggerExpired ? "text-slate-400" : "text-slate-600"}`}>{weekday}</span>
                       {formatDateShort(s.date)}
                     </TableCell>
                     <TableCell />
