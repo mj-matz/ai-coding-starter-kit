@@ -227,6 +227,7 @@ function RunDetailView({ run, onBack }: RunDetailViewProps) {
           <TradeListTable
             trades={trades}
             skippedDays={[]}
+            symbol={run.asset}
             timeframe={(config?.timeframe as string) ?? "1m"}
             rangeStart={rangeStart}
             rangeEnd={rangeEnd}

@@ -1795,6 +1795,99 @@ async def get_trade_candles(
     ]
 
 
+@app.get("/backtest/candles/by-symbol", response_model=List[CandleOut])
+async def get_trade_candles_by_symbol(
+    symbol: str,
+    timeframe: str,
+    entry_time: str,
+    exit_time: str,
+    range_start_time: Optional[str] = None,
+    token: dict = Depends(verify_jwt),
+):
+    """
+    Return OHLCV candles for a single trade window without requiring a cache_id.
+
+    Looks up an existing cache entry that covers the trade's date by symbol and
+    timeframe. Intended for the History view where no live cache_id is available.
+    """
+    user_id: str = token["sub"]
+
+    buffer = _CANDLE_BUFFER.get(timeframe)
+    if buffer is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported timeframe '{timeframe}'. Supported: {', '.join(_CANDLE_BUFFER)}",
+        )
+
+    try:
+        entry_dt = pd.Timestamp(entry_time).tz_convert("UTC")
+        exit_dt = pd.Timestamp(exit_time).tz_convert("UTC")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid entry_time or exit_time (must be ISO 8601)")
+
+    trade_date = entry_dt.date()
+
+    # Find any cache entry for this symbol+timeframe that covers the trade date
+    from services.cache_service import _get_supabase_client
+
+    try:
+        client = _get_supabase_client()
+        resp = (
+            client.table("data_cache")
+            .select("file_path")
+            .eq("symbol", symbol.upper())
+            .eq("timeframe", timeframe)
+            .lte("date_from", trade_date.isoformat())
+            .gte("date_to", trade_date.isoformat())
+            .limit(1)
+            .execute()
+        )
+    except Exception as e:
+        logger.error(f"Supabase lookup failed for symbol={symbol}, timeframe={timeframe}: {e}")
+        raise HTTPException(status_code=502, detail="Failed to query data cache.")
+
+    if not resp.data:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No cached data found for {symbol}/{timeframe} covering {trade_date}. "
+                   "Run a backtest for this period first to populate the cache.",
+        )
+
+    try:
+        df = load_cached_data(resp.data[0]["file_path"])
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Parquet file not found on disk.")
+    except Exception as e:
+        logger.error(f"Parquet load error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to load data.")
+
+    if "datetime" in df.columns:
+        df = df.set_index("datetime")
+    df.index = pd.to_datetime(df.index, utc=True)
+    df.columns = [c.lower() for c in df.columns]
+
+    window_start = entry_dt - buffer
+    if range_start_time:
+        try:
+            range_start_dt = pd.Timestamp(range_start_time).tz_convert("UTC")
+            window_start = min(window_start, range_start_dt)
+        except Exception:
+            pass
+    window_end = exit_dt + buffer
+    candle_df = df.loc[(df.index >= window_start) & (df.index <= window_end)]
+
+    return [
+        CandleOut(
+            time=int(ts.timestamp()),
+            open=float(row["open"]),
+            high=float(row["high"]),
+            low=float(row["low"]),
+            close=float(row["close"]),
+        )
+        for ts, row in candle_df.iterrows()
+    ]
+
+
 if __name__ == "__main__":
     import uvicorn
 

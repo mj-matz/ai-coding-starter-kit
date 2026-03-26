@@ -34,6 +34,8 @@ interface TradeChartDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   cacheId: string | undefined;
+  /** Symbol used when cacheId is unavailable (e.g. History view) */
+  symbol?: string;
   timeframe: string;
   rangeStart: string;   // HH:MM (local time)
   rangeEnd: string;     // HH:MM (local time)
@@ -90,6 +92,7 @@ export function TradeChartDialog({
   open,
   onOpenChange,
   cacheId,
+  symbol,
   timeframe,
   rangeStart,
   rangeEnd,
@@ -114,8 +117,9 @@ export function TradeChartDialog({
       ? `skipped-${skippedDay.date}`
       : null;
 
+  const canFetch = cacheId != null || symbol != null;
   const cacheHit = open && cacheKey != null && candleCache?.key === cacheKey;
-  const isLoadingCandles = open && cacheKey != null && cacheId != null && !cacheHit;
+  const isLoadingCandles = open && cacheKey != null && canFetch && !cacheHit;
   const candles = useMemo(
     () => (cacheHit ? (candleCache?.candles ?? []) : []),
     [cacheHit, candleCache]
@@ -124,13 +128,14 @@ export function TradeChartDialog({
 
   // Fetch candles on-demand
   useEffect(() => {
-    if (!open || cacheKey == null || !cacheId) return;
+    if (!open || cacheKey == null || !canFetch) return;
     if (candleCache?.key === cacheKey) return;
 
     const controller = new AbortController();
     const key = cacheKey;
 
-    const params = new URLSearchParams({ cache_id: cacheId, timeframe });
+    // Build shared time params
+    const timeParams = new URLSearchParams({ timeframe });
 
     if (trade != null) {
       // Load from 14:00 so candles before rangeStart are available on zoom-out
@@ -140,30 +145,39 @@ export function TradeChartDialog({
       const endOfDayIso = new Date(
         buildLocalTimestamp(trade.entry_time, "23:59") * 1000
       ).toISOString();
-      params.set("entry_time", dayStartIso);
-      params.set("exit_time", endOfDayIso);
+      timeParams.set("entry_time", dayStartIso);
+      timeParams.set("exit_time", endOfDayIso);
       if (rangeStart) {
         const rangeStartIso = new Date(
           buildLocalTimestamp(trade.entry_time, rangeStart) * 1000
         ).toISOString();
-        params.set("range_start_time", rangeStartIso);
+        timeParams.set("range_start_time", rangeStartIso);
       }
     } else if (skippedDay != null) {
-      // For skipped days: load from rangeStart to end of day
       const entryIso = new Date(
         buildLocalTimestamp(skippedDay.date, rangeStart) * 1000
       ).toISOString();
       const exitIso = new Date(
         buildLocalTimestamp(skippedDay.date, "23:59") * 1000
       ).toISOString();
-      params.set("entry_time", entryIso);
-      params.set("exit_time", exitIso);
+      timeParams.set("entry_time", entryIso);
+      timeParams.set("exit_time", exitIso);
       if (rangeStart) {
-        params.set("range_start_time", entryIso);
+        timeParams.set("range_start_time", entryIso);
       }
     }
 
-    fetch(`/api/backtest/candles?${params}`, { signal: controller.signal })
+    // Choose endpoint: cache_id path (live backtest) or symbol path (history)
+    let fetchUrl: string;
+    if (cacheId != null) {
+      timeParams.set("cache_id", cacheId);
+      fetchUrl = `/api/backtest/candles?${timeParams}`;
+    } else {
+      timeParams.set("symbol", symbol!);
+      fetchUrl = `/api/backtest/candles/by-symbol?${timeParams}`;
+    }
+
+    fetch(fetchUrl, { signal: controller.signal })
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -179,7 +193,7 @@ export function TradeChartDialog({
       });
 
     return () => controller.abort();
-  }, [open, trade, skippedDay, cacheId, timeframe, cacheKey, candleCache?.key, rangeStart]);
+  }, [open, trade, skippedDay, cacheId, symbol, canFetch, timeframe, cacheKey, candleCache?.key, rangeStart]);
 
   // Render chart once candles are available
   useEffect(() => {

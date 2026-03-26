@@ -21,6 +21,8 @@ interface TradeListTableProps {
   trades: TradeRecord[];
   skippedDays?: SkippedDay[];
   cacheId?: string;
+  /** Symbol for candle loading when cacheId is unavailable (e.g. History view) */
+  symbol?: string;
   timeframe: string;
   rangeStart: string;
   rangeEnd: string;
@@ -91,7 +93,7 @@ const REASON_LABELS: Record<string, string> = {
   TRIGGER_EXPIRED: "Trigger Deadline/Range",
 };
 
-export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, rangeStart, rangeEnd, triggerDeadline, newsDates }: TradeListTableProps) {
+export function TradeListTable({ trades, skippedDays = [], cacheId, symbol, timeframe, rangeStart, rangeEnd, triggerDeadline, newsDates }: TradeListTableProps) {
   const newsDatesSet = useMemo(() => new Set(newsDates ?? []), [newsDates]);
   const [sortField, setSortField] = useState<SortField>("entry_time");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -446,6 +448,7 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, timeframe, r
         open={chartOpen}
         onOpenChange={setChartOpen}
         cacheId={cacheId}
+        symbol={symbol}
         timeframe={timeframe}
         rangeStart={rangeStart}
         rangeEnd={rangeEnd}
