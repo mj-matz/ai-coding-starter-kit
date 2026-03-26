@@ -1377,6 +1377,52 @@ async def get_trade_candles(
     ]
 
 
+async def _fetch_df_for_date(source: str, symbol: str, timeframe: str, trade_date: date, user_id: str) -> pd.DataFrame:
+    """
+    Fetch OHLCV data for a single day from the appropriate source and save to cache.
+    Fetches trade_date and the next day to cover overnight positions.
+    Runs the synchronous fetchers in a thread pool so the event loop is not blocked.
+    """
+    fetch_from = trade_date
+    fetch_to = trade_date + timedelta(days=1)
+
+    loop = asyncio.get_event_loop()
+
+    if source == "dukascopy":
+        base_df = await loop.run_in_executor(
+            None, lambda: fetch_dukascopy(symbol, fetch_from, fetch_to)
+        )
+        df = base_df if timeframe == "1m" else resample_ohlcv(base_df, timeframe)
+    elif source == "yfinance":
+        df = await loop.run_in_executor(
+            None, lambda: fetch_yfinance(symbol, fetch_from, fetch_to, interval=timeframe)
+        )
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown source: {source}")
+
+    if df.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No data available for {symbol} on {trade_date} from {source}.",
+        )
+
+    # Persist so the next request can use the file directly
+    try:
+        save_to_cache(
+            df=df,
+            symbol=symbol,
+            source=source,
+            timeframe=timeframe,
+            date_from=fetch_from,
+            date_to=fetch_to,
+            created_by=user_id,
+        )
+    except Exception as e:
+        logger.warning(f"Could not persist re-fetched candles to cache: {e}")
+
+    return df
+
+
 @app.get("/backtest/candles/by-symbol", response_model=List[CandleOut])
 async def get_trade_candles_by_symbol(
     symbol: str,
@@ -1389,8 +1435,12 @@ async def get_trade_candles_by_symbol(
     """
     Return OHLCV candles for a single trade window without requiring a cache_id.
 
-    Looks up an existing cache entry that covers the trade's date by symbol and
-    timeframe. Intended for the History view where no live cache_id is available.
+    1. Looks up data_cache for a matching entry (symbol + timeframe + trade date).
+    2. If found and file exists on disk → serves from the Parquet file.
+    3. If found but file is missing (ephemeral disk wiped) → re-fetches the day
+       from the original source, saves back to cache, then serves candles.
+    4. If no cache entry at all → looks up the source from the instruments table,
+       fetches the day, saves to cache, then serves candles.
     """
     user_id: str = token["sub"]
 
@@ -1409,14 +1459,15 @@ async def get_trade_candles_by_symbol(
 
     trade_date = entry_dt.date()
 
-    # Find any cache entry for this symbol+timeframe that covers the trade date
     from services.cache_service import _get_supabase_client
+    from pathlib import Path as _Path
 
+    # ── Step 1: Look up a cache entry covering the trade date ─────────────────
     try:
         client = _get_supabase_client()
         resp = (
             client.table("data_cache")
-            .select("file_path")
+            .select("file_path, source")
             .eq("symbol", symbol.upper())
             .eq("timeframe", timeframe)
             .lte("date_from", trade_date.isoformat())
@@ -1428,21 +1479,54 @@ async def get_trade_candles_by_symbol(
         logger.error(f"Supabase lookup failed for symbol={symbol}, timeframe={timeframe}: {e}")
         raise HTTPException(status_code=502, detail="Failed to query data cache.")
 
-    if not resp.data:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No cached data found for {symbol}/{timeframe} covering {trade_date}. "
-                   "Run a backtest for this period first to populate the cache.",
-        )
+    df: pd.DataFrame | None = None
 
-    try:
-        df = load_cached_data(resp.data[0]["file_path"])
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Parquet file not found on disk.")
-    except Exception as e:
-        logger.error(f"Parquet load error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to load data.")
+    if resp.data:
+        entry = resp.data[0]
+        file_path = entry["file_path"]
+        source = entry["source"]
 
+        if _Path(file_path).exists():
+            # ── Step 2: Cache hit — load from disk ────────────────────────────
+            try:
+                df = load_cached_data(file_path)
+            except Exception as e:
+                logger.error(f"Parquet load error: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail="Failed to load data.")
+        else:
+            # ── Step 3: Stale entry — file was wiped, re-fetch ────────────────
+            logger.info(f"Parquet file missing for {symbol}/{timeframe}/{trade_date}, re-fetching from {source}")
+            # Remove stale DB entry first
+            try:
+                client.table("data_cache").delete().eq("file_path", file_path).execute()
+            except Exception:
+                pass
+            df = await _fetch_df_for_date(source, symbol.upper(), timeframe, trade_date, user_id)
+    else:
+        # ── Step 4: No cache entry — look up source from instruments table ────
+        try:
+            instr_resp = (
+                client.table("instruments")
+                .select("source")
+                .eq("symbol", symbol.upper())
+                .limit(1)
+                .execute()
+            )
+        except Exception as e:
+            logger.error(f"Instruments lookup failed for {symbol}: {e}")
+            raise HTTPException(status_code=502, detail="Failed to look up instrument.")
+
+        if not instr_resp.data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Symbol '{symbol}' not found. Run a backtest for this period first.",
+            )
+
+        source = instr_resp.data[0]["source"]
+        logger.info(f"No cache entry for {symbol}/{timeframe}/{trade_date}, fetching from {source}")
+        df = await _fetch_df_for_date(source, symbol.upper(), timeframe, trade_date, user_id)
+
+    # ── Slice the DataFrame to the candle window ──────────────────────────────
     if "datetime" in df.columns:
         df = df.set_index("datetime")
     df.index = pd.to_datetime(df.index, utc=True)
