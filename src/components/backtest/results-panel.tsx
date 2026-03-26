@@ -6,8 +6,6 @@ import {
   Loader2,
   Clock,
   BookmarkPlus,
-  FileDown,
-  FileSpreadsheet,
 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -25,7 +23,7 @@ import { Progress } from "@/components/ui/progress";
 
 import type { BacktestResult } from "@/lib/backtest-types";
 import type { BacktestStatus, BacktestProgress } from "@/hooks/use-backtest";
-import { useExportBacktest } from "@/hooks/use-export-backtest";
+
 
 interface ResultsPanelProps {
   status: BacktestStatus;
@@ -177,7 +175,6 @@ export function ResultsPanel({
   startDate = "",
   endDate = "",
 }: ResultsPanelProps) {
-  const { exportExcel, exportCsv, isExporting } = useExportBacktest();
   if (status === "loading") {
     return <LoadingState isTimedOut={isTimedOut} onCancel={onCancel} progress={progress} isStreaming={isStreaming} />;
   }
@@ -196,30 +193,6 @@ export function ResultsPanel({
 
   return (
     <div className="space-y-6">
-      {/* Export buttons */}
-      <div className="flex justify-end gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => exportExcel(result, startDate, endDate)}
-          disabled={isExporting}
-          className="border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
-        >
-          <FileSpreadsheet className="mr-2 h-4 w-4" />
-          Export Excel
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => exportCsv(result, startDate, endDate)}
-          disabled={isExporting}
-          className="border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
-        >
-          <FileDown className="mr-2 h-4 w-4" />
-          Export CSV
-        </Button>
-      </div>
-
       {/* Metrics Summary (always visible) */}
       <MetricsSummaryCard metrics={result.metrics} initialCapital={initialCapital} monthlyR={result.monthly_r} />
 
