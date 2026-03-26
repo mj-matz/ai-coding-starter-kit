@@ -37,7 +37,8 @@
 | PROJ-23 | Trading Day & News Day Filter | Deployed | [PROJ-23-trading-day-news-filter.md](PROJ-23-trading-day-news-filter.md) | 2026-03-25 |
 
 | PROJ-24 | Trade List & Results UI Enhancements | Deployed | [PROJ-24-trade-list-results-ui-enhancements.md](PROJ-24-trade-list-results-ui-enhancements.md) | 2026-03-25 |
+| PROJ-25 | Export Backtest Results (Excel / CSV) | Deployed | [PROJ-25-export-backtest-results.md](PROJ-25-export-backtest-results.md) | 2026-03-26 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-25
+## Next Available ID: PROJ-26
