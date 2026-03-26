@@ -1541,147 +1541,153 @@ async def backtest_stream(
             yield f"data: {json.dumps({'type': 'error', 'message': 'Analytics calculation failed.'})}\n\n"
             return
 
-        # Build response (same logic as /backtest)
-        m = {metric.name: metric.value for metric in analytics_result.summary}
+        # Build and yield result — wrapped so any unexpected error is sent as an error event
+        try:
+            # Build response (same logic as /backtest)
+            m = {metric.name: metric.value for metric in analytics_result.summary}
 
-        def _f(v, default: float = 0.0) -> float:
-            if v is None:
-                return default
-            try:
-                f = float(v)
-            except (TypeError, ValueError):
-                return default
-            return default if (f != f or f == float("inf")) else f
+            def _f(v, default: float = 0.0) -> float:
+                if v is None:
+                    return default
+                try:
+                    f = float(v)
+                except (TypeError, ValueError):
+                    return default
+                return default if (f != f or f == float("inf")) else f
 
-        cagr_val = _f(m.get("CAGR"))
-        dd_val = _f(m.get("Max Drawdown"))
-        calmar_val = round(cagr_val / abs(dd_val), 2) if dd_val != 0.0 else 0.0
+            cagr_val = _f(m.get("CAGR"))
+            dd_val = _f(m.get("Max Drawdown"))
+            calmar_val = round(cagr_val / abs(dd_val), 2) if dd_val != 0.0 else 0.0
 
-        metrics_out = BacktestMetricsOut(
-            total_return_pct=_f(m.get("Total Return")),
-            cagr_pct=cagr_val,
-            sharpe_ratio=_f(m.get("Sharpe Ratio")),
-            sortino_ratio=_f(m.get("Sortino Ratio")),
-            max_drawdown_pct=dd_val,
-            calmar_ratio=calmar_val,
-            longest_drawdown_days=_f(m.get("Max Drawdown Duration")),
-            total_trades=int(m.get("Total Trades") or 0),
-            winning_trades=int(m.get("Winning Trades") or 0),
-            losing_trades=int(m.get("Losing Trades") or 0),
-            win_rate_pct=_f(m.get("Win Rate")),
-            gross_profit=_f(m.get("Gross Profit")),
-            gross_loss=_f(m.get("Gross Loss")),
-            gross_profit_pips=_f(m.get("Gross Profit (Pips)")),
-            gross_loss_pips=_f(m.get("Gross Loss (Pips)")),
-            avg_win=_f(m.get("Avg Win")),
-            avg_loss=_f(m.get("Avg Loss")),
-            avg_win_pips=_f(m.get("Avg Win (Pips)")),
-            avg_loss_pips=_f(m.get("Avg Loss (Pips)")),
-            avg_win_loss_ratio=_f(m.get("Avg Win / Avg Loss")),
-            profit_factor=_f(m.get("Profit Factor (Pips)")),
-            avg_r_multiple=_f(m.get("Avg R per Trade")),
-            total_r=_f(m.get("Total R")),
-            avg_r_per_month=_f(m.get("Avg R per Month")),
-            expectancy_pips=_f(m.get("Expectancy (Pips)")),
-            best_trade=_f(m.get("Best Trade")),
-            worst_trade=_f(m.get("Worst Trade")),
-            consecutive_wins=int(m.get("Consecutive Wins") or 0),
-            consecutive_losses=int(m.get("Consecutive Losses") or 0),
-            avg_trade_duration_hours=_f(m.get("Avg Trade Duration")),
-            final_balance=result.final_balance,
-        )
-
-        equity_curve_out = [
-            EquityCurveOut(date=pt["time"], balance=pt["balance"])
-            for pt in result.equity_curve
-        ]
-
-        peak = result.initial_balance
-        drawdown_curve_out: list[DrawdownCurveOut] = []
-        for pt in result.equity_curve:
-            bal = pt["balance"]
-            if bal > peak:
-                peak = bal
-            dd_pct = round((bal - peak) / peak * 100, 4) if peak > 0 else 0.0
-            drawdown_curve_out.append(DrawdownCurveOut(date=pt["time"], drawdown_pct=dd_pct))
-
-        trades_out: list[TradeDetailOut] = []
-        for i, t in enumerate(result.trades):
-            duration_minutes = int((t.exit_time - t.entry_time).total_seconds() / 60)
-            direction_prefix = "long" if t.direction == "long" else "short"
-            entry_col = f"{direction_prefix}_entry"
-            sl_col = f"{direction_prefix}_sl"
-            tp_col = f"{direction_prefix}_tp"
-
-            signal_before_entry = signals_df.loc[:t.entry_time, entry_col].dropna()
-            if not signal_before_entry.empty:
-                sig_ts = signal_before_entry.index[-1]
-                range_high_val = float(signals_df.at[sig_ts, "long_entry"]) if pd.notna(signals_df.at[sig_ts, "long_entry"]) else 0.0
-                range_low_val = float(signals_df.at[sig_ts, "short_entry"]) if pd.notna(signals_df.at[sig_ts, "short_entry"]) else 0.0
-                entry_offset = breakout_params.entry_offset_pips * breakout_params.pip_size
-                range_high_val = range_high_val - entry_offset if range_high_val != 0.0 else 0.0
-                range_low_val = range_low_val + entry_offset if range_low_val != 0.0 else 0.0
-                stop_loss_val = float(signals_df.at[sig_ts, sl_col]) if pd.notna(signals_df.at[sig_ts, sl_col]) else 0.0
-                take_profit_val = float(signals_df.at[sig_ts, tp_col]) if pd.notna(signals_df.at[sig_ts, tp_col]) else 0.0
-            else:
-                range_high_val = 0.0
-                range_low_val = 0.0
-                stop_loss_val = 0.0
-                take_profit_val = 0.0
-
-            trades_out.append(TradeDetailOut(
-                id=i + 1,
-                entry_time=t.entry_time.isoformat(),
-                exit_time=t.exit_time.isoformat(),
-                direction=t.direction,
-                entry_price=t.entry_price,
-                exit_price=t.exit_price,
-                lot_size=t.lot_size,
-                pnl_pips=t.pnl_pips,
-                pnl_currency=t.pnl_currency,
-                r_multiple=_f(compute_r_multiple(t)),
-                exit_reason=t.exit_reason,
-                duration_minutes=duration_minutes,
-                entry_gap_pips=t.entry_gap_pips,
-                exit_gap=t.exit_gap,
-                used_1s_resolution=t.used_1s_resolution,
-                mae_pips=t.mae_pips,
-                range_high=range_high_val,
-                range_low=range_low_val,
-                stop_loss=stop_loss_val,
-                take_profit=take_profit_val,
-            ))
-
-        skipped_days_out = [
-            SkippedDayOut(date=sd.date, reason=sd.reason)
-            for sd in skipped_days
-        ]
-
-        monthly_r_out = [
-            MonthlyRResponse(
-                month=mr.month,
-                r_earned=mr.r_earned,
-                trade_count=mr.trade_count,
-                win_rate_pct=mr.win_rate_pct,
-                avg_loss_pips=mr.avg_loss_pips,
-                avg_mae_pips=mr.avg_mae_pips,
+            metrics_out = BacktestMetricsOut(
+                total_return_pct=_f(m.get("Total Return")),
+                cagr_pct=cagr_val,
+                sharpe_ratio=_f(m.get("Sharpe Ratio")),
+                sortino_ratio=_f(m.get("Sortino Ratio")),
+                max_drawdown_pct=dd_val,
+                calmar_ratio=calmar_val,
+                longest_drawdown_days=_f(m.get("Max Drawdown Duration")),
+                total_trades=int(m.get("Total Trades") or 0),
+                winning_trades=int(m.get("Winning Trades") or 0),
+                losing_trades=int(m.get("Losing Trades") or 0),
+                win_rate_pct=_f(m.get("Win Rate")),
+                gross_profit=_f(m.get("Gross Profit")),
+                gross_loss=_f(m.get("Gross Loss")),
+                gross_profit_pips=_f(m.get("Gross Profit (Pips)")),
+                gross_loss_pips=_f(m.get("Gross Loss (Pips)")),
+                avg_win=_f(m.get("Avg Win")),
+                avg_loss=_f(m.get("Avg Loss")),
+                avg_win_pips=_f(m.get("Avg Win (Pips)")),
+                avg_loss_pips=_f(m.get("Avg Loss (Pips)")),
+                avg_win_loss_ratio=_f(m.get("Avg Win / Avg Loss")),
+                profit_factor=_f(m.get("Profit Factor (Pips)")),
+                avg_r_multiple=_f(m.get("Avg R per Trade")),
+                total_r=_f(m.get("Total R")),
+                avg_r_per_month=_f(m.get("Avg R per Month")),
+                expectancy_pips=_f(m.get("Expectancy (Pips)")),
+                best_trade=_f(m.get("Best Trade")),
+                worst_trade=_f(m.get("Worst Trade")),
+                consecutive_wins=int(m.get("Consecutive Wins") or 0),
+                consecutive_losses=int(m.get("Consecutive Losses") or 0),
+                avg_trade_duration_hours=_f(m.get("Avg Trade Duration")),
+                final_balance=result.final_balance,
             )
-            for mr in analytics_result.monthly_r
-        ]
 
-        result_data = BacktestOrchestrationResponse(
-            metrics=metrics_out,
-            equity_curve=equity_curve_out,
-            drawdown_curve=drawdown_curve_out,
-            trades=trades_out,
-            skipped_days=skipped_days_out,
-            monthly_r=monthly_r_out,
-            cache_id=resolved_cache_id,
-            symbol=symbol,
-            timeframe=request.timeframe,
-        )
+            equity_curve_out = [
+                EquityCurveOut(date=pt["time"], balance=pt["balance"])
+                for pt in result.equity_curve
+            ]
 
-        yield f"data: {json.dumps({'type': 'result', 'data': result_data.model_dump()})}\n\n"
+            peak = result.initial_balance
+            drawdown_curve_out: list[DrawdownCurveOut] = []
+            for pt in result.equity_curve:
+                bal = pt["balance"]
+                if bal > peak:
+                    peak = bal
+                dd_pct = round((bal - peak) / peak * 100, 4) if peak > 0 else 0.0
+                drawdown_curve_out.append(DrawdownCurveOut(date=pt["time"], drawdown_pct=dd_pct))
+
+            trades_out: list[TradeDetailOut] = []
+            for i, t in enumerate(result.trades):
+                duration_minutes = int((t.exit_time - t.entry_time).total_seconds() / 60)
+                direction_prefix = "long" if t.direction == "long" else "short"
+                entry_col = f"{direction_prefix}_entry"
+                sl_col = f"{direction_prefix}_sl"
+                tp_col = f"{direction_prefix}_tp"
+
+                signal_before_entry = signals_df.loc[:t.entry_time, entry_col].dropna()
+                if not signal_before_entry.empty:
+                    sig_ts = signal_before_entry.index[-1]
+                    range_high_val = float(signals_df.at[sig_ts, "long_entry"]) if pd.notna(signals_df.at[sig_ts, "long_entry"]) else 0.0
+                    range_low_val = float(signals_df.at[sig_ts, "short_entry"]) if pd.notna(signals_df.at[sig_ts, "short_entry"]) else 0.0
+                    entry_offset = breakout_params.entry_offset_pips * breakout_params.pip_size
+                    range_high_val = range_high_val - entry_offset if range_high_val != 0.0 else 0.0
+                    range_low_val = range_low_val + entry_offset if range_low_val != 0.0 else 0.0
+                    stop_loss_val = float(signals_df.at[sig_ts, sl_col]) if pd.notna(signals_df.at[sig_ts, sl_col]) else 0.0
+                    take_profit_val = float(signals_df.at[sig_ts, tp_col]) if pd.notna(signals_df.at[sig_ts, tp_col]) else 0.0
+                else:
+                    range_high_val = 0.0
+                    range_low_val = 0.0
+                    stop_loss_val = 0.0
+                    take_profit_val = 0.0
+
+                trades_out.append(TradeDetailOut(
+                    id=i + 1,
+                    entry_time=t.entry_time.isoformat(),
+                    exit_time=t.exit_time.isoformat(),
+                    direction=t.direction,
+                    entry_price=t.entry_price,
+                    exit_price=t.exit_price,
+                    lot_size=t.lot_size,
+                    pnl_pips=t.pnl_pips,
+                    pnl_currency=t.pnl_currency,
+                    r_multiple=_f(compute_r_multiple(t)),
+                    exit_reason=t.exit_reason,
+                    duration_minutes=duration_minutes,
+                    entry_gap_pips=t.entry_gap_pips,
+                    exit_gap=t.exit_gap,
+                    used_1s_resolution=t.used_1s_resolution,
+                    mae_pips=t.mae_pips,
+                    range_high=range_high_val,
+                    range_low=range_low_val,
+                    stop_loss=stop_loss_val,
+                    take_profit=take_profit_val,
+                ))
+
+            skipped_days_out = [
+                SkippedDayOut(date=sd.date, reason=sd.reason)
+                for sd in skipped_days
+            ]
+
+            monthly_r_out = [
+                MonthlyRResponse(
+                    month=mr.month,
+                    r_earned=mr.r_earned,
+                    trade_count=mr.trade_count,
+                    win_rate_pct=mr.win_rate_pct,
+                    avg_loss_pips=mr.avg_loss_pips,
+                    avg_mae_pips=mr.avg_mae_pips,
+                )
+                for mr in analytics_result.monthly_r
+            ]
+
+            result_data = BacktestOrchestrationResponse(
+                metrics=metrics_out,
+                equity_curve=equity_curve_out,
+                drawdown_curve=drawdown_curve_out,
+                trades=trades_out,
+                skipped_days=skipped_days_out,
+                monthly_r=monthly_r_out,
+                cache_id=resolved_cache_id,
+                symbol=symbol,
+                timeframe=request.timeframe,
+            )
+
+            yield f"data: {json.dumps({'type': 'result', 'data': result_data.model_dump()})}\n\n"
+
+        except Exception as e:
+            logger.error(f"Result serialization error: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Result processing failed: {e}'})}\n\n"
 
     return StreamingResponse(
         event_stream(),
