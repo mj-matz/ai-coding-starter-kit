@@ -13,7 +13,7 @@ export function useExportBacktest() {
   ) {
     setIsExporting(true);
     try {
-      const XLSX = (await import("xlsx")).default;
+      const XLSX = await import("xlsx");
 
       // Sheet 1: Trades & Skipped Days — merged, sorted chronologically
       type TradeRow = {
@@ -127,10 +127,14 @@ export function useExportBacktest() {
         "Monthly Summary"
       );
 
-      XLSX.writeFile(
-        wb,
-        `backtest_${result.symbol}_${startDate}_${endDate}.xlsx`
-      );
+      const xlsxData = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      const blob = new Blob([xlsxData], { type: "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `backtest_${result.symbol}_${startDate}_${endDate}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
     } finally {
       setIsExporting(false);
     }
