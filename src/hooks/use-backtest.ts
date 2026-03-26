@@ -130,6 +130,7 @@ export function useBacktest(): UseBacktestReturn {
       abortControllerRef.current = controller;
 
       setStatus("loading");
+      setResult(null);
       setError(null);
       setIsTimedOut(false);
       setProgress(null);

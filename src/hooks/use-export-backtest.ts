@@ -35,9 +35,6 @@ export function useExportBacktest() {
         range_low: number | string;
         stop_loss: number | string;
         take_profit: number | string;
-        entry_gap_pips: number | string;
-        exit_gap: boolean | string;
-        used_1s_resolution: boolean | string;
         reason: string;
       };
 
@@ -60,9 +57,6 @@ export function useExportBacktest() {
         range_low: t.range_low,
         stop_loss: t.stop_loss,
         take_profit: t.take_profit,
-        entry_gap_pips: t.entry_gap_pips,
-        exit_gap: t.exit_gap,
-        used_1s_resolution: t.used_1s_resolution,
         reason: "",
       }));
 
@@ -85,9 +79,6 @@ export function useExportBacktest() {
         range_low: "",
         stop_loss: "",
         take_profit: "",
-        entry_gap_pips: "",
-        exit_gap: "",
-        used_1s_resolution: "",
         reason: s.reason,
       }));
 
@@ -166,9 +157,6 @@ export function useExportBacktest() {
         "range_low",
         "stop_loss",
         "take_profit",
-        "entry_gap_pips",
-        "exit_gap",
-        "used_1s_resolution",
         "reason",
       ];
 
@@ -195,9 +183,6 @@ export function useExportBacktest() {
           t.range_low,
           t.stop_loss,
           t.take_profit,
-          t.entry_gap_pips,
-          t.exit_gap,
-          t.used_1s_resolution,
           "",
         ],
       }));
@@ -208,9 +193,6 @@ export function useExportBacktest() {
           values: [
             "",
             s.date,
-            "",
-            "",
-            "",
             "",
             "",
             "",
