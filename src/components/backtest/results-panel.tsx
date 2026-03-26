@@ -57,8 +57,6 @@ function EmptyState() {
 interface LoadingStateProps {
   isTimedOut: boolean;
   onCancel: () => void;
-  progress?: BacktestProgress | null;
-  isStreaming?: boolean;
 }
 
 function LoadingState({ isTimedOut, onCancel }: LoadingStateProps) {
