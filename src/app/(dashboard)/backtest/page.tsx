@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, useMemo, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { ConfigurationPanel } from "@/components/backtest/configuration-panel";
 import { ResultsPanel } from "@/components/backtest/results-panel";
 import { useBacktest } from "@/hooks/use-backtest";
+import { useBacktestRuns } from "@/hooks/use-backtest-runs";
 import type { BacktestFormValues } from "@/lib/backtest-types";
 import {
   AlertDialog,
@@ -17,17 +19,34 @@ import {
 import { Button } from "@/components/ui/button";
 import { FileDown, FileSpreadsheet } from "lucide-react";
 import { useExportBacktest } from "@/hooks/use-export-backtest";
+import { useToast } from "@/hooks/use-toast";
 
-export default function BacktestPage() {
+function BacktestPageInner() {
+  const searchParams = useSearchParams();
+  const preloadConfig = useMemo(() => {
+    const raw = searchParams.get("config");
+    if (!raw) return undefined;
+    try {
+      return JSON.parse(raw) as BacktestFormValues;
+    } catch {
+      return undefined;
+    }
+  }, [searchParams]);
+
   const { status, result, error, isTimedOut, progress, isStreaming, warnings, newsDates, clearWarnings, runBacktestStream, cancel } =
     useBacktest();
   const { exportExcel, exportCsv, isExporting } = useExportBacktest();
+  const { saveRun, isSaving } = useBacktestRuns();
+  const { toast } = useToast();
   const [initialCapital, setInitialCapital] = useState(10000);
   const [rangeStart, setRangeStart] = useState("02:00");
   const [rangeEnd, setRangeEnd] = useState("06:00");
   const [triggerDeadline, setTriggerDeadline] = useState("12:00");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [symbol, setSymbol] = useState("XAUUSD");
+  const [strategy, setStrategy] = useState("time_range_breakout");
+  const [lastConfig, setLastConfig] = useState<BacktestFormValues | null>(null);
 
   function handleRunBacktest(config: BacktestFormValues) {
     setInitialCapital(config.initialCapital);
@@ -36,8 +55,44 @@ export default function BacktestPage() {
     setTriggerDeadline(config.triggerDeadline);
     setStartDate(config.startDate);
     setEndDate(config.endDate);
+    setSymbol(config.symbol);
+    setStrategy(config.strategy);
+    setLastConfig(config);
     runBacktestStream(config);
   }
+
+  const handleSaveRun = useCallback(
+    async (name: string) => {
+      if (!result || !lastConfig) return;
+      const saved = await saveRun({
+        name,
+        asset: symbol,
+        strategy,
+        config: lastConfig as unknown as Record<string, unknown>,
+        summary: {
+          metrics: result.metrics,
+          monthly_r: result.monthly_r,
+          skipped_days: result.skipped_days,
+          start_date: lastConfig.startDate,
+          end_date: lastConfig.endDate,
+        },
+        trade_log: result.trades as unknown as Record<string, unknown>[],
+        charts: {
+          equity_curve: result.equity_curve as unknown as Record<string, unknown>[],
+          drawdown_curve: result.drawdown_curve as unknown as Record<string, unknown>[],
+        },
+      });
+      if (saved) {
+        toast({
+          title: "Run gespeichert",
+          description: `"${saved.name}" wurde in deiner History gespeichert.`,
+        });
+      }
+    },
+    [result, lastConfig, symbol, strategy, saveRun, toast]
+  );
+
+  const defaultRunName = `${symbol} ${strategy} ${startDate}`;
 
   return (
     <>
@@ -100,6 +155,7 @@ export default function BacktestPage() {
           <ConfigurationPanel
             onSubmit={handleRunBacktest}
             isRunning={status === "loading"}
+            preloadConfig={preloadConfig}
           />
         </div>
 
@@ -120,10 +176,21 @@ export default function BacktestPage() {
             newsDates={newsDates}
             startDate={startDate}
             endDate={endDate}
+            onSaveRun={handleSaveRun}
+            isSaving={isSaving}
+            defaultRunName={defaultRunName}
           />
         </div>
       </div>
     </div>
     </>
+  );
+}
+
+export default function BacktestPage() {
+  return (
+    <Suspense>
+      <BacktestPageInner />
+    </Suspense>
   );
 }

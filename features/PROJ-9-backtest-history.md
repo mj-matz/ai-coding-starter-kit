@@ -1,6 +1,6 @@
 # PROJ-9: Backtest History
 
-## Status: Planned
+## Status: In Progress
 **Created:** 2026-03-10
 **Last Updated:** 2026-03-10
 
@@ -91,12 +91,15 @@ Datenbank-Tabelle `backtest_runs` in Supabase:
 | `id` | Eindeutige ID (automatisch) |
 | `user_id` | Welcher Benutzer hat diesen Run gespeichert |
 | `name` | Frei wählbarer Name, z.B. "XAUUSD 3.5R TP" |
-| `asset` | Das gehandelte Asset (z.B. "XAUUSD") |
-| `strategy` | Strategie-Name (z.B. "TimeRangeBreakout") |
-| `config` | Alle Einstellungen als kompaktes JSON-Objekt |
-| `summary` | Kennzahlen (Win Rate, Total R usw.) als JSON |
-| `trade_log` | Alle Einzeltrades als JSON-Liste |
+| `asset` | Das gehandelte Asset (z.B. "XAUUSD") — für schnelle Listenansicht denormalisiert |
+| `strategy` | Strategie-Name (z.B. "TimeRangeBreakout") — für schnelle Listenansicht denormalisiert |
+| `config` | Komplettes `BacktestFormValues`-Objekt als JSONB (inkl. aller Strategie-Parameter, Filter, Sizing) |
+| `summary` | `BacktestMetrics` + `monthly_r` + `skipped_days` als JSONB |
+| `trade_log` | `TradeRecord[]` als JSONB |
+| `charts` | `equity_curve` + `drawdown_curve` als JSONB |
 | `created_at` | Zeitstempel der Speicherung |
+
+> **Zukunftssicherheit:** Alle Ergebnisfelder werden als JSONB gespeichert. Neue Felder in `BacktestResult`, `TradeRecord` oder `BacktestMetrics` werden automatisch mitgespeichert — **kein Schemaupdate und keine Anpassung dieser Spec nötig**, solange sich nur Inhalte, nicht die Struktur der Objekte ändern.
 
 **Sicherheit:** RLS stellt sicher, dass jeder Benutzer ausschließlich seine eigenen Runs lesen, schreiben und löschen kann.
 
@@ -114,7 +117,7 @@ Datenbank-Tabelle `backtest_runs` in Supabase:
 
 | Entscheidung | Warum |
 |---|---|
-| **Supabase JSONB für config/results** | Schema bleibt stabil wenn neue Metriken hinzukommen – keine Migration nötig |
+| **Supabase JSONB für alle Ergebnisdaten** | Schema bleibt stabil wenn neue Felder hinzukommen – keine Migration und keine Spec-Anpassung nötig. Nur bei strukturellen Umbenennungen ist Handlungsbedarf. |
 | **Bestehende Chart-/Tabellen-Komponenten wiederverwenden** | Kein Doppel-Code; Ergebnisansicht sieht identisch aus wie nach einem Live-Run |
 | **Inline-Umbenennung statt separatem Dialog** | Weniger Klicks für häufige Aktion |
 | **Bestätigungs-Dialog vor Löschen** | Löschen ist irreversibel |
@@ -125,7 +128,59 @@ Datenbank-Tabelle `backtest_runs` in Supabase:
 Keine neuen Pakete nötig – alle benötigten shadcn/ui-Komponenten (`Table`, `Dialog`, `Button`, `Input`, `Badge`) sind bereits installiert.
 
 ## QA Test Results
-_To be added by /qa_
+
+**Datum:** 2026-03-26
+**Tester:** /qa Agent
+
+### Zusammenfassung
+
+| Kategorie | Ergebnis |
+|-----------|----------|
+| Acceptance Criteria | 7/9 bestanden (AC-5 teilweise, AC-7 fehlgeschlagen) |
+| Edge Cases | 3/4 bestanden (EC-2 nicht implementiert) |
+| Bugs gefunden | 8 gesamt (0 Critical, 1 High, 2 Medium, 5 Low) |
+| Security | Rate-Limit-Bypass-Risiko (Medium), kleinere API-Korrektheitsfehler |
+| Build | PASS (keine Type-Errors) |
+| Production Ready | **NEIN** |
+
+### Bugs
+
+| ID | Severity | Beschreibung | Datei / Ort |
+|----|----------|-------------|-------------|
+| BUG-1 | Low | Date-Range-Spalte fehlt in der History-Tabelle (AC-5 teilweise nicht erfüllt) | `src/components/backtest/results-panel.tsx` |
+| BUG-2 | **High** | "Load Config" lädt Config nicht in das Backtest-Formular — `page.tsx` liest keine URL-Suchparameter (`useSearchParams` fehlt) | `src/app/(dashboard)/backtest/page.tsx` |
+| BUG-3 | Medium | Keine Bestätigung vor Überschreiben ungespeicherter Formulardaten (AC-7 nicht erfüllt) | History-Komponente |
+| BUG-4 | Low | Keine Warnung für veraltete Strategien/Assets (EC-2 nicht implementiert) | History-Tabelle |
+| BUG-5 | Medium | Rate-Limit-Fehler erlaubt stillen Save — bei RPC-Fehler wird trotzdem gespeichert | `src/app/api/backtest/runs/route.ts:105-107` |
+| BUG-6 | Low | DELETE gibt Erfolg zurück für nicht-existente IDs (count ist immer null) | `src/app/api/backtest/runs/[id]/route.ts` |
+| BUG-7 | Low | Admin kann alle Runs lesen — widerspricht strikter AC-3-Formulierung (ggf. intentional) | RLS-Policy |
+| BUG-8 | Medium | History-Tabelle nicht responsiv auf Mobile (375px) — kein `overflow-x-auto` Wrapper | History-Tabelle |
+
+### Vor Deployment zu beheben
+
+- **BUG-2 (High):** "Load Config" komplett nicht funktional — `useSearchParams` in `backtest/page.tsx` nachrüsten
+- **BUG-3 (Medium):** Bestätigungsdialog vor "Config laden" implementieren (AC-7)
+- **BUG-5 (Medium):** Rate-Limit-Fehlerbehandlung in `POST /api/backtest/runs` korrigieren
+- **BUG-8 (Medium):** `overflow-x-auto` Wrapper für History-Tabelle hinzufügen
+
+### Nächster Sprint
+
+- BUG-1: Date-Range-Spalte in History-Tabelle ergänzen
+- BUG-4: Warnung für veraltete Strategien/Assets implementieren
+- BUG-6: DELETE-Response bei nicht-existenten IDs korrigieren
+- BUG-7: RLS-Policy für Admin-Zugriff klären (intentional vs. Bug)
 
 ## Deployment
-_To be added by /deploy_
+
+**Datum:** 2026-03-26
+**Production URL:** https://quanti-backtester.vercel.app
+**Status:** Deployed
+
+### Pre-Deployment Checks
+- [x] `npm run build` erfolgreich
+- [x] `npm run lint` — 0 Errors
+- [x] Supabase-Tabelle `backtest_runs` mit RLS angelegt und aktiv
+- [x] BUG-2 (High): `useSearchParams` in `backtest/page.tsx` implementiert ✓
+- [x] BUG-3 (Medium): Bestätigungsdialog vor "Config laden" implementiert ✓
+- [x] BUG-5 (Medium): Rate-Limit-Fehlerbehandlung korrigiert (503 bei RPC-Fehler) ✓
+- [x] BUG-8 (Medium): `overflow-x-auto` Wrapper für History-Tabelle vorhanden ✓

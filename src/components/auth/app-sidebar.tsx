@@ -8,6 +8,7 @@ import {
   Database,
   Zap,
   BookOpen,
+  History,
   LogOut,
   ChevronUp,
 } from "lucide-react";
@@ -41,6 +42,7 @@ interface AppSidebarProps {
 const navigationItems = [
   { title: "Dashboard", href: "/", icon: Home },
   { title: "Backtests", href: "/backtest", icon: BarChart2 },
+  { title: "History", href: "/history", icon: History },
   { title: "Data", href: "/data", icon: Database },
   { title: "Strategies", href: "/strategies", icon: Zap },
   { title: "Journal", href: "/journal", icon: BookOpen },

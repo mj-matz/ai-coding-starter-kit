@@ -48,6 +48,7 @@ import {
 interface ConfigurationPanelProps {
   onSubmit: (config: BacktestFormValues) => void;
   isRunning: boolean;
+  preloadConfig?: BacktestFormValues;
 }
 
 const STRATEGIES = [
@@ -69,6 +70,7 @@ const TIMEFRAMES = [
 export function ConfigurationPanel({
   onSubmit,
   isRunning,
+  preloadConfig,
 }: ConfigurationPanelProps) {
   const form = useForm<BacktestFormValues>({
     resolver: zodResolver(backtestFormSchema) as Resolver<BacktestFormValues>,
@@ -78,13 +80,17 @@ export function ConfigurationPanel({
   const sizingMode = form.watch("sizingMode");
   const selectedStrategy = form.watch("strategy");
 
-  // Restore config from localStorage on mount
+  // Restore config: preloadConfig (from URL) takes priority over localStorage
   useEffect(() => {
+    if (preloadConfig) {
+      form.reset(preloadConfig);
+      return;
+    }
     const saved = loadConfigFromStorage();
     if (saved) {
       form.reset(saved);
     }
-  }, [form]);
+  }, [form, preloadConfig]);
 
   // Auto-save config to localStorage on every field change
   useEffect(() => {

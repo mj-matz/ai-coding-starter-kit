@@ -38,6 +38,7 @@ import {
   type BacktestRunFull,
 } from "@/hooks/use-backtest-runs";
 import type { BacktestMetrics, MonthlyR, TradeRecord } from "@/lib/backtest-types";
+import { loadConfigFromStorage } from "@/lib/backtest-types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -60,6 +61,12 @@ function safeMetric(summary: Record<string, unknown>, key: string, decimals = 2)
   const metrics = summary?.metrics as Record<string, unknown> | undefined;
   const val = metrics?.[key];
   if (typeof val === "number") return val.toFixed(decimals);
+  return "—";
+}
+
+function safeSummaryField(summary: Record<string, unknown>, key: string): string {
+  const val = summary?.[key];
+  if (typeof val === "string") return val;
   return "—";
 }
 
@@ -143,6 +150,8 @@ function InlineRename({ id, name, onRename }: InlineRenameProps) {
   );
 }
 
+const KNOWN_STRATEGIES = ["time_range_breakout"];
+
 // ── Run Detail View ───────────────────────────────────────────────────────────
 
 interface RunDetailViewProps {
@@ -182,6 +191,12 @@ function RunDetailView({ run, onBack }: RunDetailViewProps) {
           {run.asset} · {run.strategy} · gespeichert am {formatDate(run.created_at)}
         </p>
       </div>
+
+      {!KNOWN_STRATEGIES.includes(run.strategy) && (
+        <div className="rounded-xl border border-yellow-900/50 bg-yellow-950/30 px-4 py-3 text-sm text-yellow-300">
+          Strategie &quot;{run.strategy}&quot; ist im System nicht mehr verfügbar — die gespeicherten Ergebnisse bleiben gültig, können aber nicht erneut ausgeführt werden.
+        </div>
+      )}
 
       {summary?.metrics ? (
         <MetricsSummaryCard
@@ -233,6 +248,7 @@ export default function HistoryPage() {
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [detailRun, setDetailRun] = useState<BacktestRunFull | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [confirmLoadRun, setConfirmLoadRun] = useState<BacktestRunSummary | null>(null);
 
   useEffect(() => {
     fetchRuns();
@@ -254,9 +270,8 @@ export default function HistoryPage() {
     setDeleteTargetId(null);
   }, [deleteTargetId, deleteRun]);
 
-  const handleLoadConfig = useCallback(
-    async (run: BacktestRunSummary, e: React.MouseEvent) => {
-      e.stopPropagation();
+  const doLoadConfig = useCallback(
+    async (run: BacktestRunSummary) => {
       const full = await loadRun(run.id);
       if (!full) return;
       const params = new URLSearchParams();
@@ -266,12 +281,46 @@ export default function HistoryPage() {
     [loadRun, router]
   );
 
+  const handleLoadConfig = useCallback(
+    (run: BacktestRunSummary, e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (loadConfigFromStorage()) {
+        setConfirmLoadRun(run);
+      } else {
+        doLoadConfig(run);
+      }
+    },
+    [doLoadConfig]
+  );
+
   if (detailRun) {
     return <RunDetailView run={detailRun} onBack={() => setDetailRun(null)} />;
   }
 
   return (
     <>
+      <AlertDialog open={!!confirmLoadRun} onOpenChange={(open) => { if (!open) setConfirmLoadRun(null); }}>
+        <AlertDialogContent className="border-white/10 bg-[#0d0f14] text-white">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Config laden?</AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-400">
+              Die aktuelle Backtest-Konfiguration wird überschrieben. Nicht gespeicherte Einstellungen gehen verloren.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white">
+              Abbrechen
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { if (confirmLoadRun) doLoadConfig(confirmLoadRun); setConfirmLoadRun(null); }}
+              className="bg-blue-600 text-white hover:bg-blue-700"
+            >
+              Laden
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={!!deleteTargetId} onOpenChange={(open) => { if (!open) setDeleteTargetId(null); }}>
         <AlertDialogContent className="border-white/10 bg-[#0d0f14] text-white">
           <AlertDialogHeader>
@@ -320,12 +369,13 @@ export default function HistoryPage() {
         {!isLoading && !error && runs.length === 0 && <EmptyState />}
 
         {!isLoading && runs.length > 0 && (
-          <div className="rounded-2xl border border-white/5 bg-white/5 backdrop-blur-xl overflow-hidden">
+          <div className="rounded-2xl border border-white/5 bg-white/5 backdrop-blur-xl overflow-hidden overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="border-white/5 hover:bg-transparent">
                   <TableHead className="text-slate-500">Name</TableHead>
                   <TableHead className="text-slate-500">Asset</TableHead>
+                  <TableHead className="text-slate-500">Zeitraum</TableHead>
                   <TableHead className="text-slate-500">Strategie</TableHead>
                   <TableHead className="text-slate-500 text-right">Trades</TableHead>
                   <TableHead className="text-slate-500 text-right">Win Rate</TableHead>
@@ -352,6 +402,9 @@ export default function HistoryPage() {
                       <Badge variant="outline" className="border-white/10 text-slate-300">
                         {run.asset}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-slate-400 text-sm whitespace-nowrap">
+                      {safeSummaryField(run.summary, "start_date")} – {safeSummaryField(run.summary, "end_date")}
                     </TableCell>
                     <TableCell className="text-slate-400 text-sm">{run.strategy}</TableCell>
                     <TableCell className="text-right text-slate-300">

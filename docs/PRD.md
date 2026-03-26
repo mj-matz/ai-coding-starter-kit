@@ -32,6 +32,7 @@ A personal web-based backtesting platform for systematic trading strategies. The
 | P1 | SMC Price Action Strategy (Market Structure, BoS, S&D, FVG) | Planned |
 | P2 | AI Strategy Generator (Text + Screenshot → Backtest) | Planned |
 | P2 | MQL Converter (MQL4/MQL5 EA → Python Backtest) | Planned |
+| P1 | Export Backtest Results (Excel / CSV) | Planned |
 
 ## Success Metrics
 - Backtesting engine produces identical results on repeated runs (deterministic)

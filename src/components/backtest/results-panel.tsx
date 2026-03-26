@@ -5,14 +5,11 @@ import {
   BarChart3,
   Loader2,
   Clock,
-  BookmarkPlus,
 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { MetricsSummaryCard } from "@/components/backtest/metrics-summary-card";
 import { EquityCurveChart } from "@/components/backtest/equity-curve-chart";
@@ -20,6 +17,8 @@ import { DrawdownChart } from "@/components/backtest/drawdown-chart";
 import { TradeListTable } from "@/components/backtest/trade-list-table";
 
 import { Progress } from "@/components/ui/progress";
+
+import { SaveRunDialog } from "@/components/backtest/save-run-dialog";
 
 import type { BacktestResult } from "@/lib/backtest-types";
 import type { BacktestStatus, BacktestProgress } from "@/hooks/use-backtest";
@@ -40,6 +39,9 @@ interface ResultsPanelProps {
   newsDates?: string[];
   startDate?: string;
   endDate?: string;
+  onSaveRun?: (name: string) => Promise<void>;
+  isSaving?: boolean;
+  defaultRunName?: string;
 }
 
 function EmptyState() {
@@ -174,6 +176,9 @@ export function ResultsPanel({
   newsDates,
   startDate = "",
   endDate = "",
+  onSaveRun,
+  isSaving = false,
+  defaultRunName = "",
 }: ResultsPanelProps) {
   if (status === "loading") {
     return <LoadingState isTimedOut={isTimedOut} onCancel={onCancel} progress={progress} isStreaming={isStreaming} />;
@@ -232,33 +237,16 @@ export function ResultsPanel({
         </TabsContent>
       </Tabs>
 
-      {/* Save Run placeholder (PROJ-9) */}
-      <div className="flex justify-end">
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                disabled
-                className="border-white/10 bg-white/5 text-slate-500 hover:bg-white/10"
-                aria-label="Save run - coming soon"
-              >
-                <BookmarkPlus className="mr-2 h-4 w-4" />
-                Save Run
-                <Badge
-                  variant="secondary"
-                  className="ml-2 bg-gray-800 text-gray-500"
-                >
-                  Coming Soon
-                </Badge>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent className="border-white/10 bg-[#0d0f14] text-slate-300">
-              <p>Backtest history will be available in a future update.</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      </div>
+      {/* Save Run (PROJ-9) */}
+      {onSaveRun && (
+        <div className="flex justify-end">
+          <SaveRunDialog
+            defaultName={defaultRunName}
+            isSaving={isSaving}
+            onSave={onSaveRun}
+          />
+        </div>
+      )}
     </div>
   );
 }
