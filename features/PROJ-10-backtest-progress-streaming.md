@@ -1,9 +1,8 @@
 # PROJ-10: Backtest Progress Streaming
 
-## Status: Deployed
+## Status: Failed
 **Created:** 2026-03-20
-**Last Updated:** 2026-03-22
-**Deployed:** 2026-03-22
+**Last Updated:** 2026-03-26
 
 ## Dependencies
 - Requires: PROJ-2 (Backtesting Engine) — engine muss Fortschritts-Events emittieren

@@ -21,7 +21,7 @@
 | PROJ-7 | Trade Journal (Manual) | Planned | [PROJ-7-trade-journal.md](PROJ-7-trade-journal.md) | 2026-03-09 |
 | PROJ-8 | Authentication (Admin Login) | Deployed | [PROJ-8-authentication.md](PROJ-8-authentication.md) | 2026-03-10 |
 | PROJ-9 | Backtest History | Deployed | [PROJ-9-backtest-history.md](PROJ-9-backtest-history.md) | 2026-03-10 |
-| PROJ-10 | Backtest Progress Streaming | Deployed | [PROJ-10-backtest-progress-streaming.md](PROJ-10-backtest-progress-streaming.md) | 2026-03-20 |
+| PROJ-10 | Backtest Progress Streaming | Failed | [PROJ-10-backtest-progress-streaming.md](PROJ-10-backtest-progress-streaming.md) | 2026-03-20 |
 | PROJ-11 | Engine Performance Optimization (NumPy + Breakout) | Deployed | [PROJ-11-engine-performance-optimization.md](PROJ-11-engine-performance-optimization.md) | 2026-03-20 |
 | PROJ-12 | GAP Fill Toggle | Deployed | [PROJ-12-gap-fill-toggle.md](PROJ-12-gap-fill-toggle.md) | 2026-03-20 |
 | PROJ-13 | Dukascopy Download Reliability (Retry + Adaptive Concurrency) | Failed | [PROJ-13-dukascopy-download-reliability.md](PROJ-13-dukascopy-download-reliability.md) | 2026-03-21 |

@@ -33,7 +33,7 @@ function BacktestPageInner() {
     }
   }, [searchParams]);
 
-  const { status, result, error, isTimedOut, progress, isStreaming, warnings, newsDates, clearWarnings, runBacktestStream, cancel } =
+  const { status, result, error, isTimedOut, warnings, newsDates, clearWarnings, runBacktest, cancel } =
     useBacktest();
   const { exportExcel, exportCsv, isExporting } = useExportBacktest();
   const { saveRun, isSaving } = useBacktestRuns();
@@ -58,7 +58,7 @@ function BacktestPageInner() {
     setSymbol(config.symbol);
     setStrategy(config.strategy);
     setLastConfig(config);
-    runBacktestStream(config);
+    runBacktest(config);
   }
 
   const handleSaveRun = useCallback(
@@ -171,8 +171,6 @@ function BacktestPageInner() {
             rangeStart={rangeStart}
             rangeEnd={rangeEnd}
             triggerDeadline={triggerDeadline}
-            progress={progress}
-            isStreaming={isStreaming}
             newsDates={newsDates}
             startDate={startDate}
             endDate={endDate}

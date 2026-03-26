@@ -16,12 +16,11 @@ import { EquityCurveChart } from "@/components/backtest/equity-curve-chart";
 import { DrawdownChart } from "@/components/backtest/drawdown-chart";
 import { TradeListTable } from "@/components/backtest/trade-list-table";
 
-import { Progress } from "@/components/ui/progress";
 
 import { SaveRunDialog } from "@/components/backtest/save-run-dialog";
 
 import type { BacktestResult } from "@/lib/backtest-types";
-import type { BacktestStatus, BacktestProgress } from "@/hooks/use-backtest";
+import type { BacktestStatus } from "@/hooks/use-backtest";
 
 
 interface ResultsPanelProps {
@@ -34,8 +33,6 @@ interface ResultsPanelProps {
   rangeStart: string;
   rangeEnd: string;
   triggerDeadline?: string;
-  progress?: BacktestProgress | null;
-  isStreaming?: boolean;
   newsDates?: string[];
   startDate?: string;
   endDate?: string;
@@ -64,54 +61,22 @@ interface LoadingStateProps {
   isStreaming?: boolean;
 }
 
-function LoadingState({ isTimedOut, onCancel, progress, isStreaming }: LoadingStateProps) {
-  const progressPercent = progress && progress.totalDays > 0
-    ? Math.round((progress.daysDone / progress.totalDays) * 100)
-    : 0;
-
+function LoadingState({ isTimedOut, onCancel }: LoadingStateProps) {
   return (
     <div className="bg-white/5 backdrop-blur-xl rounded-3xl border border-white/5 flex flex-col items-center justify-center py-20">
-      {isStreaming ? (
-        <>
-          <h3 className="text-lg font-semibold text-slate-200 mb-6">
-            Running backtest...
-          </h3>
-          <div className="w-full max-w-md px-6">
-            <div className="relative">
-              <Progress
-                value={progressPercent}
-                className="h-6 bg-white/10"
-              />
-              {progress && progress.totalDays > 0 && (
-                <span className="absolute inset-0 flex items-center justify-center text-xs font-medium text-white drop-shadow-sm">
-                  {progress.daysDone} / {progress.totalDays} Tage
-                </span>
-              )}
-            </div>
-            {progress?.currentDate && (
-              <p className="mt-2 text-center text-xs text-slate-500">
-                {progress.currentDate}
-              </p>
-            )}
-          </div>
-        </>
-      ) : (
-        <>
-          <Loader2 className="mb-4 h-10 w-10 animate-spin text-blue-400" />
-          <h3 className="text-lg font-semibold text-slate-200">
-            Running backtest...
-          </h3>
-          <p className="mt-2 text-sm text-slate-500">
-            Processing your configuration. This may take a moment.
-          </p>
-        </>
-      )}
+      <Loader2 className="mb-4 h-10 w-10 animate-spin text-blue-400" />
+      <h3 className="text-lg font-semibold text-slate-200">
+        Running backtest...
+      </h3>
+      <p className="mt-2 text-sm text-slate-500">
+        Processing your configuration. This may take a moment.
+      </p>
       <div className="mt-6 text-center">
         {isTimedOut && (
           <div className="mb-3 flex items-center justify-center gap-2">
             <Clock className="h-4 w-4 text-amber-400" />
             <span className="text-sm text-amber-400">
-              This is taking longer than expected...
+              This can take up to 5 minutes. With these minutes you save a lot of time in manual backtesting.
             </span>
           </div>
         )}
@@ -171,8 +136,6 @@ export function ResultsPanel({
   rangeStart,
   rangeEnd,
   triggerDeadline,
-  progress,
-  isStreaming,
   newsDates,
   startDate = "",
   endDate = "",
@@ -181,7 +144,7 @@ export function ResultsPanel({
   defaultRunName = "",
 }: ResultsPanelProps) {
   if (status === "loading") {
-    return <LoadingState isTimedOut={isTimedOut} onCancel={onCancel} progress={progress} isStreaming={isStreaming} />;
+    return <LoadingState isTimedOut={isTimedOut} onCancel={onCancel} />;
   }
 
   if (status === "error" && error) {
