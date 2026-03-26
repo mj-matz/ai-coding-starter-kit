@@ -60,14 +60,13 @@ interface LoadingStateProps {
 }
 
 function LoadingState({ isTimedOut, onCancel, progress, isStreaming }: LoadingStateProps) {
-  const showProgress = isStreaming && progress && progress.totalDays > 0;
-  const progressPercent = showProgress
+  const progressPercent = progress && progress.totalDays > 0
     ? Math.round((progress.daysDone / progress.totalDays) * 100)
     : 0;
 
   return (
     <div className="bg-white/5 backdrop-blur-xl rounded-3xl border border-white/5 flex flex-col items-center justify-center py-20">
-      {showProgress ? (
+      {isStreaming ? (
         <>
           <h3 className="text-lg font-semibold text-slate-200 mb-6">
             Running backtest...
@@ -78,11 +77,13 @@ function LoadingState({ isTimedOut, onCancel, progress, isStreaming }: LoadingSt
                 value={progressPercent}
                 className="h-6 bg-white/10"
               />
-              <span className="absolute inset-0 flex items-center justify-center text-xs font-medium text-white drop-shadow-sm">
-                {progress.daysDone} / {progress.totalDays} Tage
-              </span>
+              {progress && progress.totalDays > 0 && (
+                <span className="absolute inset-0 flex items-center justify-center text-xs font-medium text-white drop-shadow-sm">
+                  {progress.daysDone} / {progress.totalDays} Tage
+                </span>
+              )}
             </div>
-            {progress.currentDate && (
+            {progress?.currentDate && (
               <p className="mt-2 text-center text-xs text-slate-500">
                 {progress.currentDate}
               </p>
