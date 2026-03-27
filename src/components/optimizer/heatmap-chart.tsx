@@ -98,7 +98,7 @@ export function HeatmapChart({ results, targetMetric, parameterKeys }: HeatmapCh
   if (validResults.length === 0) {
     return (
       <div className="flex h-48 items-center justify-center rounded-xl border border-white/10 bg-white/5">
-        <p className="text-sm text-gray-500">Keine gueltigen Ergebnisse fuer die Darstellung</p>
+        <p className="text-sm text-gray-500">No valid results to display</p>
       </div>
     );
   }
@@ -136,7 +136,7 @@ function LineChartView({
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-4">
       <h4 className="mb-3 text-sm font-medium text-gray-400">
-        {TARGET_METRIC_LABELS[targetMetric]} nach {parameterKey}
+        {TARGET_METRIC_LABELS[targetMetric]} by {parameterKey}
       </h4>
       <ResponsiveContainer width="100%" height={300}>
         <LineChart data={data}>
@@ -216,7 +216,7 @@ function ScatterHeatmapView({
         </h4>
         <div className="flex items-center gap-2 text-xs text-gray-500">
           <div className="h-3 w-12 rounded bg-gradient-to-r from-red-600 via-yellow-500 to-green-500" />
-          <span>niedrig - hoch</span>
+          <span>low - high</span>
         </div>
       </div>
       <ResponsiveContainer width="100%" height={Math.min(400, Math.max(250, data.length * 3))}>

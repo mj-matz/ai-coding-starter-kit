@@ -28,7 +28,7 @@ export function CombinationCounter({
     return (
       <div className="flex items-center gap-2 text-sm text-gray-500">
         <Hash className="h-4 w-4" />
-        <span>Keine Kombinationen konfiguriert</span>
+        <span>No combinations configured</span>
       </div>
     );
   }
@@ -38,7 +38,7 @@ export function CombinationCounter({
       <div className="flex items-center gap-2">
         <Hash className="h-4 w-4 text-gray-400" />
         <span className="text-sm text-gray-300">
-          Es werden{" "}
+          Running{" "}
           <Badge
             variant="secondary"
             className={
@@ -51,7 +51,7 @@ export function CombinationCounter({
           >
             {count.toLocaleString()}
           </Badge>{" "}
-          Backtests ausgefuehrt
+          backtests
         </span>
       </div>
 
@@ -59,8 +59,8 @@ export function CombinationCounter({
         <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
           <p className="text-xs text-red-300">
-            Zu viele Kombinationen (max. {OPTIMIZER_MAX_COMBINATIONS.toLocaleString()}).
-            Bitte den Step-Wert erhoehen oder den Bereich verkleinern.
+            Too many combinations (max. {OPTIMIZER_MAX_COMBINATIONS.toLocaleString()}).
+            Please increase the step value or reduce the range.
           </p>
         </div>
       )}
@@ -70,14 +70,14 @@ export function CombinationCounter({
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
           <div>
             <p className="text-xs text-amber-300">
-              Viele Kombinationen - das kann laenger dauern.
+              Many combinations — this may take a while.
             </p>
             <button
               type="button"
               onClick={onAcknowledge}
               className="mt-1 text-xs font-medium text-amber-200 underline underline-offset-2 hover:text-amber-100"
             >
-              Verstanden, trotzdem starten
+              Got it, start anyway
             </button>
           </div>
         </div>

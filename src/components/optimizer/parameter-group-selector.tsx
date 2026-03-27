@@ -22,7 +22,7 @@ export function ParameterGroupSelector({
   return (
     <div>
       <h3 className="mb-3 text-sm font-medium text-gray-400">
-        Parameter-Gruppe
+        Parameter Group
       </h3>
       <RadioGroup
         value={value ?? ""}

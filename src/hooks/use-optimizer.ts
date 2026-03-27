@@ -162,7 +162,7 @@ export function useOptimizer(): UseOptimizerReturn {
   const startOptimization = useCallback(
     async ({ parameterGroup, targetMetric, parameterRanges }: StartOptimizerParams) => {
       if (!backtestConfig) {
-        setError("Keine Backtest-Konfiguration gefunden. Bitte zuerst im Backtest-Tab konfigurieren.");
+        setError("No backtest configuration found. Please configure it in the Backtest tab first.");
         return;
       }
 

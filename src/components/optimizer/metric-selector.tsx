@@ -18,7 +18,7 @@ export function MetricSelector({ value, onChange, disabled }: MetricSelectorProp
   return (
     <div>
       <h3 className="mb-3 text-sm font-medium text-gray-400">
-        Zielmetrik
+        Target Metric
       </h3>
       <RadioGroup
         value={value ?? ""}

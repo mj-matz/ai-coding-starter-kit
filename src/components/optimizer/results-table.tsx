@@ -92,7 +92,7 @@ export function ResultsTable({
   if (results.length === 0) {
     return (
       <div className="flex h-32 items-center justify-center rounded-xl border border-white/10 bg-white/5">
-        <p className="text-sm text-gray-500">Keine Ergebnisse vorhanden</p>
+        <p className="text-sm text-gray-500">No results available</p>
       </div>
     );
   }
@@ -106,7 +106,7 @@ export function ResultsTable({
             <Trophy className="h-4 w-4 text-emerald-400" />
             <div>
               <p className="text-sm font-medium text-emerald-300">
-                Bestes Ergebnis:{" "}
+                Best Result:{" "}
                 {parameterKeys.map((k) => `${k}=${bestResult.params[k]}`).join(", ")}
               </p>
               <p className="text-xs text-emerald-400/70">
@@ -121,7 +121,7 @@ export function ResultsTable({
               className="bg-emerald-600 text-white hover:bg-emerald-500"
             >
               <ArrowUpRight className="mr-1 h-3.5 w-3.5" />
-              Beste Params anwenden
+              Apply Best Params
             </Button>
           )}
         </div>
@@ -195,7 +195,7 @@ export function ResultsTable({
                       ))}
                       {row.error && (
                         <Badge variant="secondary" className="bg-red-600/20 text-red-300 border-red-500/30 text-xs">
-                          Fehler
+                          Error
                         </Badge>
                       )}
                     </div>

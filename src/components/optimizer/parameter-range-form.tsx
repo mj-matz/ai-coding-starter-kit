@@ -33,14 +33,14 @@ const PARAMETER_DEFS: Record<ParameterGroup, ParamDef[]> = {
     { key: "takeProfit", label: "Take Profit", unit: "pips", defaults: { min: 50, max: 300, step: 10 } },
   ],
   time_exit: [
-    { key: "timeExit", label: "Time Exit", unit: "Minuten (ab 00:00)", defaults: { min: 960, max: 1260, step: 30 } },
+    { key: "timeExit", label: "Time Exit", unit: "Minutes (from 00:00)", defaults: { min: 960, max: 1260, step: 30 } },
   ],
   trigger_deadline: [
-    { key: "triggerDeadline", label: "Trigger Deadline", unit: "Minuten (ab 00:00)", defaults: { min: 480, max: 840, step: 30 } },
+    { key: "triggerDeadline", label: "Trigger Deadline", unit: "Minutes (from 00:00)", defaults: { min: 480, max: 840, step: 30 } },
   ],
   range_window: [
-    { key: "rangeStart", label: "Range Start", unit: "Minuten (ab 00:00)", defaults: { min: 60, max: 240, step: 30 } },
-    { key: "rangeEnd", label: "Range End", unit: "Minuten (ab 00:00)", defaults: { min: 240, max: 480, step: 30 } },
+    { key: "rangeStart", label: "Range Start", unit: "Minutes (from 00:00)", defaults: { min: 60, max: 240, step: 30 } },
+    { key: "rangeEnd", label: "Range End", unit: "Minutes (from 00:00)", defaults: { min: 240, max: 480, step: 30 } },
   ],
   trailing_stop: [
     { key: "trailTriggerPips", label: "Trail Trigger", unit: "pips", defaults: { min: 50, max: 200, step: 10 } },
@@ -117,7 +117,7 @@ export function ParameterRangeForm({ group, onChange, disabled }: ParameterRange
   return (
     <div>
       <h3 className="mb-3 text-sm font-medium text-gray-400">
-        Parameter-Bereiche
+        Parameter Ranges
       </h3>
       <Form {...form}>
         <div className="space-y-4">
