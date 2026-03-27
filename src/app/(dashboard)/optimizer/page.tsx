@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Play, RotateCcw, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -22,6 +23,7 @@ import { calculateCombinations, OPTIMIZER_MAX_COMBINATIONS, OPTIMIZER_WARN_COMBI
 
 export default function OptimizerPage() {
   const { toast } = useToast();
+  const router = useRouter();
 
   const {
     status,
@@ -340,13 +342,13 @@ export default function OptimizerPage() {
                 targetMetric={targetMetric}
                 parameterKeys={parameterKeys}
                 backtestConfig={backtestConfig}
-                onApplyParams={() =>
+                onApplyParams={() => {
                   toast({
                     title: "Parameters applied",
-                    description:
-                      "The best parameters have been loaded into your backtest configuration. Switch to the Backtest tab to use them.",
-                  })
-                }
+                    description: "Switching to Backtest...",
+                  });
+                  router.push("/backtest");
+                }}
               />
             </div>
           )}

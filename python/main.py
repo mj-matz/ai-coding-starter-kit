@@ -969,44 +969,52 @@ async def backtest_orchestrate(
 
     df = None
     resolved_cache_id: Optional[str] = None
-    cached = find_cached_entry(symbol, "dukascopy", request.timeframe, date_from, date_to, hour_from, hour_to)
-    if cached:
-        try:
-            df = load_cached_data(cached["file_path"])
-            resolved_cache_id = cached["id"]
-        except Exception as e:
-            logger.warning(f"Cache load failed for {symbol}, re-fetching: {e}")
-            df = None
 
-    if df is None:
-        try:
-            # On cache miss: download only the required hours to save time (BUG-27).
-            base_df = fetch_dukascopy(symbol, date_from, date_to, hour_from=hour_from, hour_to=hour_to)
-            df = resample_ohlcv(base_df, request.timeframe) if request.timeframe != "1m" else base_df
-        except TimeoutError as e:
-            raise HTTPException(status_code=504, detail=str(e))
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            logger.error(f"Fetch error for {symbol}: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=502,
-                detail="Failed to fetch data.",
-            )
-
-        if df.empty:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No data available for {symbol} between {date_from} and {date_to}",
-            )
-
-        if not base_df.attrs.get("partial"):
+    # Optimizer pre-load: if full-day data was loaded before the combination loop,
+    # use it directly and skip the download/cache step entirely.
+    _preloaded = _optimizer_preloaded_data.get(user_id)
+    if _preloaded is not None:
+        df = _preloaded.copy()
+        logger.debug(f"Optimizer: using pre-loaded data for {symbol} (skipping fetch)")
+    else:
+        cached = find_cached_entry(symbol, "dukascopy", request.timeframe, date_from, date_to, hour_from, hour_to)
+        if cached:
             try:
-                cache_entry = save_to_cache(df, symbol, "dukascopy", request.timeframe, date_from, date_to, user_id, hour_from, hour_to)
-                if cache_entry:
-                    resolved_cache_id = cache_entry["id"]
+                df = load_cached_data(cached["file_path"])
+                resolved_cache_id = cached["id"]
             except Exception as e:
-                logger.warning(f"Cache save failed (non-fatal): {e}")
+                logger.warning(f"Cache load failed for {symbol}, re-fetching: {e}")
+                df = None
+
+        if df is None:
+            try:
+                # On cache miss: download only the required hours to save time (BUG-27).
+                base_df = fetch_dukascopy(symbol, date_from, date_to, hour_from=hour_from, hour_to=hour_to)
+                df = resample_ohlcv(base_df, request.timeframe) if request.timeframe != "1m" else base_df
+            except TimeoutError as e:
+                raise HTTPException(status_code=504, detail=str(e))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            except Exception as e:
+                logger.error(f"Fetch error for {symbol}: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=502,
+                    detail="Failed to fetch data.",
+                )
+
+            if df.empty:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No data available for {symbol} between {date_from} and {date_to}",
+                )
+
+            if not base_df.attrs.get("partial"):
+                try:
+                    cache_entry = save_to_cache(df, symbol, "dukascopy", request.timeframe, date_from, date_to, user_id, hour_from, hour_to)
+                    if cache_entry:
+                        resolved_cache_id = cache_entry["id"]
+                except Exception as e:
+                    logger.warning(f"Cache save failed (non-fatal): {e}")
         else:
             logger.info("Skipping cache write for %s — partial fetch (timeout)", symbol)
 
@@ -1607,6 +1615,9 @@ _optimizer_user_jobs: dict[str, str] = {}  # user_id → job_id
 
 _JOB_TTL_SECONDS = 1800  # 30 minutes
 
+# Pre-loaded data for optimizer: user_id → DataFrame (full-day, loaded once before loop)
+_optimizer_preloaded_data: dict[str, "pd.DataFrame"] = {}
+
 
 def _cleanup_stale_jobs() -> None:
     """Remove finished jobs that are older than JOB_TTL_SECONDS."""
@@ -1712,6 +1723,68 @@ def _apply_params_to_request(
     return BacktestOrchestrationRequest(**data)
 
 
+async def _preload_optimizer_data(
+    request: BacktestOrchestrationRequest,
+    user_id: str,
+) -> Optional["pd.DataFrame"]:
+    """
+    Load full-day (h00-h23) data once before the optimizer combination loop.
+    Stores the result in _optimizer_preloaded_data[user_id] so that each call to
+    backtest_orchestrate within the same job skips the per-combination download.
+    Returns the DataFrame, or None on failure (optimizer will fall back to per-combo fetch).
+    """
+    import pandas as pd
+
+    symbol = request.symbol.upper()
+    try:
+        date_from = date.fromisoformat(request.startDate)
+        date_to = date.fromisoformat(request.endDate)
+    except ValueError as e:
+        logger.warning(f"Optimizer pre-load: invalid date in request: {e}")
+        return None
+
+    # Use full-day range so the cached file covers every possible
+    # rangeStart / timeExit combination that the optimizer will test.
+    hour_from, hour_to = 0, 23
+
+    df = None
+    cached = find_cached_entry(symbol, "dukascopy", request.timeframe, date_from, date_to, hour_from, hour_to)
+    if cached:
+        try:
+            df = load_cached_data(cached["file_path"])
+            logger.info(f"Optimizer pre-load: cache hit for {symbol} {date_from}–{date_to} (full day)")
+        except Exception as e:
+            logger.warning(f"Optimizer pre-load: cache load failed for {symbol}: {e}")
+            df = None
+
+    if df is None:
+        try:
+            logger.info(f"Optimizer pre-load: downloading {symbol} {date_from}–{date_to} (full day, h00-h23)")
+            base_df = fetch_dukascopy(symbol, date_from, date_to, hour_from=hour_from, hour_to=hour_to)
+            df = resample_ohlcv(base_df, request.timeframe) if request.timeframe != "1m" else base_df
+            if not base_df.attrs.get("partial"):
+                try:
+                    save_to_cache(df, symbol, "dukascopy", request.timeframe, date_from, date_to, user_id, hour_from, hour_to)
+                except Exception as e:
+                    logger.warning(f"Optimizer pre-load: cache save failed (non-fatal): {e}")
+        except Exception as e:
+            logger.warning(f"Optimizer pre-load: data fetch failed for {symbol}: {e}")
+            return None
+
+    if df is None or (hasattr(df, 'empty') and df.empty):
+        logger.warning(f"Optimizer pre-load: no data returned for {symbol}")
+        return None
+
+    # Normalize once here so backtest_orchestrate can skip re-normalization
+    if "datetime" in df.columns:
+        df = df.set_index("datetime")
+    df.index = pd.to_datetime(df.index, utc=True)
+    df.columns = [c.lower() for c in df.columns]
+
+    logger.info(f"Optimizer pre-load: {len(df)} rows loaded for {symbol} ({date_from}–{date_to})")
+    return df
+
+
 async def _run_single_backtest(request: BacktestOrchestrationRequest, user_id: str) -> dict:
     """
     Run a single backtest using the orchestration logic and return summary metrics.
@@ -1756,6 +1829,15 @@ async def _optimizer_worker(
 ):
     """Background worker that runs all combinations sequentially."""
     try:
+        # Pre-load full-day data once before the loop to avoid per-combination
+        # cache misses when rangeStart / timeExit parameters change across combos.
+        pre_loaded = await _preload_optimizer_data(base_request, job.user_id)
+        if pre_loaded is not None:
+            _optimizer_preloaded_data[job.user_id] = pre_loaded
+            logger.info(f"Optimizer job {job.job_id}: pre-loaded data, skipping per-combo downloads")
+        else:
+            logger.warning(f"Optimizer job {job.job_id}: pre-load failed, falling back to per-combo fetch")
+
         for combo in combinations:
             if job.cancel_flag:
                 job.status = OptimizerJobStatus.CANCELLED
@@ -1786,7 +1868,8 @@ async def _optimizer_worker(
         job.error_message = str(e)
         logger.error(f"Optimizer job {job.job_id} failed: {e}", exc_info=True)
     finally:
-        # Mark job as finished and clean up user→job mapping
+        # Clean up pre-loaded data and mark job as finished
+        _optimizer_preloaded_data.pop(job.user_id, None)
         with _optimizer_jobs_lock:
             job.finished_at = datetime.now(timezone.utc)
             if _optimizer_user_jobs.get(job.user_id) == job.job_id:

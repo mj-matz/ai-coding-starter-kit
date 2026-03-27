@@ -12,6 +12,19 @@ import { saveConfigToStorage } from "@/lib/backtest-types";
 type SortKey = "profit_factor" | "sharpe_ratio" | "win_rate" | "net_profit" | "total_trades";
 type SortDir = "asc" | "desc";
 
+// Parameter keys that are stored as minutes but should display as HH:MM
+const TIME_PARAM_KEYS = new Set(["rangeStart", "rangeEnd"]);
+
+function minutesToTime(minutes: number): string {
+  const h = Math.floor(minutes / 60).toString().padStart(2, "0");
+  const m = (minutes % 60).toString().padStart(2, "0");
+  return `${h}:${m}`;
+}
+
+function formatParamValue(key: string, value: number): string {
+  return TIME_PARAM_KEYS.has(key) ? minutesToTime(value) : String(value);
+}
+
 interface ResultsTableProps {
   results: OptimizerResultRow[];
   targetMetric: TargetMetric;
@@ -78,7 +91,10 @@ export function ResultsTable({
     const updated = { ...backtestConfig };
     for (const [key, val] of Object.entries(bestResult.params)) {
       if (key in updated) {
-        (updated as Record<string, unknown>)[key] = val;
+        // Time params are stored as minutes in optimizer but as HH:MM in backtest config
+        (updated as Record<string, unknown>)[key] = TIME_PARAM_KEYS.has(key)
+          ? minutesToTime(val)
+          : val;
       }
     }
     saveConfigToStorage(updated);
@@ -107,7 +123,7 @@ export function ResultsTable({
             <div>
               <p className="text-sm font-medium text-emerald-300">
                 Best Result:{" "}
-                {parameterKeys.map((k) => `${k}=${bestResult.params[k]}`).join(", ")}
+                {parameterKeys.map((k) => `${k}=${formatParamValue(k, bestResult.params[k])}`).join(", ")}
               </p>
               <p className="text-xs text-emerald-400/70">
                 {TARGET_METRIC_LABELS[targetMetric]}: {fmt(bestResult[targetMetric])}
@@ -190,7 +206,7 @@ export function ResultsTable({
                               : "bg-white/10 text-gray-300 border-white/10 text-xs"
                           }
                         >
-                          {k}={row.params[k]}
+                          {k}={formatParamValue(k, row.params[k])}
                         </Badge>
                       ))}
                       {row.error && (
@@ -227,7 +243,7 @@ export function ResultsTable({
         <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-4">
           <h4 className="mb-2 text-sm font-medium text-gray-300">
             Detail:{" "}
-            {parameterKeys.map((k) => `${k}=${selectedResult.params[k]}`).join(", ")}
+            {parameterKeys.map((k) => `${k}=${formatParamValue(k, selectedResult.params[k])}`).join(", ")}
           </h4>
           <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3 lg:grid-cols-5">
             <div>
