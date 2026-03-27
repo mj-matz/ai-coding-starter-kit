@@ -44,12 +44,18 @@ export default function OptimizerPage() {
     loadRun,
   } = useOptimizer();
 
+  // Tab state (controlled so we can switch programmatically)
+  const [activeTab, setActiveTab] = useState<"optimizer" | "history">("optimizer");
+
   // Config state
   const [parameterGroup, setParameterGroup] = useState<ParameterGroup | null>(null);
   const [targetMetric, setTargetMetric] = useState<TargetMetric | null>(null);
   const [parameterRanges, setParameterRanges] = useState<Record<string, ParameterRange>>({});
   const [warningAcknowledged, setWarningAcknowledged] = useState(false);
   const [duplicateRun, setDuplicateRun] = useState<OptimizationRun | null>(null);
+
+  // When viewing a historical run, store it so we can show its config
+  const [loadedHistoricalRun, setLoadedHistoricalRun] = useState<OptimizationRun | null>(null);
 
   // Fetch history on mount so duplicate detection works without opening history tab
   useEffect(() => {
@@ -111,6 +117,7 @@ export default function OptimizerPage() {
     setParameterRanges({});
     setWarningAcknowledged(false);
     setDuplicateRun(null);
+    setLoadedHistoricalRun(null);
   }
 
   const handleLoadRun = useCallback(
@@ -121,6 +128,8 @@ export default function OptimizerPage() {
         setParameterGroup(run.parameter_group);
         setTargetMetric(run.target_metric);
         setParameterRanges(run.parameter_ranges);
+        setLoadedHistoricalRun(run);
+        setActiveTab("optimizer");
         toast({
           title: "Run loaded",
           description: `${results.length} results loaded from history.`,
@@ -173,7 +182,7 @@ export default function OptimizerPage() {
         )}
       </div>
 
-      <Tabs defaultValue="optimizer">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "optimizer" | "history")}>
         <TabsList className="bg-white/5 border border-white/10">
           <TabsTrigger value="optimizer" className="data-[state=active]:bg-white/10">
             Optimization
@@ -185,8 +194,25 @@ export default function OptimizerPage() {
 
         {/* ── Optimizer Tab ── */}
         <TabsContent value="optimizer" className="mt-6 space-y-6">
-          {/* Config from Backtest */}
-          <ConfigInheritancePanel config={backtestConfig} />
+          {/* Config from Backtest (or historical run) */}
+          <ConfigInheritancePanel
+            config={
+              loadedHistoricalRun
+                ? (loadedHistoricalRun.config as import("@/lib/backtest-types").BacktestFormValues)
+                : backtestConfig
+            }
+            historicalDate={
+              loadedHistoricalRun
+                ? new Date(loadedHistoricalRun.created_at).toLocaleDateString("de-DE", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : undefined
+            }
+          />
 
           {!backtestConfig && (
             <Button
@@ -342,7 +368,11 @@ export default function OptimizerPage() {
                 results={results}
                 targetMetric={targetMetric}
                 parameterKeys={parameterKeys}
-                backtestConfig={backtestConfig}
+                backtestConfig={
+                  loadedHistoricalRun
+                    ? (loadedHistoricalRun.config as import("@/lib/backtest-types").BacktestFormValues)
+                    : backtestConfig
+                }
                 onApplyParams={() => {
                   toast({
                     title: "Parameters applied",

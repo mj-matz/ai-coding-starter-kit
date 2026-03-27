@@ -103,6 +103,7 @@ export function HistorySection({
               <tr className="border-b border-white/10 bg-white/5">
                 <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-400">Datum</th>
                 <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-400">Asset</th>
+                <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-400 hidden md:table-cell">Config</th>
                 <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-400">Gruppe</th>
                 <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-400 hidden sm:table-cell">Fortschritt</th>
                 <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-400 hidden lg:table-cell">Best Result</th>
@@ -123,6 +124,18 @@ export function HistorySection({
                     <Badge variant="secondary" className="bg-blue-600/20 text-blue-300 border-blue-500/30 text-xs">
                       {run.asset}
                     </Badge>
+                  </td>
+                  <td className="px-3 py-2.5 hidden md:table-cell">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs text-gray-300 whitespace-nowrap">
+                        {run.date_from} – {run.date_to}
+                      </span>
+                      {(run.config as Record<string, unknown>)?.timeframe != null && (
+                        <span className="text-xs text-gray-500">
+                          {String((run.config as Record<string, unknown>).timeframe)}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-2.5 text-xs text-gray-300 whitespace-nowrap">
                     {PARAMETER_GROUP_LABELS[run.parameter_group]}

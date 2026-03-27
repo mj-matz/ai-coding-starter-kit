@@ -13,7 +13,21 @@ type SortKey = "profit_factor" | "sharpe_ratio" | "win_rate" | "net_profit" | "t
 type SortDir = "asc" | "desc";
 
 // Parameter keys that are stored as minutes but should display as HH:MM
-const TIME_PARAM_KEYS = new Set(["rangeStart", "rangeEnd"]);
+const TIME_PARAM_KEYS = new Set(["rangeStart", "rangeEnd", "timeExit"]);
+
+// Defines display order for parameter keys; keys not listed keep their natural order
+const PARAM_KEY_ORDER: Record<string, number> = {
+  rangeStart: 0,
+  rangeEnd: 1,
+};
+
+function sortedParamKeys(keys: string[]): string[] {
+  return [...keys].sort((a, b) => {
+    const oa = PARAM_KEY_ORDER[a] ?? 99;
+    const ob = PARAM_KEY_ORDER[b] ?? 99;
+    return oa - ob;
+  });
+}
 
 function minutesToTime(minutes: number): string {
   const h = Math.floor(minutes / 60).toString().padStart(2, "0");
@@ -48,6 +62,8 @@ export function ResultsTable({
   const [sortKey, setSortKey] = useState<SortKey>(targetMetric as SortKey);
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [selectedRow, setSelectedRow] = useState<string | null>(null);
+
+  const orderedParamKeys = sortedParamKeys(parameterKeys);
 
   // Find best result (highest value of target metric among valid rows)
   const bestResult = useMemo(() => {
@@ -123,7 +139,7 @@ export function ResultsTable({
             <div>
               <p className="text-sm font-medium text-emerald-300">
                 Best Result:{" "}
-                {parameterKeys.map((k) => `${k}=${formatParamValue(k, bestResult.params[k])}`).join(", ")}
+                {orderedParamKeys.map((k) => `${k}=${formatParamValue(k, bestResult.params[k])}`).join(", ")}
               </p>
               <p className="text-xs text-emerald-400/70">
                 {TARGET_METRIC_LABELS[targetMetric]}: {fmt(bestResult[targetMetric])}
@@ -196,7 +212,7 @@ export function ResultsTable({
                 >
                   <td className="px-4 py-2.5">
                     <div className="flex flex-wrap gap-1">
-                      {parameterKeys.map((k) => (
+                      {orderedParamKeys.map((k) => (
                         <Badge
                           key={k}
                           variant="secondary"
@@ -243,7 +259,7 @@ export function ResultsTable({
         <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-4">
           <h4 className="mb-2 text-sm font-medium text-gray-300">
             Detail:{" "}
-            {parameterKeys.map((k) => `${k}=${formatParamValue(k, selectedResult.params[k])}`).join(", ")}
+            {orderedParamKeys.map((k) => `${k}=${formatParamValue(k, selectedResult.params[k])}`).join(", ")}
           </h4>
           <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3 lg:grid-cols-5">
             <div>
