@@ -32,6 +32,7 @@ export default function OptimizerPage() {
     backtestConfig,
     startOptimization,
     cancelOptimization,
+    forceReset,
     reset,
     loadBacktestConfig,
     runs,
@@ -200,9 +201,23 @@ export default function OptimizerPage() {
           {status === "failed" && error && (
             <div className="flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/5 p-4">
               <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-400" />
-              <div>
+              <div className="flex-1">
                 <p className="text-sm font-medium text-red-300">Optimization error</p>
                 <p className="mt-0.5 text-xs text-red-400/70">{error}</p>
+                {error.toLowerCase().includes("already have a running") && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-3 border-red-500/40 text-red-300 hover:bg-red-500/10"
+                    onClick={async () => {
+                      await forceReset();
+                      toast({ title: "Reset successful", description: "You can now start a new optimization." });
+                    }}
+                  >
+                    <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                    Reset stuck job
+                  </Button>
+                )}
               </div>
             </div>
           )}

@@ -29,6 +29,7 @@ export interface UseOptimizerReturn {
   // Actions
   startOptimization: (params: StartOptimizerParams) => Promise<void>;
   cancelOptimization: () => Promise<void>;
+  forceReset: () => Promise<void>;
   reset: () => void;
   loadBacktestConfig: () => void;
 
@@ -223,6 +224,25 @@ export function useOptimizer(): UseOptimizerReturn {
     }
   }, [jobId, stopPolling]);
 
+  // ── Force-reset stuck jobs ────────────────────────────────────────────
+
+  const forceReset = useCallback(async () => {
+    try {
+      await fetch("/api/optimizer/reset", { method: "POST" });
+    } catch {
+      // Silent fail — local state reset is the priority
+    }
+    stopPolling();
+    cancelledRef.current = false;
+    setStatus("idle");
+    setJobId(null);
+    setProgress(0);
+    setTotal(0);
+    setResults([]);
+    setError(null);
+    loadBacktestConfig();
+  }, [stopPolling, loadBacktestConfig]);
+
   // ── Reset ─────────────────────────────────────────────────────────────
 
   const reset = useCallback(() => {
@@ -300,6 +320,7 @@ export function useOptimizer(): UseOptimizerReturn {
     backtestConfig,
     startOptimization,
     cancelOptimization,
+    forceReset,
     reset,
     loadBacktestConfig,
     runs,
