@@ -1,6 +1,6 @@
 # PROJ-19: Strategy Optimizer
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-03-25
 **Last Updated:** 2026-03-27
 
@@ -248,4 +248,6 @@ Keine neuen npm-Pakete — Recharts und alle shadcn/ui-Komponenten sind bereits 
 Solide: Alle Endpoints prüfen Auth, RLS auf beiden Tabellen aktiviert, Input-Validierung via Zod + Pydantic, keine exponierten Secrets, kein XSS-Risiko.
 
 ## Deployment
-_To be added by /deploy_
+**Deployed:** 2026-03-27
+**Trigger:** Push to main → Vercel auto-deploy
+**Commits:** feat/fix(PROJ-19) series + fix SL_TRAILED R-multiple
