@@ -30,7 +30,7 @@
 | PROJ-16 | Configurable Entry Offset (Pip Distance to Range) | Planned | [PROJ-16-configurable-entry-offset.md](PROJ-16-configurable-entry-offset.md) | 2026-03-22 |
 | PROJ-17 | Chart Screenshot Share | Deployed | [PROJ-17-chart-screenshot-share.md](PROJ-17-chart-screenshot-share.md) | 2026-03-22 |
 | PROJ-18 | Dukascopy Candle-API (OHLCV statt Tick-Daten) | Deployed | [PROJ-18-dukascopy-candle-api.md](PROJ-18-dukascopy-candle-api.md) | 2026-03-22 |
-| PROJ-19 | Strategy Optimizer | Planned | [PROJ-19-strategy-optimizer.md](PROJ-19-strategy-optimizer.md) | 2026-03-25 |
+| PROJ-19 | Strategy Optimizer | In Review | [PROJ-19-strategy-optimizer.md](PROJ-19-strategy-optimizer.md) | 2026-03-25 |
 | PROJ-20 | SMC Price Action Strategy | Planned | [PROJ-20-smc-price-action-strategy.md](PROJ-20-smc-price-action-strategy.md) | 2026-03-25 |
 | PROJ-21 | AI Strategy Generator | Planned | [PROJ-21-ai-strategy-generator.md](PROJ-21-ai-strategy-generator.md) | 2026-03-25 |
 | PROJ-22 | MQL Converter | Planned | [PROJ-22-mql-converter.md](PROJ-22-mql-converter.md) | 2026-03-25 |

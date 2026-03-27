@@ -1554,6 +1554,461 @@ async def get_trade_candles_by_symbol(
     ]
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# PROJ-19: Strategy Optimizer — In-Memory Job Management + Endpoints
+# ══════════════════════════════════════════════════════════════════════════════
+
+import hashlib
+import uuid
+from dataclasses import dataclass, field as dc_field
+from enum import Enum
+
+
+class OptimizerJobStatus(str, Enum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+
+
+@dataclass
+class OptimizerResultRow:
+    """One parameter combination's result."""
+    params: dict
+    params_hash: str
+    profit_factor: float | None = None
+    sharpe_ratio: float | None = None
+    win_rate: float | None = None
+    total_trades: int = 0
+    net_profit: float | None = None
+    error: str | None = None
+
+
+@dataclass
+class OptimizerJob:
+    """In-memory state for a running optimizer job."""
+    job_id: str
+    user_id: str
+    total: int
+    completed: int = 0
+    status: OptimizerJobStatus = OptimizerJobStatus.RUNNING
+    results: list[OptimizerResultRow] = dc_field(default_factory=list)
+    cancel_flag: bool = False
+    error_message: str | None = None
+    finished_at: datetime | None = None
+
+
+# In-memory job store: job_id → OptimizerJob
+_optimizer_jobs: dict[str, OptimizerJob] = {}
+_optimizer_jobs_lock = threading.Lock()
+
+# Max 1 concurrent job per user
+_optimizer_user_jobs: dict[str, str] = {}  # user_id → job_id
+
+_JOB_TTL_SECONDS = 1800  # 30 minutes
+
+
+def _cleanup_stale_jobs() -> None:
+    """Remove finished jobs that are older than JOB_TTL_SECONDS."""
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=_JOB_TTL_SECONDS)
+    with _optimizer_jobs_lock:
+        stale = [
+            jid for jid, job in _optimizer_jobs.items()
+            if job.finished_at is not None and job.finished_at < cutoff
+        ]
+        for jid in stale:
+            del _optimizer_jobs[jid]
+
+OPTIMIZER_MAX_COMBINATIONS = 2000
+
+
+def _compute_params_hash(params: dict) -> str:
+    """Deterministic hash of parameter dict for duplicate detection."""
+    canonical = json.dumps(params, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+def _generate_combinations(parameter_ranges: dict) -> list[dict]:
+    """
+    Generate all parameter combinations from range definitions.
+
+    Each key in parameter_ranges maps to either:
+      - { "min": X, "max": Y, "step": Z }  (numeric range)
+      - { "values": [...] }                 (explicit list)
+
+    Returns a list of dicts, e.g. [{"sl": 10, "tp": 50}, {"sl": 10, "tp": 60}, ...]
+    """
+    import itertools
+
+    param_names = sorted(parameter_ranges.keys())
+    param_values: list[list] = []
+
+    for name in param_names:
+        spec = parameter_ranges[name]
+        if "values" in spec:
+            param_values.append(spec["values"])
+        else:
+            min_val = float(spec["min"])
+            max_val = float(spec["max"])
+            step = float(spec["step"])
+            if step <= 0:
+                raise ValueError(f"Step for '{name}' must be > 0")
+            if min_val > max_val:
+                raise ValueError(f"Min ({min_val}) > Max ({max_val}) for '{name}'")
+            vals = []
+            v = min_val
+            while v <= max_val + 1e-9:  # small epsilon for float rounding
+                vals.append(round(v, 6))
+                v += step
+            if not vals:
+                raise ValueError(f"No values generated for '{name}' (min={min_val}, max={max_val}, step={step})")
+            param_values.append(vals)
+
+    combos = []
+    for combo in itertools.product(*param_values):
+        combos.append(dict(zip(param_names, combo)))
+
+    return combos
+
+
+def _apply_params_to_request(
+    base_request: "BacktestOrchestrationRequest",
+    parameter_group: str,
+    params: dict,
+) -> "BacktestOrchestrationRequest":
+    """
+    Return a new BacktestOrchestrationRequest with the given params applied
+    to the correct fields based on the parameter_group.
+    """
+    data = base_request.model_dump()
+
+    if parameter_group == "crv":
+        if "stopLoss" in params:
+            data["stopLoss"] = params["stopLoss"]
+        if "takeProfit" in params:
+            data["takeProfit"] = params["takeProfit"]
+    elif parameter_group == "time_exit":
+        if "timeExit" in params:
+            # params["timeExit"] is minutes from midnight, convert to HH:MM
+            minutes = int(params["timeExit"])
+            data["timeExit"] = f"{minutes // 60:02d}:{minutes % 60:02d}"
+    elif parameter_group == "trigger_deadline":
+        if "triggerDeadline" in params:
+            minutes = int(params["triggerDeadline"])
+            data["triggerDeadline"] = f"{minutes // 60:02d}:{minutes % 60:02d}"
+    elif parameter_group == "range_window":
+        if "rangeStart" in params:
+            minutes = int(params["rangeStart"])
+            data["rangeStart"] = f"{minutes // 60:02d}:{minutes % 60:02d}"
+        if "rangeEnd" in params:
+            minutes = int(params["rangeEnd"])
+            data["rangeEnd"] = f"{minutes // 60:02d}:{minutes % 60:02d}"
+    elif parameter_group == "trailing_stop":
+        if "trailTriggerPips" in params:
+            data["trailTriggerPips"] = params["trailTriggerPips"]
+        if "trailLockPips" in params:
+            data["trailLockPips"] = params["trailLockPips"]
+
+    return BacktestOrchestrationRequest(**data)
+
+
+async def _run_single_backtest(request: BacktestOrchestrationRequest, user_id: str) -> dict:
+    """
+    Run a single backtest using the orchestration logic and return summary metrics.
+    Returns a dict with keys: profit_factor, sharpe_ratio, win_rate, total_trades, net_profit, error.
+    """
+    try:
+        result = await backtest_orchestrate(request, token={"sub": user_id})
+        m = result.metrics
+        return {
+            "profit_factor": m.profit_factor,
+            "sharpe_ratio": m.sharpe_ratio,
+            "win_rate": m.win_rate_pct,
+            "total_trades": m.total_trades,
+            "net_profit": round(m.final_balance - request.initialCapital, 2),
+            "error": None,
+        }
+    except HTTPException as e:
+        return {
+            "profit_factor": None,
+            "sharpe_ratio": None,
+            "win_rate": None,
+            "total_trades": 0,
+            "net_profit": None,
+            "error": e.detail if isinstance(e.detail, str) else str(e.detail),
+        }
+    except Exception as e:
+        return {
+            "profit_factor": None,
+            "sharpe_ratio": None,
+            "win_rate": None,
+            "total_trades": 0,
+            "net_profit": None,
+            "error": str(e),
+        }
+
+
+async def _optimizer_worker(
+    job: OptimizerJob,
+    base_request: BacktestOrchestrationRequest,
+    parameter_group: str,
+    combinations: list[dict],
+):
+    """Background worker that runs all combinations sequentially."""
+    try:
+        for combo in combinations:
+            if job.cancel_flag:
+                job.status = OptimizerJobStatus.CANCELLED
+                break
+
+            params_hash = _compute_params_hash(combo)
+            modified_request = _apply_params_to_request(base_request, parameter_group, combo)
+
+            result = await _run_single_backtest(modified_request, job.user_id)
+
+            row = OptimizerResultRow(
+                params=combo,
+                params_hash=params_hash,
+                profit_factor=result["profit_factor"],
+                sharpe_ratio=result["sharpe_ratio"],
+                win_rate=result["win_rate"],
+                total_trades=result["total_trades"],
+                net_profit=result["net_profit"],
+                error=result["error"],
+            )
+            job.results.append(row)
+            job.completed += 1
+
+        if job.status == OptimizerJobStatus.RUNNING:
+            job.status = OptimizerJobStatus.COMPLETED
+    except Exception as e:
+        job.status = OptimizerJobStatus.FAILED
+        job.error_message = str(e)
+        logger.error(f"Optimizer job {job.job_id} failed: {e}", exc_info=True)
+    finally:
+        # Mark job as finished and clean up user→job mapping
+        with _optimizer_jobs_lock:
+            job.finished_at = datetime.now(timezone.utc)
+            if _optimizer_user_jobs.get(job.user_id) == job.job_id:
+                del _optimizer_user_jobs[job.user_id]
+
+
+# ── Optimizer Pydantic models ────────────────────────────────────────────────
+
+class OptimizerStartRequest(BaseModel):
+    """Request to start an optimizer run."""
+    # Base backtest config (same fields as BacktestOrchestrationRequest)
+    strategy: str
+    symbol: str = Field(min_length=1)
+    timeframe: str
+    startDate: str
+    endDate: str
+    rangeStart: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    rangeEnd: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    triggerDeadline: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    timeExit: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    stopLoss: float = Field(gt=0)
+    takeProfit: float = Field(gt=0)
+    direction: Literal["long", "short", "both"]
+    commission: float = Field(default=0.0, ge=0)
+    slippage: float = Field(default=0.0, ge=0)
+    initialCapital: float = Field(gt=0)
+    sizingMode: Literal["risk_percent", "fixed_lot"]
+    riskPercent: Optional[float] = Field(default=None, gt=0, le=100)
+    fixedLot: Optional[float] = Field(default=None, gt=0)
+    entryDelayBars: int = Field(default=1, ge=0)
+    trailTriggerPips: Optional[float] = Field(default=None, gt=0)
+    trailLockPips: Optional[float] = Field(default=None, gt=0)
+    gapFill: bool = False
+    tradingDays: List[int] = Field(default=[0, 1, 2, 3, 4])
+    newsDates: Optional[List[str]] = None
+
+    # Optimizer-specific fields
+    parameter_group: str = Field(
+        ...,
+        pattern=r"^(crv|time_exit|trigger_deadline|range_window|trailing_stop)$",
+    )
+    target_metric: str = Field(
+        ...,
+        pattern=r"^(profit_factor|sharpe_ratio|win_rate|net_profit)$",
+    )
+    parameter_ranges: dict  # e.g. { "sl": { "min": 10, "max": 50, "step": 5 } }
+
+
+class OptimizerStartResponse(BaseModel):
+    job_id: str
+    total_combinations: int
+
+
+class OptimizerResultOut(BaseModel):
+    params: dict
+    params_hash: str
+    profit_factor: Optional[float] = None
+    sharpe_ratio: Optional[float] = None
+    win_rate: Optional[float] = None
+    total_trades: int = 0
+    net_profit: Optional[float] = None
+    error: Optional[str] = None
+
+
+class OptimizerStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    total: int
+    completed: int
+    results: List[OptimizerResultOut]
+    error_message: Optional[str] = None
+
+
+class OptimizerCancelResponse(BaseModel):
+    job_id: str
+    status: str
+    message: str
+
+
+# ── Optimizer endpoints ──────────────────────────────────────────────────────
+
+@app.post("/optimize/start", response_model=OptimizerStartResponse)
+async def optimizer_start(
+    request: OptimizerStartRequest,
+    token: dict = Depends(verify_jwt),
+):
+    """
+    Start an optimizer job. Generates all parameter combinations and runs them
+    sequentially in a background task.
+
+    Limits:
+    - Max 1 concurrent job per user
+    - Max 2000 combinations per job
+    """
+    user_id: str = token["sub"]
+
+    # Clean up stale finished jobs before checking/creating new ones
+    _cleanup_stale_jobs()
+
+    # Check for existing running job
+    with _optimizer_jobs_lock:
+        existing_job_id = _optimizer_user_jobs.get(user_id)
+        if existing_job_id and existing_job_id in _optimizer_jobs:
+            existing_job = _optimizer_jobs[existing_job_id]
+            if existing_job.status == OptimizerJobStatus.RUNNING:
+                raise HTTPException(
+                    status_code=409,
+                    detail="You already have a running optimizer job. Cancel it first or wait for completion.",
+                )
+
+    # Generate combinations
+    try:
+        combinations = _generate_combinations(request.parameter_ranges)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not combinations:
+        raise HTTPException(status_code=400, detail="No parameter combinations generated.")
+
+    if len(combinations) > OPTIMIZER_MAX_COMBINATIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many combinations ({len(combinations)}). Maximum is {OPTIMIZER_MAX_COMBINATIONS}.",
+        )
+
+    # Create the base backtest request (without optimizer-specific fields)
+    base_data = request.model_dump(exclude={"parameter_group", "target_metric", "parameter_ranges"})
+    base_request = BacktestOrchestrationRequest(**base_data)
+
+    # Create job
+    job_id = str(uuid.uuid4())
+    job = OptimizerJob(
+        job_id=job_id,
+        user_id=user_id,
+        total=len(combinations),
+    )
+
+    with _optimizer_jobs_lock:
+        _optimizer_jobs[job_id] = job
+        _optimizer_user_jobs[user_id] = job_id
+
+    # Start background task
+    asyncio.create_task(
+        _optimizer_worker(job, base_request, request.parameter_group, combinations)
+    )
+
+    return OptimizerStartResponse(
+        job_id=job_id,
+        total_combinations=len(combinations),
+    )
+
+
+@app.get("/optimize/status/{job_id}", response_model=OptimizerStatusResponse)
+async def optimizer_status(
+    job_id: str,
+    token: dict = Depends(verify_jwt),
+):
+    """Get the current status and results of an optimizer job."""
+    user_id: str = token["sub"]
+
+    job = _optimizer_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    if job.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Not your job.")
+
+    results_out = [
+        OptimizerResultOut(
+            params=r.params,
+            params_hash=r.params_hash,
+            profit_factor=r.profit_factor,
+            sharpe_ratio=r.sharpe_ratio,
+            win_rate=r.win_rate,
+            total_trades=r.total_trades,
+            net_profit=r.net_profit,
+            error=r.error,
+        )
+        for r in job.results
+    ]
+
+    return OptimizerStatusResponse(
+        job_id=job.job_id,
+        status=job.status.value,
+        total=job.total,
+        completed=job.completed,
+        results=results_out,
+        error_message=job.error_message,
+    )
+
+
+@app.post("/optimize/cancel/{job_id}", response_model=OptimizerCancelResponse)
+async def optimizer_cancel(
+    job_id: str,
+    token: dict = Depends(verify_jwt),
+):
+    """Cancel a running optimizer job. Partial results are preserved."""
+    user_id: str = token["sub"]
+
+    job = _optimizer_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    if job.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Not your job.")
+
+    if job.status != OptimizerJobStatus.RUNNING:
+        return OptimizerCancelResponse(
+            job_id=job.job_id,
+            status=job.status.value,
+            message=f"Job is already {job.status.value}.",
+        )
+
+    job.cancel_flag = True
+
+    return OptimizerCancelResponse(
+        job_id=job.job_id,
+        status="cancelling",
+        message="Cancel signal sent. Job will stop after the current combination finishes.",
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
 

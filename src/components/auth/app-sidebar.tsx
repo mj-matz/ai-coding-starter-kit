@@ -11,6 +11,7 @@ import {
   History,
   LogOut,
   ChevronUp,
+  SlidersHorizontal,
 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
@@ -42,6 +43,7 @@ interface AppSidebarProps {
 const navigationItems = [
   { title: "Dashboard", href: "/", icon: Home },
   { title: "Backtests", href: "/backtest", icon: BarChart2 },
+  { title: "Optimizer", href: "/optimizer", icon: SlidersHorizontal },
   { title: "History", href: "/history", icon: History },
   { title: "Data", href: "/data", icon: Database },
   { title: "Strategies", href: "/strategies", icon: Zap },

@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { BacktestFormValues, BacktestResult } from "@/lib/backtest-types";
+import { getCurrenciesForInstrument } from "@/lib/instrument-currencies";
 
 export type BacktestStatus = "idle" | "loading" | "success" | "error";
 
@@ -58,6 +59,7 @@ export function useBacktest(): UseBacktestReturn {
       setStatus("loading");
       setError(null);
       setIsTimedOut(false);
+      setNewsDates([]);
 
       // Set timeout warning
       timeoutTimerRef.current = setTimeout(() => {
@@ -65,10 +67,32 @@ export function useBacktest(): UseBacktestReturn {
       }, TIMEOUT_WARNING_MS);
 
       try {
+        // Fetch news dates from economic_calendar for badge display and optional filtering
+        const supabase = createClient();
+        const currencies = getCurrenciesForInstrument(config.symbol);
+        const { data: newsData } = await supabase
+          .from("economic_calendar")
+          .select("date")
+          .in("currency", currencies)
+          .gte("date", config.startDate)
+          .lte("date", config.endDate);
+
+        const fetchedNewsDates = [
+          ...new Set((newsData ?? []).map((r) => r.date as string)),
+        ];
+        setNewsDates(fetchedNewsDates);
+
+        const requestBody = {
+          ...config,
+          ...(!config.tradeNewsDays && fetchedNewsDates.length > 0
+            ? { newsDates: fetchedNewsDates }
+            : {}),
+        };
+
         const response = await fetch("/api/backtest", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(config),
+          body: JSON.stringify(requestBody),
           signal: controller.signal,
         });
 
