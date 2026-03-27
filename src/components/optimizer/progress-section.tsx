@@ -20,10 +20,10 @@ export function ProgressSection({ progress, total, onCancel }: ProgressSectionPr
           <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
           <div>
             <p className="text-sm font-medium text-white">
-              Optimierung laeuft...
+              Optimization running...
             </p>
             <p className="text-xs text-gray-400">
-              {progress} / {total} Backtests abgeschlossen ({percentage}%)
+              {progress} / {total} backtests completed ({percentage}%)
             </p>
           </div>
         </div>
@@ -35,7 +35,7 @@ export function ProgressSection({ progress, total, onCancel }: ProgressSectionPr
           aria-label="Cancel optimization"
         >
           <X className="mr-1 h-3.5 w-3.5" />
-          Abbrechen
+          Cancel
         </Button>
       </div>
 

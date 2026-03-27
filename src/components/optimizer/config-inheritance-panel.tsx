@@ -15,10 +15,10 @@ export function ConfigInheritancePanel({ config }: ConfigInheritancePanelProps) 
         <AlertCircle className="h-5 w-5 shrink-0 text-amber-400" />
         <div>
           <p className="text-sm font-medium text-amber-300">
-            Keine Backtest-Konfiguration gefunden
+            No backtest configuration found
           </p>
           <p className="mt-0.5 text-xs text-amber-400/70">
-            Bitte zuerst im Backtest-Tab eine Konfiguration erstellen und speichern.
+            Please create and save a configuration in the Backtest tab first.
           </p>
         </div>
       </div>
@@ -28,7 +28,7 @@ export function ConfigInheritancePanel({ config }: ConfigInheritancePanelProps) 
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-4">
       <h3 className="mb-3 text-sm font-medium text-gray-400">
-        Aktive Backtest-Konfiguration
+        Active Backtest Configuration
       </h3>
       <div className="flex flex-wrap gap-2">
         <Badge variant="secondary" className="bg-blue-600/20 text-blue-300 border-blue-500/30">
