@@ -17,6 +17,7 @@ import {
 
 import type { ParameterGroup, ParameterRange } from "@/lib/optimizer-types";
 import { parameterRangeSchema } from "@/lib/optimizer-types";
+import type { BacktestFormValues } from "@/lib/backtest-types";
 
 // ── Helpers for time input conversion ──────────────────────────────────────
 
@@ -31,6 +32,10 @@ function timeToMinutes(time: string): number {
   return h * 60 + (m ?? 0);
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
 // ── Parameter definitions per group ────────────────────────────────────────
 
 interface ParamDef {
@@ -39,29 +44,72 @@ interface ParamDef {
   unit: string;
   /** Min and Max are displayed as HH:MM time pickers; Step remains in minutes */
   isTimeInput?: boolean;
+  /** Key in BacktestFormValues that provides the current config value for smart defaults */
+  configKey?: keyof BacktestFormValues;
   defaults: { min: number; max: number; step: number };
 }
 
 const PARAMETER_DEFS: Record<ParameterGroup, ParamDef[]> = {
   crv: [
-    { key: "stopLoss", label: "Stop Loss", unit: "pips", defaults: { min: 50, max: 200, step: 10 } },
-    { key: "takeProfit", label: "Take Profit", unit: "pips", defaults: { min: 50, max: 300, step: 10 } },
+    { key: "stopLoss", label: "Stop Loss", unit: "pips", configKey: "stopLoss", defaults: { min: 50, max: 200, step: 10 } },
+    { key: "takeProfit", label: "Take Profit", unit: "pips", configKey: "takeProfit", defaults: { min: 50, max: 300, step: 10 } },
   ],
   time_exit: [
-    { key: "timeExit", label: "Time Exit", unit: "Minutes (from 00:00)", defaults: { min: 960, max: 1260, step: 30 } },
+    { key: "timeExit", label: "Time Exit", unit: "Time (HH:MM)", isTimeInput: true, configKey: "timeExit", defaults: { min: 1140, max: 1320, step: 30 } },
   ],
   trigger_deadline: [
-    { key: "triggerDeadline", label: "Trigger Deadline", unit: "Minutes (from 00:00)", defaults: { min: 480, max: 840, step: 30 } },
+    { key: "triggerDeadline", label: "Trigger Deadline", unit: "Time (HH:MM)", isTimeInput: true, configKey: "triggerDeadline", defaults: { min: 960, max: 1200, step: 30 } },
   ],
   range_window: [
-    { key: "rangeStart", label: "Range Start", unit: "Time (HH:MM)", isTimeInput: true, defaults: { min: 60, max: 240, step: 30 } },
-    { key: "rangeEnd", label: "Range End", unit: "Time (HH:MM)", isTimeInput: true, defaults: { min: 240, max: 480, step: 30 } },
+    { key: "rangeStart", label: "Range Start", unit: "Time (HH:MM)", isTimeInput: true, configKey: "rangeStart", defaults: { min: 870, max: 960, step: 30 } },
+    { key: "rangeEnd", label: "Range End", unit: "Time (HH:MM)", isTimeInput: true, configKey: "rangeEnd", defaults: { min: 930, max: 1020, step: 30 } },
   ],
   trailing_stop: [
-    { key: "trailTriggerPips", label: "Trail Trigger", unit: "pips", defaults: { min: 50, max: 200, step: 10 } },
-    { key: "trailLockPips", label: "Trail Lock", unit: "pips", defaults: { min: 20, max: 100, step: 10 } },
+    { key: "trailTriggerPips", label: "Trail Trigger", unit: "pips", configKey: "trailTriggerPips", defaults: { min: 50, max: 200, step: 10 } },
+    { key: "trailLockPips", label: "Trail Lock", unit: "pips", configKey: "trailLockPips", defaults: { min: 20, max: 100, step: 10 } },
   ],
 };
+
+// ── Smart defaults from backtest config ─────────────────────────────────────
+
+const TIME_OFFSET_MINUTES = 90; // ±90 min search window around current value
+const PIP_OFFSET = 50;          // ±50 pips search window around current value
+
+function getSmartDefaults(
+  group: ParameterGroup,
+  config: BacktestFormValues | null | undefined,
+): Record<string, { min: number; max: number; step: number }> {
+  const defs = PARAMETER_DEFS[group];
+  const result: Record<string, { min: number; max: number; step: number }> = {};
+
+  for (const def of defs) {
+    if (!config || !def.configKey) {
+      result[def.key] = { ...def.defaults };
+      continue;
+    }
+
+    const raw = config[def.configKey];
+
+    if (def.isTimeInput && typeof raw === "string" && /^\d{2}:\d{2}$/.test(raw)) {
+      const current = timeToMinutes(raw);
+      result[def.key] = {
+        min: clamp(current - TIME_OFFSET_MINUTES, 0, 1380),
+        max: clamp(current + TIME_OFFSET_MINUTES, 60, 1439),
+        step: 30,
+      };
+    } else if (!def.isTimeInput && typeof raw === "number" && raw > 0) {
+      result[def.key] = {
+        min: Math.max(10, raw - PIP_OFFSET),
+        max: raw + PIP_OFFSET,
+        step: def.defaults.step,
+      };
+    } else {
+      result[def.key] = { ...def.defaults };
+    }
+  }
+
+  return result;
+}
 
 // ── Dynamic form schema ────────────────────────────────────────────────────
 
@@ -75,8 +123,8 @@ function buildSchema(group: ParameterGroup) {
 
   if (group === "range_window") {
     return base.superRefine((data, ctx) => {
-      const start = data as { rangeStart: { min: number }; rangeEnd: { min: number } };
-      if (start.rangeEnd.min <= start.rangeStart.min) {
+      const d = data as { rangeStart: { min: number }; rangeEnd: { min: number } };
+      if (d.rangeEnd.min <= d.rangeStart.min) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "Range End must be after Range Start",
@@ -91,27 +139,19 @@ function buildSchema(group: ParameterGroup) {
 
 type FormValues = Record<string, { min: number; max: number; step: number }>;
 
-function getDefaults(group: ParameterGroup): FormValues {
-  const defs = PARAMETER_DEFS[group];
-  const result: FormValues = {};
-  for (const def of defs) {
-    result[def.key] = { ...def.defaults };
-  }
-  return result;
-}
-
 // ── Component ──────────────────────────────────────────────────────────────
 
 interface ParameterRangeFormProps {
   group: ParameterGroup;
   onChange: (ranges: Record<string, ParameterRange>) => void;
   disabled?: boolean;
+  backtestConfig?: BacktestFormValues | null;
 }
 
-export function ParameterRangeForm({ group, onChange, disabled }: ParameterRangeFormProps) {
+export function ParameterRangeForm({ group, onChange, disabled, backtestConfig }: ParameterRangeFormProps) {
   const defs = PARAMETER_DEFS[group];
   const schema = useMemo(() => buildSchema(group), [group]);
-  const defaults = useMemo(() => getDefaults(group), [group]);
+  const defaults = useMemo(() => getSmartDefaults(group, backtestConfig), [group, backtestConfig]);
 
   const form = useForm<FormValues>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -120,7 +160,7 @@ export function ParameterRangeForm({ group, onChange, disabled }: ParameterRange
     mode: "onChange",
   });
 
-  // Reset form when group changes
+  // Reset form when group or config changes
   useEffect(() => {
     form.reset(defaults);
   }, [group, defaults, form]);
@@ -128,7 +168,6 @@ export function ParameterRangeForm({ group, onChange, disabled }: ParameterRange
   // Emit valid ranges on every change
   useEffect(() => {
     const subscription = form.watch((values) => {
-      // Validate all ranges
       const result = schema.safeParse(values);
       if (result.success) {
         onChange(result.data as Record<string, ParameterRange>);
@@ -222,7 +261,7 @@ export function ParameterRangeForm({ group, onChange, disabled }: ParameterRange
                     </FormItem>
                   )}
                 />
-                {/* Step — always a number (minutes) */}
+                {/* Step — always a number */}
                 <FormField
                   control={form.control}
                   name={`${def.key}.step`}

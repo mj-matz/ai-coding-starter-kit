@@ -240,6 +240,7 @@ export default function OptimizerPage() {
                   group={parameterGroup}
                   onChange={setParameterRanges}
                   disabled={!backtestConfig}
+                  backtestConfig={backtestConfig}
                 />
               )}
 
