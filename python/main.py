@@ -32,6 +32,7 @@ from engine.models import BacktestConfig, InstrumentConfig
 from analytics import calculate_analytics
 from analytics.trade_metrics import r_multiple as compute_r_multiple
 from strategies.breakout import BreakoutStrategy, BreakoutParams, SkippedDay
+from strategies.registry import get_registry, get_strategy, list_strategies
 from services.one_second_provider import create_1s_data_provider
 
 # Configure logging
@@ -109,6 +110,14 @@ def _validate_date_range(date_from: date, date_to: date) -> None:
 async def health_check():
     """Health check endpoint."""
     return {"status": "ok", "service": "data-fetcher"}
+
+
+# ── /strategies endpoint (PROJ-6) ───────────────────────────────────────────
+
+@app.get("/strategies")
+async def get_strategies():
+    """Return all registered strategies with their JSON-Schema for UI rendering."""
+    return list_strategies()
 
 
 @app.post(
@@ -785,12 +794,13 @@ class BacktestOrchestrationRequest(BaseModel):
     timeframe: str
     startDate: str
     endDate: str
-    rangeStart: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
-    rangeEnd: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
-    triggerDeadline: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
-    timeExit: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    # Time-Range Breakout fields — optional for non-breakout strategies
+    rangeStart: Optional[str] = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    rangeEnd: Optional[str] = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    triggerDeadline: Optional[str] = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    timeExit: Optional[str] = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     stopLoss: float = Field(gt=0)
-    takeProfit: float = Field(gt=0)
+    takeProfit: Optional[float] = Field(default=None, gt=0)
     direction: Literal["long", "short", "both"]
     commission: float = Field(default=0.0, ge=0)
     slippage: float = Field(default=0.0, ge=0)
@@ -804,6 +814,13 @@ class BacktestOrchestrationRequest(BaseModel):
     gapFill: bool = False
     tradingDays: List[int] = Field(default=[0, 1, 2, 3, 4])  # 0=Mon … 4=Fri (Python weekday)
     newsDates: Optional[List[str]] = None  # YYYY-MM-DD strings; present only when tradeNewsDays=False
+    # Moving Average Crossover fields (PROJ-6)
+    fastPeriod: Optional[int] = Field(default=None, ge=2, le=500)
+    slowPeriod: Optional[int] = Field(default=None, ge=2, le=500)
+    # RSI Threshold fields (PROJ-6)
+    rsiPeriod: Optional[int] = Field(default=None, ge=2, le=200)
+    oversoldLevel: Optional[float] = Field(default=None, ge=1, le=99)
+    overboughtLevel: Optional[float] = Field(default=None, ge=1, le=99)
 
 
 class BacktestMetricsOut(BaseModel):
@@ -909,35 +926,47 @@ class BacktestOrchestrationResponse(BaseModel):
 
 # ── /backtest orchestration endpoint ─────────────────────────────────────────
 
-@app.post("/backtest", response_model=BacktestOrchestrationResponse)
-async def backtest_orchestrate(
+async def _backtest_orchestrate_inner(
     request: BacktestOrchestrationRequest,
-    token: dict = Depends(verify_jwt),
-):
+    user_id: str,
+) -> BacktestOrchestrationResponse:
     """
-    Full orchestration: fetch data → generate signals → run engine → analytics.
-
-    Accepts a user-friendly configuration object from the frontend UI and
-    returns a complete result ready for display (metrics, equity curve,
-    drawdown curve, trade list).
-
-    Rate limit: 30 requests / minute per user (shared with /backtest/run).
-    Any authenticated user may call this endpoint.
+    Core backtest orchestration logic (no rate-limit check).
+    Called by the API endpoint (after rate-limit check) and internally by the optimizer.
     """
-    user_id: str = token["sub"]
-
-    if not _check_backtest_rate_limit(user_id):
-        raise HTTPException(
-            status_code=429,
-            detail="Rate limit exceeded: max 30 backtest requests per minute.",
-        )
-
     # ── 1. Validate strategy ──────────────────────────────────────────────────
-    if request.strategy != "time_range_breakout":
+    registry = get_registry()
+    if request.strategy not in registry:
+        known = ", ".join(sorted(registry.keys()))
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown strategy '{request.strategy}'. Supported: time_range_breakout",
+            detail=f"Unknown strategy '{request.strategy}'. Supported: {known}",
         )
+
+    is_breakout = request.strategy == "time_range_breakout"
+
+    # Breakout requires time fields
+    if is_breakout:
+        for field_name in ("rangeStart", "rangeEnd", "triggerDeadline", "timeExit"):
+            if getattr(request, field_name) is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{field_name}' is required for strategy 'time_range_breakout'",
+                )
+    # MA Crossover requires period fields
+    if request.strategy == "moving_average_crossover":
+        if request.fastPeriod is None or request.slowPeriod is None:
+            raise HTTPException(
+                status_code=400,
+                detail="'fastPeriod' and 'slowPeriod' are required for strategy 'moving_average_crossover'",
+            )
+    # RSI Threshold requires rsi fields
+    if request.strategy == "rsi_threshold":
+        if request.rsiPeriod is None:
+            raise HTTPException(
+                status_code=400,
+                detail="'rsiPeriod' is required for strategy 'rsi_threshold'",
+            )
 
     symbol = request.symbol.upper()
 
@@ -955,17 +984,18 @@ async def backtest_orchestrate(
     _validate_timeframe("dukascopy", request.timeframe)
 
     # ── 4. Fetch / load cached data ───────────────────────────────────────────
-    # Derive the UTC hour range from the strategy config (BUG-14 / BUG-27).
-    # The user enters times in the instrument's local timezone (e.g. Europe/Berlin).
-    # We convert to UTC here so that the pre-filter on the UTC-indexed DataFrame
-    # is correct. A ±1h safety buffer covers any remaining DST edge cases.
-    _range_start_h = int(request.rangeStart.split(":")[0])
-    _time_exit_h = int(request.timeExit.split(":")[0])
-    hour_from, hour_to = _local_to_utc_hour_range(
-        _range_start_h, _time_exit_h,
-        instrument["timezone"],
-        date_from, date_to,
-    )
+    # For breakout strategies: derive UTC hour range from time fields (BUG-14 / BUG-27).
+    # For MA/RSI strategies: load all bars (no hour filter).
+    if is_breakout:
+        _range_start_h = int(request.rangeStart.split(":")[0])
+        _time_exit_h = int(request.timeExit.split(":")[0])
+        hour_from, hour_to = _local_to_utc_hour_range(
+            _range_start_h, _time_exit_h,
+            instrument["timezone"],
+            date_from, date_to,
+        )
+    else:
+        hour_from, hour_to = 0, 23  # load all bars for non-breakout strategies
 
     df = None
     resolved_cache_id: Optional[str] = None
@@ -1066,27 +1096,66 @@ async def backtest_orchestrate(
         if df.empty:
             raise HTTPException(status_code=404, detail="No data after news-date filter")
 
-    # ── 5. Generate breakout signals ──────────────────────────────────────────
-    breakout_params = BreakoutParams(
-        asset=symbol,
-        range_start=time.fromisoformat(request.rangeStart),
-        range_end=time.fromisoformat(request.rangeEnd),
-        trigger_deadline=time.fromisoformat(request.triggerDeadline),
-        stop_loss_pips=request.stopLoss,
-        take_profit_pips=request.takeProfit,
-        pip_size=instrument["pip_size"],
-        timezone=instrument["timezone"],
-        direction_filter=_DIRECTION_MAP[request.direction],
-        entry_delay_bars=request.entryDelayBars,
-        trail_trigger_pips=request.trailTriggerPips,
-        trail_lock_pips=request.trailLockPips,
-    )
+    # ── 5. Generate signals (strategy-specific) ────────────────────────────────
+    if is_breakout:
+        from strategies.breakout import BreakoutParams as _BP
+        breakout_params = _BP(
+            asset=symbol,
+            range_start=time.fromisoformat(request.rangeStart),
+            range_end=time.fromisoformat(request.rangeEnd),
+            trigger_deadline=time.fromisoformat(request.triggerDeadline),
+            stop_loss_pips=request.stopLoss,
+            take_profit_pips=request.takeProfit,
+            pip_size=instrument["pip_size"],
+            timezone=instrument["timezone"],
+            direction_filter=_DIRECTION_MAP[request.direction],
+            entry_delay_bars=request.entryDelayBars,
+            trail_trigger_pips=request.trailTriggerPips,
+            trail_lock_pips=request.trailLockPips,
+        )
+        strategy = BreakoutStrategy()
+        try:
+            signals_df, skipped_days = strategy.generate_signals(df, breakout_params)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
-    strategy = BreakoutStrategy()
-    try:
-        signals_df, skipped_days = strategy.generate_signals(df, breakout_params)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    elif request.strategy == "moving_average_crossover":
+        from strategies.moving_average import MovingAverageCrossoverStrategy, MAParams
+        ma_params = MAParams(
+            asset=symbol,
+            fast_period=request.fastPeriod,
+            slow_period=request.slowPeriod,
+            stop_loss_pips=request.stopLoss,
+            take_profit_pips=request.takeProfit,
+            pip_size=instrument["pip_size"],
+            direction_filter=_DIRECTION_MAP[request.direction],
+        )
+        strategy = MovingAverageCrossoverStrategy()
+        try:
+            signals_df, skipped_days = strategy.generate_signals(df, ma_params)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    elif request.strategy == "rsi_threshold":
+        from strategies.rsi_threshold import RSIThresholdStrategy, RSIParams
+        rsi_params = RSIParams(
+            asset=symbol,
+            rsi_period=request.rsiPeriod,
+            oversold_level=request.oversoldLevel or 30,
+            overbought_level=request.overboughtLevel or 70,
+            stop_loss_pips=request.stopLoss,
+            take_profit_pips=request.takeProfit,
+            pip_size=instrument["pip_size"],
+            direction_filter=_DIRECTION_MAP[request.direction],
+        )
+        strategy = RSIThresholdStrategy()
+        try:
+            signals_df, skipped_days = strategy.generate_signals(df, rsi_params)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Strategy '{request.strategy}' not yet implemented.")
 
     # Weekdays in [date_from, date_to] with zero bars in the filtered df get
     # reported as NO_BARS so they appear in the trade list as no-trade days.
@@ -1222,12 +1291,13 @@ async def backtest_orchestrate(
             sig_ts = signal_before_entry.index[-1]
             range_high_val = float(signals_df.at[sig_ts, "long_entry"]) if pd.notna(signals_df.at[sig_ts, "long_entry"]) else 0.0
             range_low_val = float(signals_df.at[sig_ts, "short_entry"]) if pd.notna(signals_df.at[sig_ts, "short_entry"]) else 0.0
-            # Undo the entry_offset to get the actual range extremes
-            entry_offset = breakout_params.entry_offset_pips * breakout_params.pip_size
-            range_high_val = range_high_val - entry_offset if range_high_val != 0.0 else 0.0
-            range_low_val = range_low_val + entry_offset if range_low_val != 0.0 else 0.0
+            # Undo the entry_offset to get the actual range extremes (breakout only)
+            if is_breakout:
+                entry_offset = breakout_params.entry_offset_pips * breakout_params.pip_size
+                range_high_val = range_high_val - entry_offset if range_high_val != 0.0 else 0.0
+                range_low_val = range_low_val + entry_offset if range_low_val != 0.0 else 0.0
             stop_loss_val = float(signals_df.at[sig_ts, sl_col]) if pd.notna(signals_df.at[sig_ts, sl_col]) else 0.0
-            take_profit_val = float(signals_df.at[sig_ts, tp_col]) if pd.notna(signals_df.at[sig_ts, tp_col]) else 0.0
+            take_profit_val = float(signals_df.at[sig_ts, tp_col]) if (tp_col in signals_df.columns and pd.notna(signals_df.at[sig_ts, tp_col])) else 0.0
         else:
             range_high_val = 0.0
             range_low_val = 0.0
@@ -1287,6 +1357,30 @@ async def backtest_orchestrate(
     )
 
 
+@app.post("/backtest", response_model=BacktestOrchestrationResponse)
+async def backtest_orchestrate(
+    request: BacktestOrchestrationRequest,
+    token: dict = Depends(verify_jwt),
+):
+    """
+    Full orchestration: fetch data → generate signals → run engine → analytics.
+
+    Accepts a user-friendly configuration object from the frontend UI and
+    returns a complete result ready for display (metrics, equity curve,
+    drawdown curve, trade list).
+
+    Rate limit: 30 requests / minute per user (shared with /backtest/run).
+    Any authenticated user may call this endpoint.
+    """
+    user_id: str = token["sub"]
+
+    if not _check_backtest_rate_limit(user_id):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded: max 30 backtest requests per minute.",
+        )
+
+    return await _backtest_orchestrate_inner(request, user_id)
 
 
 @app.get("/backtest/candles", response_model=List[CandleOut])
@@ -1791,7 +1885,7 @@ async def _run_single_backtest(request: BacktestOrchestrationRequest, user_id: s
     Returns a dict with keys: profit_factor, sharpe_ratio, win_rate, total_trades, net_profit, error.
     """
     try:
-        result = await backtest_orchestrate(request, token={"sub": user_id})
+        result = await _backtest_orchestrate_inner(request, user_id)
         m = result.metrics
         return {
             "profit_factor": m.profit_factor,
