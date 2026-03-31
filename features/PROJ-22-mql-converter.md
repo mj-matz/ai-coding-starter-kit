@@ -116,7 +116,155 @@ The following are approximated or flagged as unsupported:
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /architecture_
+
+### Dependency Note
+PROJ-21 (AI Strategy Generator) is listed as a dependency because both features share a **Python sandbox** and **Claude API integration**. Since PROJ-21 is still Planned, PROJ-22 will build the sandbox infrastructure first — PROJ-21 will reuse it.
+
+---
+
+### Page Structure (Visual Tree)
+
+```
+/mql-converter  (new page, login required)
++-- Tabs: "Converter" | "My Conversions"
+|
++-- [Tab: Converter]
+|   +-- Input Panel
+|   |   +-- MQL Code Textarea (large, monospace font)
+|   |   +-- MQL Version Selector (Auto / MQL4 / MQL5)
+|   |   +-- Asset & Date Range Selector (reused from backtest)
+|   |   +-- "Convert & Backtest" Button
+|   |
+|   +-- Warning Banners (appear after conversion)
+|   |   +-- Yellow: list of approximated functions
+|   |   +-- Red: > 50% order management unsupported
+|   |   +-- Blue: info about special EA patterns (#include, etc.)
+|   |
+|   +-- Progress Bar (while backtest runs)
+|   |
+|   +-- Results Panel (reused from backtest)
+|   |   +-- Metrics Summary
+|   |   +-- Equity Curve
+|   |   +-- Trade List
+|   |
+|   +-- Code Review Panel (collapsible, appears after conversion)
+|   |   +-- Generated Python Code (editable, syntax-highlighted)
+|   |   +-- "Re-run Backtest" Button (no Claude API call)
+|   |   +-- Function Mapping Table (MQL → Python / Approximation / Unsupported)
+|   |
+|   +-- "Save Conversion" Button + Name Input
+|
++-- [Tab: My Conversions]
+    +-- Conversions List
+        +-- Conversion Card (name, date, asset, key metrics)
+        +-- "Re-run" Button (loads code into Converter tab)
+        +-- "Delete" Button
+```
+
+---
+
+### Data Model (Plain Language)
+
+**Table: `mql_conversions`**
+
+Each saved conversion stores:
+- Unique ID
+- Owning user (user-scoped via RLS)
+- Name (max 100 characters)
+- Original MQL code (max 50,000 characters)
+- MQL version (mql4 / mql5 / auto)
+- Generated Python code
+- Mapping report (JSON: list of MQL functions with status and Python equivalent)
+- Last backtest result (JSON: metrics + trade count)
+- Created timestamp
+
+**Rate-limit tracking:** Server-side counter (max 10 conversions per user per hour). No separate DB table needed — tracked via a timestamp-windowed query on the conversions table.
+
+---
+
+### API Routes
+
+| Route | Purpose |
+|---|---|
+| `POST /api/mql-converter/convert` | Send MQL code to Claude API → return Python code + mapping report |
+| `POST /api/mql-converter/run` | Execute Python code in sandbox + run backtest |
+| `GET /api/mql-converter/saves` | Load all saved conversions for the current user |
+| `POST /api/mql-converter/saves` | Save a conversion with a name |
+| `DELETE /api/mql-converter/saves/[id]` | Delete a saved conversion |
+
+---
+
+### Python Sandbox (New Infrastructure)
+
+The sandbox is the critical new building block — an isolated Python execution environment:
+
+- **Isolation:** Generated code runs in a separate Python subprocess, never in the main process
+- **Import whitelist:** Only allowed imports (pandas, pandas_ta, numpy) — all others blocked
+- **Timeout:** 60-second maximum execution time
+- **No network access** from the sandbox process
+
+This infrastructure is built as part of PROJ-22 and will be reused by PROJ-21.
+
+---
+
+### Conversion Workflow (Steps)
+
+```
+User clicks "Convert & Backtest"
+        │
+        ▼
+[1] Frontend: MQL keyword check (local validation)
+        │ invalid → error message, no API call
+        ▼
+[2] API /convert: check rate limit (max 10/hour)
+        │ exceeded → 429 error
+        ▼
+[3] Sanitize MQL code (strip null bytes, cap at 50,000 chars)
+        │
+        ▼
+[4] Call Claude API (server-side only, API key never in browser)
+        │ → Returns: Python code + mapping report + warning list
+        ▼
+[5] Evaluate warnings and display banners
+        │
+        ▼
+[6] API /run: execute Python code in sandbox + run backtest
+        │ error → show traceback, "Retry" button
+        ▼
+[7] Display results (metrics, equity curve, trade list)
+```
+
+---
+
+### Tech Decisions
+
+| Decision | Why |
+|---|---|
+| Claude API called server-side only | API key must never reach the browser — security requirement |
+| Reuse existing backtest components | `configuration-panel`, `results-panel`, `trade-list-table` already exist — no duplication |
+| MQL keyword check in frontend | Prevents unnecessary Claude API calls for obviously invalid input |
+| Mapping report stored as JSON in DB | Flexible for querying; can be used for analytics later |
+| Re-run skips Claude API | Saves API costs; user edits Python only, not MQL |
+
+---
+
+### New Dependencies
+
+| Package | Purpose |
+|---|---|
+| `@anthropic-ai/sdk` | Claude API (server-side) |
+| `@monaco-editor/react` or `react-syntax-highlighter` | Syntax highlighting for MQL and Python code |
+
+---
+
+### Reused Components
+
+- `src/components/backtest/configuration-panel.tsx` — Asset + date range selector
+- `src/components/backtest/results-panel.tsx` — Metrics, charts, trade list
+- `src/components/backtest/metrics-summary-card.tsx`
+- `src/components/backtest/equity-curve-chart.tsx`
+- `src/components/backtest/trade-list-table.tsx`
+- `src/components/auth/app-sidebar.tsx` — new navigation entry
 
 ## QA Test Results
 _To be added by /qa_
