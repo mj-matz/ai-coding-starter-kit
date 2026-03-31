@@ -17,7 +17,7 @@
 | PROJ-3 | Time-Range Breakout Strategy | Deployed | [PROJ-3-time-range-breakout-strategy.md](PROJ-3-time-range-breakout-strategy.md) | 2026-03-09 |
 | PROJ-4 | Performance Analytics | Deployed | [PROJ-4-performance-analytics.md](PROJ-4-performance-analytics.md) | 2026-03-09 |
 | PROJ-5 | Backtest UI (Configuration + Results) | Deployed | [PROJ-5-backtest-ui.md](PROJ-5-backtest-ui.md) | 2026-03-09 |
-| PROJ-6 | Strategy Library (Plugin System) | Planned | [PROJ-6-strategy-library.md](PROJ-6-strategy-library.md) | 2026-03-09 |
+| PROJ-6 | Strategy Library (Plugin System) | In Review | [PROJ-6-strategy-library.md](PROJ-6-strategy-library.md) | 2026-03-09 |
 | PROJ-7 | Trade Journal (Manual) | Planned | [PROJ-7-trade-journal.md](PROJ-7-trade-journal.md) | 2026-03-09 |
 | PROJ-8 | Authentication (Admin Login) | Deployed | [PROJ-8-authentication.md](PROJ-8-authentication.md) | 2026-03-10 |
 | PROJ-9 | Backtest History | Deployed | [PROJ-9-backtest-history.md](PROJ-9-backtest-history.md) | 2026-03-10 |
@@ -39,6 +39,9 @@
 | PROJ-24 | Trade List & Results UI Enhancements | Deployed | [PROJ-24-trade-list-results-ui-enhancements.md](PROJ-24-trade-list-results-ui-enhancements.md) | 2026-03-25 |
 | PROJ-25 | Export Backtest Results (Excel / CSV) | Deployed | [PROJ-25-export-backtest-results.md](PROJ-25-export-backtest-results.md) | 2026-03-26 |
 
+| PROJ-26 | Strategy Export to MT5 EA | In Progress | [PROJ-26-strategy-export-mt5-ea.md](PROJ-26-strategy-export-mt5-ea.md) | 2026-03-31 |
+| PROJ-27 | Persistent Market Data Store (Monthly Chunks) | Planned | [PROJ-27-persistent-market-data-store.md](PROJ-27-persistent-market-data-store.md) | 2026-03-31 |
+
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-26
+## Next Available ID: PROJ-28
