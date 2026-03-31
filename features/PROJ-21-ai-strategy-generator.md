@@ -107,7 +107,175 @@ After the first backtest result:
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /architecture_
+
+### Relationship to PROJ-22 (MQL Converter)
+PROJ-22 builds the **Python sandbox infrastructure** (already decided in PROJ-22 architecture). PROJ-21 **inherits this sandbox** and should be developed after PROJ-22. Both features also share the Claude API integration layer.
+
+**Recommended development order:** PROJ-22 first → PROJ-21 second.
+
+---
+
+### Page Structure (Visual Tree)
+
+```
+/ai-agent  (new page, login required)
++-- Tabs: "Generator" | "My Strategies"
+|
++-- [Tab: Generator]
+|   +-- Asset & Date Range Selector (reused, required before generating)
+|   |
+|   +-- Conversation Area (scrollable, grows downward)
+|   |   +-- User Message Card (text + image thumbnails)
+|   |   +-- Agent Response Card
+|   |   |   +-- Mode Badge ("Parameter Mapping" or "Code Generation")
+|   |   |   +-- Strategy Logic (plain-language explanation)
+|   |   |   +-- [Mode B] Collapsible: Generated Python Code
+|   |   |   +-- Iteration Badge (e.g. "Iteration 1 of 2 — auto-refined")
+|   |   |   +-- Progress Bar (while backtest runs)
+|   |   |   +-- Backtest Results (Metrics + Equity Curve + Trade List, inline)
+|   |   |   +-- "Save Strategy" Button + Name Input
+|   |   |
+|   |   +-- (further iteration/refinement cards below)
+|   |
+|   +-- Session Cost Badge (top right: "3 API calls · ~$0.02")
+|   |
+|   +-- Input Area (bottom, fixed)
+|       +-- Text Input ("Describe your strategy idea...")
+|       +-- Image Upload Zone (drag & drop, max 4 images)
+|       |   +-- Image Thumbnails with "Remove" button
+|       +-- "Generate Strategy" Button
+|       +-- (after first result:) Follow-up Prompt Field
+|
++-- [Tab: My Strategies]
+    +-- Strategies List
+        +-- Strategy Card (name, date, type, key metrics)
+        +-- "Re-run" Button (loads strategy into Generator tab)
+        +-- "Delete" Button
+```
+
+---
+
+### Data Model (Plain Language)
+
+**Table: `ai_strategies`**
+
+Each saved strategy stores:
+- Unique ID
+- Owning user (user-scoped via RLS)
+- Name (max 100 characters)
+- Original input prompt
+- Image references (list of Supabase Storage paths)
+- Output type (parameter_mapping or code_generation)
+- Parameters as JSON **or** Python code (depending on type)
+- Plain-language explanation of the strategy logic
+- Last backtest result (JSON: metrics + trade count)
+- Number of Claude API calls in the session
+- Estimated API cost in USD
+- Created timestamp
+
+**Supabase Storage Bucket: `ai-agent-images`**
+- Temporary images for active sessions
+- Only path references stored in DB (no base64)
+- Images are compressed to max 1024px on the long edge before the Claude API call
+
+---
+
+### API Routes
+
+| Route | Purpose |
+|---|---|
+| `POST /api/ai-agent/generate` | Full generation loop (text + images → Claude → backtest → auto-iterate → result) |
+| `POST /api/ai-agent/refine` | Process follow-up prompt (Claude + backtest, no new session) |
+| `POST /api/ai-agent/images` | Upload image to Supabase Storage, returns path |
+| `GET /api/ai-agent/strategies` | Load saved strategies for the current user |
+| `POST /api/ai-agent/strategies` | Save a strategy with a name |
+| `DELETE /api/ai-agent/strategies/[id]` | Delete a strategy |
+
+---
+
+### Agent Workflow (Server-Side)
+
+The full iteration loop runs server-side within a single `generate` request:
+
+```
+Client sends prompt + images
+        │
+        ▼
+[1] Check rate limit (max 10 requests/hour/user)
+        │
+        ▼
+[2] Compress images (max 1024px, server-side)
+        │
+        ▼
+[3] Claude API — Iteration 1
+        Agent decides: Mode A or Mode B?
+        │
+        ├── Mode A: validate params → run backtest directly
+        └── Mode B: Python code → execute in sandbox → run backtest
+                    (sandbox error counts as one iteration)
+        │
+        ▼
+[4] Send backtest metrics to Claude
+        "Profit Factor > 1.2 and Total Trades > 20?"
+        │ yes → proceed to [6]
+        │ no  →
+        ▼
+[5] Claude API — Iteration 2 (auto-refinement)
+        Adjust strategy → sandbox → backtest
+        │
+        ▼
+[6] Stream final result to client
+        (metrics + strategy logic + code + iteration log)
+```
+
+**Streaming:** Client receives incremental updates via SSE (Server-Sent Events) — same technique used for backtest progress.
+
+---
+
+### Hybrid Output Modes in Detail
+
+| | Mode A: Parameter Mapping | Mode B: Code Generation |
+|---|---|---|
+| **When** | Idea maps to existing strategy (Breakout, SMC, etc.) | New logic not covered by any existing plugin |
+| **Claude output** | JSON with parameters | Python class |
+| **Execution** | Directly in backtest engine | Sandbox first, then engine |
+| **Risk** | Minimal | Sandbox isolation required |
+| **Display** | Parameter badge list | Collapsible code block |
+
+---
+
+### Tech Decisions
+
+| Decision | Why |
+|---|---|
+| Full loop in backend | Client-state across iterations would be error-prone; backend orchestrates atomically and can control retries |
+| SSE instead of polling | Real-time updates without overhead; already used for backtest progress |
+| Conversation history in React state only | Session history is ephemeral — only saved strategies go to DB; reduces complexity significantly |
+| Images in Supabase Storage | Base64 in DB is too large and costly; storage paths are lightweight |
+| Reuse sandbox from PROJ-22 | Don't build twice — PROJ-22 must be developed first |
+| Track API costs | User transparency; useful for future rate limits or cost caps |
+
+---
+
+### New Dependencies
+
+| Package | Purpose |
+|---|---|
+| `@anthropic-ai/sdk` | Claude API with Vision support (server-side) — already installed via PROJ-22 |
+| `react-dropzone` | Drag & drop image upload |
+| `sharp` | Server-side image compression (max 1024px) |
+
+---
+
+### Reused Components
+
+- `src/components/backtest/configuration-panel.tsx` — Asset + date range selector
+- `src/components/backtest/results-panel.tsx` — Inline results in the chat
+- `src/components/backtest/metrics-summary-card.tsx`
+- `src/components/backtest/equity-curve-chart.tsx`
+- `src/components/backtest/trade-list-table.tsx`
+- `src/components/auth/app-sidebar.tsx` — new "AI Agent" navigation entry
+- Python sandbox infrastructure from PROJ-22
 
 ## QA Test Results
 _To be added by /qa_
