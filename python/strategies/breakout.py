@@ -3,6 +3,9 @@
 Computes a consolidation range from bars within [range_start, range_end) each
 trading day, then emits OCO stop-entry signals on the first bar after
 range_end.  The engine manages pending orders, OCO cancellation, and expiry.
+
+Registry exports (PROJ-6):
+    STRATEGY_ID, STRATEGY_NAME, STRATEGY_DESC, PARAMS_SCHEMA, StrategyClass
 """
 
 from dataclasses import dataclass
@@ -12,8 +15,69 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import numpy as np
 import pandas as pd
+from pydantic import BaseModel, Field
 
 from .base import BaseStrategy
+
+# ── Registry metadata ───────────────────────────────────────────────────────
+STRATEGY_ID = "time_range_breakout"
+STRATEGY_NAME = "Time-Range Breakout"
+STRATEGY_DESC = (
+    "Berechnet eine Konsolidierungs-Range aus Bars innerhalb [rangeStart, rangeEnd) "
+    "und setzt OCO-Stop-Entry-Orders oberhalb/unterhalb der Range."
+)
+
+
+class BreakoutParamsSchema(BaseModel):
+    """Pydantic schema for UI JSON-Schema generation + validation."""
+
+    rangeStart: str = Field(
+        default="02:00",
+        pattern=r"^([01]\d|2[0-3]):[0-5]\d$",
+        json_schema_extra={"label": "Range Start", "ui_type": "time"},
+    )
+    rangeEnd: str = Field(
+        default="06:00",
+        pattern=r"^([01]\d|2[0-3]):[0-5]\d$",
+        json_schema_extra={"label": "Range End", "ui_type": "time"},
+    )
+    triggerDeadline: str = Field(
+        default="12:00",
+        pattern=r"^([01]\d|2[0-3]):[0-5]\d$",
+        json_schema_extra={"label": "Trigger Deadline", "ui_type": "time"},
+    )
+    timeExit: str = Field(
+        default="20:00",
+        pattern=r"^([01]\d|2[0-3]):[0-5]\d$",
+        json_schema_extra={"label": "Time Exit", "ui_type": "time"},
+    )
+    stopLoss: float = Field(
+        default=150, gt=0,
+        json_schema_extra={"label": "Stop Loss (Pips)"},
+    )
+    takeProfit: float = Field(
+        default=175, gt=0,
+        json_schema_extra={"label": "Take Profit (Pips)"},
+    )
+    direction: Literal["long", "short", "both"] = Field(
+        default="both",
+        json_schema_extra={"label": "Direction"},
+    )
+    entryDelayBars: int = Field(
+        default=1, ge=0,
+        json_schema_extra={"label": "Entry Delay (Bars)"},
+    )
+    trailTriggerPips: Optional[float] = Field(
+        default=None, gt=0,
+        json_schema_extra={"label": "Trail Trigger (Pips)"},
+    )
+    trailLockPips: Optional[float] = Field(
+        default=None, gt=0,
+        json_schema_extra={"label": "Trail Lock (Pips)"},
+    )
+
+
+PARAMS_SCHEMA = BreakoutParamsSchema
 
 
 @dataclass
@@ -398,3 +462,7 @@ class BreakoutStrategy(BaseStrategy):
         if params.trail_trigger_pips is not None:
             signals.at[signal_bar_idx, "trail_trigger_pips"] = params.trail_trigger_pips
             signals.at[signal_bar_idx, "trail_lock_pips"]    = params.trail_lock_pips
+
+
+# Registry alias
+StrategyClass = BreakoutStrategy
