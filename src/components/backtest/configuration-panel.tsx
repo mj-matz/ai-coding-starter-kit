@@ -119,6 +119,18 @@ export function ConfigurationPanel({
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [form]);
 
+  // When the strategy schema loads, fill in any missing strategyParams keys with defaults.
+  // This handles old localStorage configs saved before PROJ-6 (where params were top-level).
+  useEffect(() => {
+    if (!selectedStrategy) return;
+    const current = (form.getValues("strategyParams") ?? {}) as Record<string, unknown>;
+    const defaults = buildDefaultParams(selectedStrategy.parameters_schema);
+    const hasMissing = Object.keys(defaults).some((k) => !(k in current));
+    if (hasMissing) {
+      form.setValue("strategyParams", { ...defaults, ...current }, { shouldDirty: false });
+    }
+  }, [selectedStrategy]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // When strategy changes, reset strategyParams to the new strategy's defaults
   function handleStrategyChange(strategyId: string) {
     form.setValue("strategy", strategyId);

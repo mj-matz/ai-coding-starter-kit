@@ -138,10 +138,14 @@ export async function POST(request: NextRequest) {
     const data = await response.json();
 
     if (!response.ok) {
-      return NextResponse.json(
-        { error: data.detail || data.error || "Backtest failed" },
-        { status: response.status }
-      );
+      const detail = data.detail;
+      const errorMsg =
+        typeof detail === "string"
+          ? detail
+          : Array.isArray(detail)
+          ? detail.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join("; ")
+          : data.error || "Backtest failed";
+      return NextResponse.json({ error: errorMsg }, { status: response.status });
     }
 
     return NextResponse.json(data, { status: 200 });
