@@ -139,7 +139,7 @@ function ParamField({ name, field, value, onChange }: FieldProps) {
 
   // Number / Integer
   if (baseType === "number" || baseType === "integer") {
-    const step = baseType === "integer" ? 1 : 0.1;
+    const step = baseType === "integer" ? 1 : "any";
     return (
       <div>
         <Label className="text-gray-300 text-sm">
