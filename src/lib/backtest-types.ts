@@ -13,37 +13,20 @@ export const backtestFormSchema = z
     startDate: z.string().min(1, "Start date is required"),
     endDate: z.string().min(1, "End date is required"),
 
-    // Strategy parameters (Time-Range Breakout)
-    rangeStart: z
-      .string()
-      .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Must be HH:MM"),
-    rangeEnd: z
-      .string()
-      .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Must be HH:MM"),
-    triggerDeadline: z
-      .string()
-      .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Must be HH:MM"),
-    timeExit: z
-      .string()
-      .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Must be HH:MM"),
-    stopLoss: z.coerce.number().positive("Stop Loss must be > 0"),
-    takeProfit: z.coerce.number().positive("Take Profit must be > 0"),
-    direction: z.enum(["long", "short", "both"]),
+    // Strategy-specific params (schema-driven — populated from Python strategy Pydantic schema)
+    strategyParams: z.record(z.string(), z.unknown()).default({}),
+
+    // Engine params (always present regardless of strategy)
     commission: z.coerce.number().min(0, "Commission must be >= 0"),
     slippage: z.coerce.number().min(0, "Slippage must be >= 0"),
-    entryDelayBars: z.coerce.number().int().min(0, "Entry delay must be >= 0").default(1),
 
-    // Optional profit-lock (trail)
-    trailTriggerPips: z.coerce.number().positive("Trail trigger must be > 0").optional(),
-    trailLockPips: z.coerce.number().positive("Trail lock must be > 0").optional(),
-
-    // Trading day filter (0=Mo, 1=Di, 2=Mi, 3=Do, 4=Fr — Python weekday())
+    // Trading day filter (0=Mo … 4=Fr)
     tradingDays: z
       .array(z.number().int().min(0).max(4))
       .min(1, "At least one trading day required")
       .default([0, 1, 2, 3, 4]),
 
-    // News day filter — when true, days with high-impact events are skipped
+    // News day filter
     tradeNewsDays: z.boolean().default(true),
 
     // Simulation options
@@ -63,29 +46,6 @@ export const backtestFormSchema = z
     message: "End date must be after start date",
     path: ["endDate"],
   })
-  .refine(
-    (data) => {
-      const hasTrigger = data.trailTriggerPips != null;
-      const hasLock = data.trailLockPips != null;
-      return hasTrigger === hasLock;
-    },
-    {
-      message: "Both trail parameters must be set together or both left empty",
-      path: ["trailTriggerPips"],
-    }
-  )
-  .refine(
-    (data) => {
-      if (data.trailTriggerPips != null && data.trailLockPips != null) {
-        return data.trailTriggerPips > data.trailLockPips;
-      }
-      return true;
-    },
-    {
-      message: "Trail trigger must be greater than trail lock",
-      path: ["trailTriggerPips"],
-    }
-  )
   .refine(
     (data) =>
       data.sizingMode === "risk_percent"
@@ -107,18 +67,18 @@ export const defaultFormValues: BacktestFormValues = {
   timeframe: "1m",
   startDate: "",
   endDate: "",
-  rangeStart: "02:00",
-  rangeEnd: "06:00",
-  triggerDeadline: "12:00",
-  timeExit: "20:00",
-  stopLoss: 150,
-  takeProfit: 175,
-  direction: "both",
+  strategyParams: {
+    rangeStart: "02:00",
+    rangeEnd: "06:00",
+    triggerDeadline: "12:00",
+    timeExit: "20:00",
+    stopLoss: 150,
+    takeProfit: 175,
+    direction: "both",
+    entryDelayBars: 1,
+  },
   commission: 0,
   slippage: 0,
-  entryDelayBars: 1,
-  trailTriggerPips: undefined,
-  trailLockPips: undefined,
   tradingDays: [0, 1, 2, 3, 4],
   tradeNewsDays: true,
   gapFill: false,
@@ -248,7 +208,7 @@ export function loadConfigFromStorage(): BacktestFormValues | null {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    // Validate against schema - if invalid, return null
+    // Validate against schema — returns null if shape changed (e.g. after schema migration)
     const result = backtestFormSchema.safeParse(parsed);
     return result.success ? result.data : null;
   } catch {

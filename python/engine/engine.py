@@ -165,6 +165,7 @@ def run_backtest(
     _trail_lock    = signals["trail_lock_pips"].to_numpy(dtype=float)    if "trail_lock_pips"    in signals.columns else _nan_col
     _nat_col       = np.array([pd.NaT] * len(signals))
     _sig_expiry    = signals["signal_expiry"].to_numpy() if "signal_expiry" in signals.columns else _nat_col
+    _signal_exit   = signals["signal_exit"].to_numpy(dtype=float) if "signal_exit" in signals.columns else _nan_col
 
     # ── Option B: Pre-compute time-exit flags (avoid tz_convert per bar) ─────
     if exit_time is not None:
@@ -219,6 +220,58 @@ def run_backtest(
                 )
                 position = None
                 pending_orders = []
+
+        # ── 1a2. Signal exit (PROJ-6) ──────────────────────────────────────
+        # If the strategy placed a signal_exit flag on this bar (or the
+        # previous bar — signals are one bar delayed like entries), close
+        # the position at bar open.
+        if position is not None and i > 0 and not np.isnan(_signal_exit[i - 1]):
+            trade = close_position(position, bar_time, bar_open, "SIGNAL", config,
+                                   used_1s_resolution=position.any_1s_used)
+            trades.append(trade)
+            balance += trade.pnl_currency
+            equity_curve.append(
+                {"time": bar_time.isoformat(), "balance": round(balance, 2)}
+            )
+            position = None
+            pending_orders = []
+            # BUG-3 fix: if the signal_exit bar also carried a new entry signal
+            # (flip trade, e.g. MA Crossover direction=both), queue it now so
+            # section 2 can evaluate it on this same bar.
+            _le_flip = _long_entry[i - 1]
+            _se_flip = _short_entry[i - 1]
+            if not (np.isnan(_le_flip) and np.isnan(_se_flip)):
+                _raw_exp_flip = _sig_expiry[i - 1]
+                _expiry_flip: Optional[pd.Timestamp] = (
+                    pd.Timestamp(_raw_exp_flip) if not pd.isnull(_raw_exp_flip) else None
+                )
+                _ttp_flip = float(_trail_trigger[i - 1]) if not np.isnan(_trail_trigger[i - 1]) else None
+                _tlp_flip = float(_trail_lock[i - 1]) if not np.isnan(_trail_lock[i - 1]) else None
+                flip_orders: List[PendingOrder] = []
+                if not np.isnan(_le_flip):
+                    _ltp_flip = _long_tp[i - 1]
+                    flip_orders.append(PendingOrder(
+                        direction="long",
+                        entry_price=float(_le_flip),
+                        sl_price=float(_long_sl[i - 1]),
+                        tp_price=float(_ltp_flip) if not np.isnan(_ltp_flip) else None,
+                        expiry=_expiry_flip,
+                        trail_trigger_pips=_ttp_flip,
+                        trail_lock_pips=_tlp_flip,
+                    ))
+                if not np.isnan(_se_flip):
+                    _stp_flip = _short_tp[i - 1]
+                    flip_orders.append(PendingOrder(
+                        direction="short",
+                        entry_price=float(_se_flip),
+                        sl_price=float(_short_sl[i - 1]),
+                        tp_price=float(_stp_flip) if not np.isnan(_stp_flip) else None,
+                        expiry=_expiry_flip,
+                        trail_trigger_pips=_ttp_flip,
+                        trail_lock_pips=_tlp_flip,
+                    ))
+                if flip_orders:
+                    pending_orders = flip_orders
 
         # ── 1b & 1c. Trail trigger + SL/TP (with PROJ-15 ambiguity resolution)
         if position is not None:

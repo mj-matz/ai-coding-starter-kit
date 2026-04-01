@@ -41,6 +41,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Always update Supabase first — Supabase is the source of truth.
+  // This must run before the FastAPI call so it isn't skipped by a timeout.
+  await supabase
+    .from("optimization_runs")
+    .update({
+      status: "cancelled",
+      finished_at: new Date().toISOString(),
+    })
+    .eq("id", jobId)
+    .eq("user_id", user.id);
+
   try {
     const {
       data: { session },
@@ -62,30 +73,14 @@ export async function POST(request: NextRequest) {
     });
 
     const data = await response.json();
-
-    // Always update Supabase to cancelled — even if FastAPI returns 404
-    // (job may have finished or server restarted; Supabase is the source of truth)
-    await supabase
-      .from("optimization_runs")
-      .update({
-        status: "cancelled",
-        finished_at: new Date().toISOString(),
-      })
-      .eq("id", jobId)
-      .eq("user_id", user.id);
-
     return NextResponse.json(data, { status: response.ok ? response.status : 200 });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
-      return NextResponse.json(
-        { error: "Cancel request timed out" },
-        { status: 504 }
-      );
+      // FastAPI was busy — DB is already cancelled, return success
+      return NextResponse.json({ message: "Job cancelled" }, { status: 200 });
     }
     console.error("Optimizer cancel proxy error:", error);
-    return NextResponse.json(
-      { error: "Failed to cancel optimizer job" },
-      { status: 502 }
-    );
+    // DB is already cancelled — still return success to the client
+    return NextResponse.json({ message: "Job cancelled" }, { status: 200 });
   }
 }

@@ -26,22 +26,14 @@ const OptimizerRunSchema = z.object({
   timeframe: z.enum(["1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"]),
   startDate: z.string().min(1),
   endDate: z.string().min(1),
-  rangeStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-  rangeEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-  triggerDeadline: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-  timeExit: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-  stopLoss: z.number().positive(),
-  takeProfit: z.number().positive(),
-  direction: z.enum(["long", "short", "both"]),
+  // Strategy-specific params (schema-driven)
+  strategyParams: z.record(z.string(), z.unknown()).default({}),
   commission: z.number().min(0).default(0),
   slippage: z.number().min(0).default(0),
   initialCapital: z.number().positive(),
   sizingMode: z.enum(["risk_percent", "fixed_lot"]),
   riskPercent: z.number().positive().max(100).optional(),
   fixedLot: z.number().positive().optional(),
-  entryDelayBars: z.number().int().min(0).default(1),
-  trailTriggerPips: z.number().positive().optional(),
-  trailLockPips: z.number().positive().optional(),
   gapFill: z.boolean().default(false),
   tradingDays: z.array(z.number().int().min(0).max(4)).default([0, 1, 2, 3, 4]),
   newsDates: z.array(z.string()).optional(),
@@ -120,10 +112,13 @@ export async function POST(request: NextRequest) {
       headers["Authorization"] = `Bearer ${session.access_token}`;
     }
 
+    const { strategyParams, ...engineParams } = parsed.data;
+    const fastapiBody = { ...engineParams, ...strategyParams };
+
     const response = await fetch(`${FASTAPI_URL}/optimize/start`, {
       method: "POST",
       headers,
-      body: JSON.stringify(parsed.data),
+      body: JSON.stringify(fastapiBody),
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
 
@@ -134,7 +129,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Create an optimization_runs record in Supabase
-    const { parameter_group, target_metric, parameter_ranges, ...backtest_config } = parsed.data;
+    const { parameter_group, target_metric, parameter_ranges, strategyParams: _sp, ...backtest_config } = parsed.data;
 
     const { error: insertError } = await supabase
       .from("optimization_runs")

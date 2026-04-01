@@ -43,7 +43,7 @@ class Trade:
     entry_price: float
     exit_time: datetime
     exit_price: float
-    exit_reason: Literal["SL", "SL_TRAILED", "TP", "TIME"]
+    exit_reason: Literal["SL", "SL_TRAILED", "TP", "TIME", "SIGNAL"]
     direction: Literal["long", "short"]
     lot_size: float
     pnl_pips: float

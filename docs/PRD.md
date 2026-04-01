@@ -33,6 +33,7 @@ A personal web-based backtesting platform for systematic trading strategies. The
 | P2 | AI Strategy Generator (Text + Screenshot → Backtest) | Planned |
 | P2 | MQL Converter (MQL4/MQL5 EA → Python Backtest) | Planned |
 | P1 | Export Backtest Results (Excel / CSV) | Planned |
+| P1 | Strategy Export to MT5 EA | Planned |
 
 ## Success Metrics
 - Backtesting engine produces identical results on repeated runs (deterministic)

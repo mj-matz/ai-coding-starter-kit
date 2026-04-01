@@ -1141,8 +1141,8 @@ async def _backtest_orchestrate_inner(
         rsi_params = RSIParams(
             asset=symbol,
             rsi_period=request.rsiPeriod,
-            oversold_level=request.oversoldLevel or 30,
-            overbought_level=request.overboughtLevel or 70,
+            oversold_level=request.oversoldLevel if request.oversoldLevel is not None else 30,
+            overbought_level=request.overboughtLevel if request.overboughtLevel is not None else 70,
             stop_loss_pips=request.stopLoss,
             take_profit_pips=request.takeProfit,
             pip_size=instrument["pip_size"],

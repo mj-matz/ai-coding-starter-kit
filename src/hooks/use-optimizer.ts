@@ -215,14 +215,18 @@ export function useOptimizer(): UseOptimizerReturn {
     cancelledRef.current = true;
     stopPolling();
 
+    // Snapshot results before async operations
+    const currentResults = results;
+
     try {
       await fetch(`/api/optimizer/cancel/${jobId}`, { method: "POST" });
-      setStatus("cancelled");
     } catch {
-      // Even if cancel request fails, we stop locally
-      setStatus("cancelled");
+      // API call failed — DB was already updated server-side before the error
     }
-  }, [jobId, stopPolling]);
+
+    await saveResults(jobId, currentResults, "cancelled");
+    setStatus("cancelled");
+  }, [jobId, stopPolling, results, saveResults]);
 
   // ── Force-reset stuck jobs ────────────────────────────────────────────
 

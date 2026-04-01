@@ -48,8 +48,12 @@ export function ConfigInheritancePanel({ config, historicalDate }: ConfigInherit
 }
 
 function ConfigBadges({ config }: { config: BacktestFormValues }) {
+  const p = config.strategyParams as Record<string, unknown>;
   return (
     <div className="flex flex-wrap gap-2">
+      <Badge variant="secondary" className="bg-blue-600/20 text-blue-300 border-blue-500/30">
+        {config.strategy}
+      </Badge>
       <Badge variant="secondary" className="bg-blue-600/20 text-blue-300 border-blue-500/30">
         {config.symbol}
       </Badge>
@@ -59,21 +63,29 @@ function ConfigBadges({ config }: { config: BacktestFormValues }) {
       <Badge variant="secondary" className="bg-white/10 text-gray-300 border-white/10">
         {config.startDate} - {config.endDate}
       </Badge>
-      <Badge variant="secondary" className="bg-white/10 text-gray-300 border-white/10">
-        SL: {config.stopLoss} / TP: {config.takeProfit}
-      </Badge>
-      <Badge variant="secondary" className="bg-white/10 text-gray-300 border-white/10">
-        Range: {config.rangeStart} - {config.rangeEnd}
-      </Badge>
-      <Badge variant="secondary" className="bg-white/10 text-gray-300 border-white/10">
-        Deadline: {config.triggerDeadline}
-      </Badge>
-      <Badge variant="secondary" className="bg-white/10 text-gray-300 border-white/10">
-        Exit: {config.timeExit}
-      </Badge>
-      {config.trailTriggerPips != null && (
+      {p.stopLoss != null && (
         <Badge variant="secondary" className="bg-white/10 text-gray-300 border-white/10">
-          Trail: {config.trailTriggerPips}/{config.trailLockPips}
+          SL: {String(p.stopLoss)} / TP: {p.takeProfit != null ? String(p.takeProfit) : "—"}
+        </Badge>
+      )}
+      {p.rangeStart != null && (
+        <Badge variant="secondary" className="bg-white/10 text-gray-300 border-white/10">
+          Range: {String(p.rangeStart)} - {String(p.rangeEnd)}
+        </Badge>
+      )}
+      {p.triggerDeadline != null && (
+        <Badge variant="secondary" className="bg-white/10 text-gray-300 border-white/10">
+          Deadline: {String(p.triggerDeadline)}
+        </Badge>
+      )}
+      {p.timeExit != null && (
+        <Badge variant="secondary" className="bg-white/10 text-gray-300 border-white/10">
+          Exit: {String(p.timeExit)}
+        </Badge>
+      )}
+      {p.trailTriggerPips != null && (
+        <Badge variant="secondary" className="bg-white/10 text-gray-300 border-white/10">
+          Trail: {String(p.trailTriggerPips)}/{String(p.trailLockPips)}
         </Badge>
       )}
     </div>

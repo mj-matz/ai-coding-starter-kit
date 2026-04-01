@@ -39,9 +39,6 @@ function BacktestPageInner() {
   const { saveRun, isSaving } = useBacktestRuns();
   const { toast } = useToast();
   const [initialCapital, setInitialCapital] = useState(10000);
-  const [rangeStart, setRangeStart] = useState("02:00");
-  const [rangeEnd, setRangeEnd] = useState("06:00");
-  const [triggerDeadline, setTriggerDeadline] = useState("12:00");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [symbol, setSymbol] = useState("XAUUSD");
@@ -50,9 +47,6 @@ function BacktestPageInner() {
 
   function handleRunBacktest(config: BacktestFormValues) {
     setInitialCapital(config.initialCapital);
-    setRangeStart(config.rangeStart);
-    setRangeEnd(config.rangeEnd);
-    setTriggerDeadline(config.triggerDeadline);
     setStartDate(config.startDate);
     setEndDate(config.endDate);
     setSymbol(config.symbol);
@@ -93,6 +87,12 @@ function BacktestPageInner() {
   );
 
   const defaultRunName = `${symbol} ${strategy} ${startDate}`;
+
+  // Extract strategy-specific chart params from strategyParams (may be absent for non-breakout strategies)
+  const sp = (lastConfig?.strategyParams ?? {}) as Record<string, unknown>;
+  const rangeStart = sp.rangeStart != null ? String(sp.rangeStart) : "";
+  const rangeEnd = sp.rangeEnd != null ? String(sp.rangeEnd) : "";
+  const triggerDeadline = sp.triggerDeadline != null ? String(sp.triggerDeadline) : undefined;
 
   return (
     <>

@@ -18,22 +18,14 @@ const BacktestRequestSchema = z
     timeframe: z.enum(["1m", "2m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"]),
     startDate: z.string().min(1),
     endDate: z.string().min(1),
-    rangeStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-    rangeEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-    triggerDeadline: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-    timeExit: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-    stopLoss: z.number().positive(),
-    takeProfit: z.number().positive(),
-    direction: z.enum(["long", "short", "both"]),
+    // Strategy-specific params — validated by the Python strategy schema on the FastAPI side
+    strategyParams: z.record(z.string(), z.unknown()).default({}),
     commission: z.number().min(0),
     slippage: z.number().min(0),
     initialCapital: z.number().positive(),
     sizingMode: z.enum(["risk_percent", "fixed_lot"]),
     riskPercent: z.number().min(0.01).max(100).optional(),
     fixedLot: z.number().positive().optional(),
-    entryDelayBars: z.number().int().min(0).default(1),
-    trailTriggerPips: z.number().positive().optional(),
-    trailLockPips: z.number().positive().optional(),
     tradingDays: z.array(z.number().int().min(0).max(4)).min(1).default([0, 1, 2, 3, 4]),
     tradeNewsDays: z.boolean().default(true),
     newsDates: z.array(z.string()).optional(),
@@ -50,23 +42,6 @@ const BacktestRequestSchema = z
     {
       message: "Provide risk_percent or fixed_lot based on sizing_mode",
     }
-  )
-  .refine(
-    (data) => {
-      const hasTrigger = data.trailTriggerPips != null;
-      const hasLock = data.trailLockPips != null;
-      return hasTrigger === hasLock;
-    },
-    { message: "Both trail parameters must be set together or both omitted" }
-  )
-  .refine(
-    (data) => {
-      if (data.trailTriggerPips != null && data.trailLockPips != null) {
-        return data.trailTriggerPips > data.trailLockPips;
-      }
-      return true;
-    },
-    { message: "trailTriggerPips must be greater than trailLockPips" }
   );
 
 // ── Route handler ────────────────────────────────────────────────────────────
@@ -135,7 +110,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Forward to FastAPI orchestration endpoint
+  // Forward to FastAPI — spread strategyParams flat so Python receives a single-level object
   try {
     const {
       data: { session },
@@ -150,10 +125,13 @@ export async function POST(request: NextRequest) {
       headers["Authorization"] = `Bearer ${session.access_token}`;
     }
 
+    const { strategyParams, ...engineParams } = parsed.data;
+    const fastapiBody = { ...strategyParams, ...engineParams };
+
     const response = await fetch(`${FASTAPI_URL}/backtest`, {
       method: "POST",
       headers,
-      body: JSON.stringify(parsed.data),
+      body: JSON.stringify(fastapiBody),
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
 

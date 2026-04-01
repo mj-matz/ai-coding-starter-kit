@@ -44,8 +44,8 @@ interface ParamDef {
   unit: string;
   /** Min and Max are displayed as HH:MM time pickers; Step remains in minutes */
   isTimeInput?: boolean;
-  /** Key in BacktestFormValues that provides the current config value for smart defaults */
-  configKey?: keyof BacktestFormValues;
+  /** Key in strategyParams that provides the current config value for smart defaults */
+  configKey?: string;
   defaults: { min: number; max: number; step: number };
 }
 
@@ -88,7 +88,8 @@ function getSmartDefaults(
       continue;
     }
 
-    const raw = config[def.configKey];
+    const sp = (config.strategyParams ?? {}) as Record<string, unknown>;
+    const raw = def.configKey ? sp[def.configKey] : undefined;
 
     if (def.isTimeInput && typeof raw === "string" && /^\d{2}:\d{2}$/.test(raw)) {
       const current = timeToMinutes(raw);
