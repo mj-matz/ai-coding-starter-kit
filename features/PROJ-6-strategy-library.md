@@ -1,6 +1,6 @@
 # PROJ-6: Strategy Library (Plugin System)
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-03-09
 **Last Updated:** 2026-04-01
 
@@ -176,4 +176,13 @@ Keine neuen Pakete — Pydantic bereits installiert.
 Alle HIGH- und MEDIUM-Bugs gefixt (2026-04-01). Verbleibende LOW-Bugs (BUG-4 bis BUG-6) sind nicht deployment-blockierend.
 
 ## Deployment
-_To be added by /deploy_
+
+**Deployed:** 2026-04-01
+**Commit:** 3d2e6bc
+**Branch:** main → Vercel Auto-Deploy
+
+### Post-Deployment Checklist
+- [ ] Production URL lädt korrekt
+- [ ] Strategy Selector zeigt alle 3 Strategien an
+- [ ] DynamicParamForm rendert korrekte Felder je Strategie
+- [ ] Backtest mit Moving Average Crossover und RSI Threshold funktioniert
