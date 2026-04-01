@@ -194,7 +194,7 @@ function RunDetailView({ run, onBack }: RunDetailViewProps) {
 
       {!KNOWN_STRATEGIES.includes(run.strategy) && (
         <div className="rounded-xl border border-yellow-900/50 bg-yellow-950/30 px-4 py-3 text-sm text-yellow-300">
-          Strategie &quot;{run.strategy}&quot; ist im System nicht mehr verfügbar — die gespeicherten Ergebnisse bleiben gültig, können aber nicht erneut ausgeführt werden.
+          Strategy &quot;{run.strategy}&quot; is no longer available in the system — saved results remain valid but cannot be re-run.
         </div>
       )}
 
@@ -351,7 +351,7 @@ export default function HistoryPage() {
             Backtest History
           </h1>
           <p className="mt-1 text-gray-400">
-            Alle gespeicherten Backtest-Runs auf einen Blick.
+            All saved backtest runs at a glance.
           </p>
         </div>
 
@@ -376,14 +376,14 @@ export default function HistoryPage() {
                 <TableRow className="border-white/5 hover:bg-transparent">
                   <TableHead className="text-slate-500">Name</TableHead>
                   <TableHead className="text-slate-500">Asset</TableHead>
-                  <TableHead className="text-slate-500">Zeitraum</TableHead>
-                  <TableHead className="text-slate-500">Strategie</TableHead>
+                  <TableHead className="text-slate-500">Period</TableHead>
+                  <TableHead className="text-slate-500">Strategy</TableHead>
                   <TableHead className="text-slate-500 text-right">Trades</TableHead>
                   <TableHead className="text-slate-500 text-right">Win Rate</TableHead>
                   <TableHead className="text-slate-500 text-right">Total R</TableHead>
-                  <TableHead className="text-slate-500 text-right">Ø R/Monat</TableHead>
-                  <TableHead className="text-slate-500">Gespeichert</TableHead>
-                  <TableHead className="text-slate-500 text-right">Aktionen</TableHead>
+                  <TableHead className="text-slate-500 text-right">Ø R/Month</TableHead>
+                  <TableHead className="text-slate-500">Saved</TableHead>
+                  <TableHead className="text-slate-500 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

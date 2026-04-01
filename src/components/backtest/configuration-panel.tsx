@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Loader2, Play, ChevronDown, ChevronRight } from "lucide-react";
+import { Loader2, Play, ChevronDown, ChevronRight, HelpCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -148,7 +148,21 @@ export function ConfigurationPanel({
                 name="strategy"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="text-gray-300">Strategy</FormLabel>
+                    <div className="flex items-center gap-1.5">
+                      <FormLabel className="text-gray-300">Strategy</FormLabel>
+                      {selectedStrategy && (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <HelpCircle className="h-3.5 w-3.5 text-gray-500 cursor-pointer hover:text-gray-300 transition-colors" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs text-xs" side="right">
+                              {selectedStrategy.description}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
+                    </div>
                     <Select
                       onValueChange={handleStrategyChange}
                       value={field.value}
@@ -185,11 +199,6 @@ export function ConfigurationPanel({
                   </FormItem>
                 )}
               />
-              {selectedStrategy && (
-                <p className="text-xs text-gray-500 leading-snug pt-0.5">
-                  {selectedStrategy.description}
-                </p>
-              )}
             </div>
 
             <FormField
@@ -323,7 +332,7 @@ export function ConfigurationPanel({
                 name="tradingDays"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="text-gray-300">Handelstage</FormLabel>
+                    <FormLabel className="text-gray-300">Trading Days</FormLabel>
                     <FormControl>
                       <div className="flex gap-1.5">
                         {(
@@ -384,7 +393,7 @@ export function ConfigurationPanel({
                         />
                       </FormControl>
                       <FormLabel className="cursor-pointer text-gray-300">
-                        Handel an News-Tagen
+                        Trade on News Days
                       </FormLabel>
                     </div>
                     <FormMessage />

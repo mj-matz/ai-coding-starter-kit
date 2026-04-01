@@ -145,7 +145,7 @@ function ParamField({ name, field, value, onChange }: FieldProps) {
         <Label className="text-gray-300 text-sm">
           {label}
           {optional && (
-            <span className="ml-1.5 text-xs text-gray-500">(optional)</span>
+            <span className="ml-1.5 text-xs text-gray-500">opt.</span>
           )}
         </Label>
         <Input
@@ -225,7 +225,7 @@ export function DynamicParamForm({ schema, form }: DynamicParamFormProps) {
             Advanced Parameters
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
               {advancedFields.map(([name, fieldDef]) => (
                 <ParamField
                   key={name}
