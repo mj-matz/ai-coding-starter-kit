@@ -140,7 +140,7 @@ export function ConfigurationPanel({
         <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6">
 
           {/* Strategy & Asset */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:items-end">
             {/* Strategy selector */}
             <div className="space-y-1">
               <FormField
@@ -148,7 +148,7 @@ export function ConfigurationPanel({
                 name="strategy"
                 render={({ field }) => (
                   <FormItem>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex h-[22px] items-center gap-1.5">
                       <FormLabel className="text-gray-300">Strategy</FormLabel>
                       {selectedStrategy && (
                         <TooltipProvider>
@@ -206,7 +206,7 @@ export function ConfigurationPanel({
               name="symbol"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-gray-300">Asset</FormLabel>
+                  <FormLabel className="flex h-[22px] items-center text-gray-300">Asset</FormLabel>
                   <FormControl>
                     <AssetCombobox
                       value={field.value}
