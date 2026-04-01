@@ -104,16 +104,14 @@ export function ResultsTable({
 
   function handleApplyBest() {
     if (!bestResult || !backtestConfig) return;
-    const updated = { ...backtestConfig };
+    const updatedStrategyParams: Record<string, unknown> = {
+      ...((backtestConfig.strategyParams as Record<string, unknown>) ?? {}),
+    };
     for (const [key, val] of Object.entries(bestResult.params)) {
-      if (key in updated) {
-        // Time params are stored as minutes in optimizer but as HH:MM in backtest config
-        (updated as Record<string, unknown>)[key] = TIME_PARAM_KEYS.has(key)
-          ? minutesToTime(val)
-          : val;
-      }
+      // Time params are stored as minutes in optimizer but as HH:MM in backtest config
+      updatedStrategyParams[key] = TIME_PARAM_KEYS.has(key) ? minutesToTime(val) : val;
     }
-    saveConfigToStorage(updated);
+    saveConfigToStorage({ ...backtestConfig, strategyParams: updatedStrategyParams });
     onApplyParams?.();
   }
 

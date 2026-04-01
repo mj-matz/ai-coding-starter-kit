@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Create an optimization_runs record in Supabase
-    const { parameter_group, target_metric, parameter_ranges, strategyParams: _sp, ...backtest_config } = parsed.data;
+    const { parameter_group, target_metric, parameter_ranges, ...backtest_config } = parsed.data;
 
     const { error: insertError } = await supabase
       .from("optimization_runs")

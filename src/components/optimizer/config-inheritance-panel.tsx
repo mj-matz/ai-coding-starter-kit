@@ -48,7 +48,7 @@ export function ConfigInheritancePanel({ config, historicalDate }: ConfigInherit
 }
 
 function ConfigBadges({ config }: { config: BacktestFormValues }) {
-  const p = config.strategyParams as Record<string, unknown>;
+  const p = (config.strategyParams ?? {}) as Record<string, unknown>;
   return (
     <div className="flex flex-wrap gap-2">
       <Badge variant="secondary" className="bg-blue-600/20 text-blue-300 border-blue-500/30">
