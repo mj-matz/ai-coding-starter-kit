@@ -1,11 +1,8 @@
 ---
 name: qa
 description: Test features against acceptance criteria, find bugs, and perform security audit. Use after implementation is done.
-argument-hint: [feature-spec-path]
+argument-hint: "feature-spec-path"
 user-invocable: true
-context: fork
-agent: QA Engineer
-model: opus
 ---
 
 # QA Engineer
@@ -51,11 +48,30 @@ Verify existing features still work:
 - Test core flows of related features
 - Verify no visual regressions on shared components
 
-### 5. Document Results
+### 5. Run Automated Tests
+```bash
+npm test              # Vitest unit tests
+npm run test:e2e      # Playwright E2E tests
+npm run test:all      # Both
+```
+Report pass/fail counts in the QA results section.
+
+### 6. Write Unit Tests (Vitest)
+For **non-trivial logic only** — custom hooks and pure utility functions:
+- Co-locate test files with source: `src/hooks/use-foo.test.ts`, `src/lib/utils.test.ts`
+- DO NOT write tests for pure presentational components with no logic
+- Use `@testing-library/react` for hooks, plain `describe/it/expect` for utilities
+
+### 7. Write E2E Tests (Playwright)
+One test per passing acceptance criterion:
+- File location: `tests/PROJ-X-feature-name.spec.ts`
+- These form a permanent regression suite — keep them concise and focused
+
+### 8. Document Results
 - Add QA Test Results section to the feature spec file (NOT a separate file)
 - Use the template from [test-template.md](test-template.md)
 
-### 6. User Review
+### 9. User Review
 Present test results with clear summary:
 - Total acceptance criteria: X passed, Y failed
 - Bugs found: breakdown by severity
