@@ -481,4 +481,13 @@ User clicks "Convert & Backtest"
 - Komponenten: `src/components/mql-converter/`
 
 ## Deployment
-_To be added by /deploy_
+
+**Deployed:** 2026-04-02
+**Git Tag:** `v1.22.0-PROJ-22`
+**Commit:** `1468f93`
+**Supabase Migrations Applied:**
+- `20260401_mql_conversions` — `mql_conversions` table with RLS
+- `20260402_rate_limit` — `rate_limit_log` table + `check_rate_limit()` RPC
+
+**Environment Variables Required (Vercel):**
+- `ANTHROPIC_API_KEY` — Claude API key (server-side only)
