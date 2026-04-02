@@ -12,6 +12,7 @@ import {
   LogOut,
   ChevronUp,
   SlidersHorizontal,
+  FileCode,
 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
@@ -47,6 +48,7 @@ const navigationItems = [
   { title: "History", href: "/history", icon: History },
   { title: "Data", href: "/data", icon: Database },
   { title: "Strategies", href: "/strategies", icon: Zap },
+  { title: "MQL Converter", href: "/mql-converter", icon: FileCode },
   { title: "Journal", href: "/journal", icon: BookOpen },
 ];
 

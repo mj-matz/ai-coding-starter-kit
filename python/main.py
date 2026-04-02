@@ -4,14 +4,23 @@ Provides endpoints for fetching/caching historical OHLCV data and running
 backtests against cached data sets.
 """
 
+import ast
 import asyncio
+import concurrent.futures
+import importlib.util
+import inspect
 import json
 import logging
 import os
 import queue
+import subprocess
+import sys
+import tempfile
 import threading
+import traceback as _traceback
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import List, Literal, Optional
 
@@ -2183,6 +2192,412 @@ async def optimizer_cancel(
         job_id=job.job_id,
         status="cancelling",
         message="Cancel signal sent. Job will stop after the current combination finishes.",
+    )
+
+
+# ── /sandbox/run endpoint (PROJ-22: MQL Converter) ──────────────────────────
+
+_SANDBOX_ALLOWED_IMPORTS = {"pandas", "pandas_ta", "numpy"}
+
+_SANDBOX_RUN_SCRIPT = """\
+import sys, importlib.util, inspect
+import pandas as pd
+
+strategy_path = sys.argv[1]
+df_path = sys.argv[2]
+output_path = sys.argv[3]
+project_root = sys.argv[4]
+
+# BUG-11: Block network access at Python level
+import socket as _socket
+def _sandbox_no_network(*args, **kwargs):
+    raise RuntimeError("Network access is not allowed in sandbox")
+_socket.socket = _sandbox_no_network
+_socket.create_connection = _sandbox_no_network
+_socket.getaddrinfo = _sandbox_no_network
+
+# BUG-12: Remove os/subprocess attributes exposed via allowed modules
+import numpy as _np
+import pandas as _pd
+for _m in (_np, _pd):
+    for _attr in ("os", "subprocess"):
+        try:
+            delattr(_m, _attr)
+        except AttributeError:
+            pass
+
+# BUG-13: Import project dependency, then remove project root from sys.path
+# so user code cannot import other internal project modules
+sys.path.insert(0, project_root)
+from strategies.base import BaseStrategy
+sys.path.remove(project_root)
+
+df = pd.read_parquet(df_path)
+
+spec = importlib.util.spec_from_file_location("_user_sandbox_strategy", strategy_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+strategy_cls = None
+for name, obj in inspect.getmembers(mod, inspect.isclass):
+    if issubclass(obj, BaseStrategy) and obj is not BaseStrategy:
+        strategy_cls = obj
+        break
+
+if strategy_cls is None:
+    print("ERROR: No BaseStrategy subclass found.", file=sys.stderr)
+    sys.exit(1)
+
+strategy = strategy_cls()
+signals_df, _ = strategy.generate_signals(df, None)
+signals_df.to_parquet(output_path)
+"""
+
+_SANDBOX_VALIDATE_SCRIPT = """\
+import sys, importlib.util, inspect
+sys.path.insert(0, sys.argv[2])  # project root so strategies.base is importable
+from strategies.base import BaseStrategy
+sys.path.remove(sys.argv[2])  # BUG-13: prevent user code from accessing project modules
+spec = importlib.util.spec_from_file_location("_user_strategy_validate", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+found_name = None
+for name, obj in inspect.getmembers(mod, inspect.isclass):
+    if issubclass(obj, BaseStrategy) and obj is not BaseStrategy:
+        found_name = name
+        break
+if not found_name:
+    print("ERROR: No BaseStrategy subclass found.", file=sys.stderr)
+    sys.exit(1)
+print("OK:" + found_name)
+"""
+
+
+_SANDBOX_BLOCKED_NAMES = {"__import__", "exec", "eval", "compile", "__builtins__", "open"}
+
+
+def _check_sandbox_imports(code: str) -> None:
+    """Raise HTTPException if the code contains any non-whitelisted imports or dangerous builtins."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": f"Syntax error in Python code: {e}"},
+        )
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".")[0]
+                if top not in _SANDBOX_ALLOWED_IMPORTS:
+                    raise HTTPException(
+                        status_code=422,
+                        detail={"error": f"Import not allowed: '{alias.name}'. Only pandas, pandas_ta, and numpy are permitted."},
+                    )
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                top = node.module.split(".")[0]
+                if top not in _SANDBOX_ALLOWED_IMPORTS:
+                    raise HTTPException(
+                        status_code=422,
+                        detail={"error": f"Import not allowed: 'from {node.module} import ...'. Only pandas, pandas_ta, and numpy are permitted."},
+                    )
+        elif isinstance(node, ast.Name):
+            if node.id in _SANDBOX_BLOCKED_NAMES:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"error": f"Use of '{node.id}' is not allowed in sandbox code."},
+                )
+
+
+class SandboxRunRequest(BaseModel):
+    python_code: str = Field(min_length=1)
+    cache_id: str
+    config: BacktestConfigRequest
+
+
+@app.post("/sandbox/run", response_model=BacktestRunResponse)
+async def sandbox_run(
+    request: SandboxRunRequest,
+    token: dict = Depends(verify_jwt),
+):
+    """
+    Validate and run a user-provided Python strategy (PROJ-22 MQL Converter).
+
+    Safety layers:
+    1. AST import whitelist (only pandas, pandas_ta, numpy allowed)
+    2. Subprocess validation with 30s timeout (syntax + BaseStrategy subclass check)
+    3. generate_signals() run in a thread with 60s timeout
+    """
+    user_id: str = token["sub"]
+
+    if not _check_backtest_rate_limit(user_id):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded: max 30 sandbox requests per minute.",
+        )
+
+    python_code = request.python_code
+    project_root = str(Path(__file__).parent)
+
+    # ── 1. AST import whitelist check ───────────────────────────────────────
+    _check_sandbox_imports(python_code)
+
+    # ── 2. Subprocess validation ────────────────────────────────────────────
+    code_tmp = None
+    validate_tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
+            f.write(python_code)
+            code_tmp = f.name
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
+            f.write(_SANDBOX_VALIDATE_SCRIPT)
+            validate_tmp = f.name
+
+        result = subprocess.run(
+            [sys.executable, validate_tmp, code_tmp, project_root],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "Strategy validation failed",
+                    "traceback": (result.stderr or result.stdout).strip(),
+                },
+            )
+
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "Strategy validation timed out (30s). The code may contain an infinite loop."},
+        )
+    finally:
+        for p in (code_tmp, validate_tmp):
+            if p:
+                try:
+                    os.unlink(p)
+                except Exception:
+                    pass
+
+    # ── 3. Load OHLCV from cache ────────────────────────────────────────────
+    from services.cache_service import _get_supabase_client
+
+    try:
+        client = _get_supabase_client()
+        resp = (
+            client.table("data_cache")
+            .select("file_path, symbol")
+            .eq("id", request.cache_id)
+            .eq("created_by", user_id)
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        logger.error(f"Supabase lookup failed for sandbox cache_id={request.cache_id}: {e}")
+        raise HTTPException(status_code=502, detail="Failed to query data cache.")
+
+    if not resp.data:
+        raise HTTPException(status_code=404, detail=f"cache_id '{request.cache_id}' not found.")
+
+    file_path: str = resp.data["file_path"]
+    symbol: str = resp.data.get("symbol", "")
+
+    try:
+        df = load_cached_data(file_path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Parquet file for cache_id '{request.cache_id}' not found.")
+    except Exception as e:
+        logger.error(f"Parquet load error (sandbox): {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to load data.")
+
+    if "datetime" in df.columns:
+        df = df.set_index("datetime")
+    df.index = pd.to_datetime(df.index, utc=True)
+    df.columns = [c.lower() for c in df.columns]
+
+    required_cols = {"open", "high", "low", "close"}
+    if not required_cols.issubset(set(df.columns)):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cached data is missing required columns: {required_cols - set(df.columns)}",
+        )
+
+    # ── 4. Run user strategy in isolated subprocess ───────────────────────────
+    code_tmp2 = None
+    df_tmp = None
+    signals_tmp = None
+    run_script_tmp = None
+    signals_df = None
+
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
+            f.write(python_code)
+            code_tmp2 = f.name
+
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
+            df_tmp = f.name
+        df.to_parquet(df_tmp)
+
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
+            signals_tmp = f.name
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
+            f.write(_SANDBOX_RUN_SCRIPT)
+            run_script_tmp = f.name
+
+        try:
+            result = subprocess.run(
+                [sys.executable, run_script_tmp, code_tmp2, df_tmp, signals_tmp, project_root],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "Strategy execution timed out (60s). The strategy may contain an infinite loop."},
+            )
+
+        if result.returncode != 0:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "Strategy execution failed",
+                    "traceback": (result.stderr or result.stdout).strip(),
+                },
+            )
+
+        try:
+            signals_df = pd.read_parquet(signals_tmp)
+        except Exception as e:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": f"Failed to read strategy output: {e}"},
+            )
+
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "Failed to run strategy", "traceback": _traceback.format_exc()},
+        )
+    finally:
+        for p in (code_tmp2, df_tmp, signals_tmp, run_script_tmp):
+            if p:
+                try:
+                    os.unlink(p)
+                except Exception:
+                    pass
+
+    # Validate signals_df shape
+    required_signal_cols = {"long_entry", "long_sl", "long_tp", "short_entry", "short_sl", "short_tp"}
+    if not required_signal_cols.issubset(set(signals_df.columns)):
+        raise HTTPException(
+            status_code=422,
+            detail={"error": f"Strategy returned signals missing required columns: {required_signal_cols - set(signals_df.columns)}"},
+        )
+    if "signal_expiry" not in signals_df.columns:
+        signals_df["signal_expiry"] = pd.NaT
+
+    # ── 5. Run backtest ──────────────────────────────────────────────────────
+    cfg = request.config
+    engine_config = BacktestConfig(
+        initial_balance=cfg.initial_balance,
+        sizing_mode=cfg.sizing_mode,
+        instrument=InstrumentConfig(
+            pip_size=cfg.instrument.pip_size,
+            pip_value_per_lot=cfg.instrument.pip_value_per_lot,
+        ),
+        fixed_lot=cfg.fixed_lot,
+        risk_percent=cfg.risk_percent,
+        commission=cfg.commission,
+        slippage_pips=cfg.slippage_pips,
+        time_exit=cfg.time_exit,
+        timezone=cfg.timezone,
+        trail_trigger_pips=cfg.trail_trigger_pips,
+        trail_lock_pips=cfg.trail_lock_pips,
+        gap_fill=cfg.gap_fill,
+    )
+
+    _bar_minutes = (
+        int(round((df.index[1] - df.index[0]).total_seconds() / 60))
+        if len(df) >= 2 else 1
+    )
+
+    try:
+        backtest_result = run_backtest(
+            df, signals_df, engine_config,
+            get_1s_data=create_1s_data_provider(symbol, bar_duration_minutes=_bar_minutes) if symbol else None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Sandbox backtest engine error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal engine error.")
+
+    # ── 6. Analytics ────────────────────────────────────────────────────────
+    try:
+        analytics_result = calculate_analytics(backtest_result)
+        analytics_out = AnalyticsResponse(
+            summary=[
+                MetricResponse(
+                    name=m.name,
+                    value=None if (m.value is None or m.value == float("inf")) else m.value,
+                    value_string="Infinity" if m.value == float("inf") else None,
+                    unit=m.unit,
+                    note=m.note,
+                )
+                for m in analytics_result.summary
+            ],
+            monthly_r=[
+                MonthlyRResponse(
+                    month=mr.month,
+                    r_earned=mr.r_earned,
+                    trade_count=mr.trade_count,
+                    win_rate_pct=mr.win_rate_pct,
+                    avg_loss_pips=mr.avg_loss_pips,
+                    avg_mae_pips=mr.avg_mae_pips,
+                )
+                for mr in analytics_result.monthly_r
+            ],
+        )
+    except Exception as e:
+        logger.error(f"Sandbox analytics error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Analytics calculation failed.")
+
+    # ── 7. Serialise and return ──────────────────────────────────────────────
+    trades_out = [
+        TradeResponse(
+            entry_time=t.entry_time.isoformat(),
+            entry_price=t.entry_price,
+            exit_time=t.exit_time.isoformat(),
+            exit_price=t.exit_price,
+            exit_reason=t.exit_reason,
+            direction=t.direction,
+            lot_size=t.lot_size,
+            pnl_pips=t.pnl_pips,
+            pnl_currency=t.pnl_currency,
+            initial_risk_pips=t.initial_risk_pips,
+            initial_risk_currency=t.initial_risk_currency,
+            r_multiple=compute_r_multiple(t),
+            used_1s_resolution=t.used_1s_resolution,
+            mae_pips=t.mae_pips,
+        )
+        for t in backtest_result.trades
+    ]
+
+    return BacktestRunResponse(
+        trades=trades_out,
+        equity_curve=backtest_result.equity_curve,
+        final_balance=backtest_result.final_balance,
+        initial_balance=backtest_result.initial_balance,
+        analytics=analytics_out,
     )
 
 

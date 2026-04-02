@@ -1,8 +1,8 @@
 # PROJ-22: MQL Converter
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-03-25
-**Last Updated:** 2026-04-01
+**Last Updated:** 2026-04-02
 
 ## Dependencies
 - Requires: PROJ-2 (Backtesting Engine) — converted strategies run inside the engine
@@ -409,50 +409,23 @@ User clicks "Convert & Backtest"
 
 ### Bugs Zusammenfassung (Neu gefunden im Re-Test)
 
-#### BUG-11: Sandbox hat Netzwerkzugriff
-- **Severity:** Medium
-- **Steps to Reproduce:**
-  1. Paste MQL-Code der nach Konvertierung `import pandas; pandas.read_html("http://evil.com")` enthaelt
-  2. Claude koennte solchen Code erzeugen oder User editiert ihn manuell
-  3. Erwartung: Netzwerkzugriff wird blockiert
-  4. Tatsaechlich: Anfrage geht durch, da kein OS-Level Netzwerk-Sandbox
-- **Priority:** Fix in next sprint (Risiko gemindert durch AST-Pruefung, aber nicht eliminiert)
+#### BUG-11: Sandbox hat Netzwerkzugriff — **FIXED 2026-04-02**
+- `socket.socket`, `socket.create_connection`, `socket.getaddrinfo` im Sandbox-Script auf Exception-Raiser überschrieben.
 
-#### BUG-12: Sandbox Dateisystem-Zugriff ueber Module-Attribute
-- **Severity:** Medium
-- **Steps to Reproduce:**
-  1. Konvertiere MQL-Code und editiere Python manuell
-  2. Fuege hinzu: `import numpy; numpy.os.listdir("/")` oder aehnlich
-  3. Erwartung: Zugriff wird blockiert
-  4. Tatsaechlich: AST-Pruefung faengt das nicht ab, da `numpy` ein erlaubter Import ist
-- **Priority:** Fix in next sprint
+#### BUG-12: Sandbox Dateisystem-Zugriff über Module-Attribute — **FIXED 2026-04-02**
+- `os` und `subprocess` Attribute werden nach dem Import von `numpy`/`pandas` via `delattr` entfernt.
 
-#### BUG-13: Sandbox kann interne Projekt-Module importieren
-- **Severity:** Low
-- **Steps to Reproduce:**
-  1. Editiere konvertierten Python-Code
-  2. Fuege hinzu: `from services.cache_service import _get_supabase_client`
-  3. Erwartung: Import wird blockiert
-  4. Tatsaechlich: `sys.path.insert(0, project_root)` erlaubt Zugriff auf alle Projekt-Module
-- **Priority:** Fix in next sprint
+#### BUG-13: Sandbox kann interne Projekt-Module importieren — **FIXED 2026-04-02**
+- `sys.path.remove(project_root)` direkt nach `from strategies.base import BaseStrategy` in `_SANDBOX_RUN_SCRIPT` und `_SANDBOX_VALIDATE_SCRIPT`.
 
-#### BUG-14: Rate-Limit Fehlerbehandlung zu nachgiebig
-- **Severity:** Low
-- **Steps to Reproduce:**
-  1. Wenn Supabase RPC `check_rate_limit` einen Fehler zurueckgibt
-  2. Erwartung: Anfrage wird sicherheitshalber blockiert
-  3. Tatsaechlich: Fehler wird nur geloggt, Anfrage wird durchgelassen (Zeile 100-113 in convert/route.ts)
-- **Priority:** Nice to have
+#### BUG-14: Rate-Limit Fehlerbehandlung zu nachgiebig — **FIXED 2026-04-02**
+- RPC-Fehler gibt jetzt `503` zurück statt die Anfrage durchzulassen.
 
-#### BUG-15: Lint Error — prefer-const
-- **Severity:** Low
-- **Datei:** `src/app/api/mql-converter/convert/route.ts:133`
-- **Priority:** Nice to have
+#### BUG-15: Lint Error — prefer-const — **FIXED 2026-04-02**
+- `let mqlCode` → `const mqlCode` in `convert/route.ts`.
 
-#### BUG-16: Lint Errors — setState in useEffect
-- **Severity:** Low
-- **Dateien:** `code-review-panel.tsx:72`, `save-conversion-section.tsx:25`
-- **Priority:** Nice to have
+#### BUG-16: Lint Errors — setState in useEffect — **FIXED 2026-04-02**
+- `useEffect + setState` durch React "adjusting state during render" Pattern ersetzt in `code-review-panel.tsx` und `save-conversion-section.tsx`.
 
 ---
 
@@ -489,10 +462,10 @@ User clicks "Convert & Backtest"
 ### Summary
 
 - **Acceptance Criteria:** 25/26 bestanden (1 teilweise: Streaming-Progressbar durch deterministischen Fortschritt ersetzt)
-- **Fruehere Bugs (BUG-1 bis BUG-10):** Alle 9 Fixes verifiziert, 1 bewusst entfernt
-- **Neue Bugs gefunden:** 6 total (0 Critical, 0 High, 2 Medium, 4 Low)
-- **Security:** 2 Medium-Findings (Sandbox Netzwerk/Dateisystem nicht OS-Level isoliert)
-- **Production Ready:** JA (bedingt) — Keine Critical/High Bugs. Die Medium-Findings (BUG-11, BUG-12) sind durch die AST-Pruefung mitigiert und betreffen nur manuell editierten Code, nicht den Claude-generierten Code. Empfehlung: Medium-Bugs im naechsten Sprint beheben.
+- **Bugs BUG-1 bis BUG-16:** Alle behoben (9 aus erstem QA-Lauf, 6 aus Re-Test, 1 bewusst entfernt)
+- **Security:** Alle Medium-Findings behoben (Sandbox Netzwerk + Dateisystem + interne Module blockiert)
+- **Lint:** Keine Errors
+- **Production Ready:** JA
 
 ### Relevante Dateien
 

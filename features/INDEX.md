@@ -33,7 +33,7 @@
 | PROJ-19 | Strategy Optimizer | Deployed | [PROJ-19-strategy-optimizer.md](PROJ-19-strategy-optimizer.md) | 2026-03-25 |
 | PROJ-20 | SMC Price Action Strategy | Planned | [PROJ-20-smc-price-action-strategy.md](PROJ-20-smc-price-action-strategy.md) | 2026-03-25 |
 | PROJ-21 | AI Strategy Generator | In Progress | [PROJ-21-ai-strategy-generator.md](PROJ-21-ai-strategy-generator.md) | 2026-03-25 |
-| PROJ-22 | MQL Converter | In Progress | [PROJ-22-mql-converter.md](PROJ-22-mql-converter.md) | 2026-03-25 |
+| PROJ-22 | MQL Converter | Deployed | [PROJ-22-mql-converter.md](PROJ-22-mql-converter.md) | 2026-03-25 |
 | PROJ-23 | Trading Day & News Day Filter | Deployed | [PROJ-23-trading-day-news-filter.md](PROJ-23-trading-day-news-filter.md) | 2026-03-25 |
 
 | PROJ-24 | Trade List & Results UI Enhancements | Deployed | [PROJ-24-trade-list-results-ui-enhancements.md](PROJ-24-trade-list-results-ui-enhancements.md) | 2026-03-25 |
@@ -41,7 +41,8 @@
 
 | PROJ-26 | Strategy Export to MT5 EA | In Progress | [PROJ-26-strategy-export-mt5-ea.md](PROJ-26-strategy-export-mt5-ea.md) | 2026-03-31 |
 | PROJ-27 | Persistent Market Data Store (Monthly Chunks) | Planned | [PROJ-27-persistent-market-data-store.md](PROJ-27-persistent-market-data-store.md) | 2026-03-31 |
+| PROJ-28 | User-Defined Strategies (MQL → Strategy Library) | Planned | [PROJ-28-user-defined-strategies.md](PROJ-28-user-defined-strategies.md) | 2026-04-01 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-28
+## Next Available ID: PROJ-29
