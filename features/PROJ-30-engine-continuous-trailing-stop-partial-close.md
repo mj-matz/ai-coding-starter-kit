@@ -1,6 +1,6 @@
 # PROJ-30: Engine – Continuous Trailing Stop & Partial Close
 
-## Status: In Review
+## Status: Deployed
 **QA:** Passed — ready for deployment
 **Created:** 2026-04-05
 **Last Updated:** 2026-04-05
@@ -307,4 +307,10 @@ No security concerns. This feature is a pure Python engine change:
 No bugs outstanding. The one Low severity finding (slippage on partial close spec discrepancy) was resolved by updating the spec in this QA pass.
 
 ## Deployment
-_To be added by /deploy_
+
+**Deployed:** 2026-04-07
+**Tag:** v1.30.0-PROJ-30
+**Commit:** 7ce6db6
+
+Pure Python engine extension — no new API endpoints, no database migrations.
+Deployed via Vercel auto-deploy on push to main.
