@@ -44,7 +44,8 @@
 | PROJ-28 | User-Defined Strategies (MQL → Strategy Library) | Planned | [PROJ-28-user-defined-strategies.md](PROJ-28-user-defined-strategies.md) | 2026-04-01 |
 | PROJ-29 | Backtest Realism – Bid-Price Data & First-Breakout Direction | Planned | [PROJ-29-backtest-realism-bid-data-breakout-direction.md](PROJ-29-backtest-realism-bid-data-breakout-direction.md) | 2026-04-02 |
 | PROJ-30 | Engine – Continuous Trailing Stop & Partial Close | Deployed | [PROJ-30-engine-continuous-trailing-stop-partial-close.md](PROJ-30-engine-continuous-trailing-stop-partial-close.md) | 2026-04-05 |
+| PROJ-31 | Extended Backtest Metrics & CRV Display (MT5-Parität) | In Progress | [PROJ-31-extended-backtest-metrics-crv.md](PROJ-31-extended-backtest-metrics-crv.md) | 2026-04-07 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-31
+## Next Available ID: PROJ-32
