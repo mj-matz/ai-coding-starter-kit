@@ -865,6 +865,30 @@ class BacktestMetricsOut(BaseModel):
     avg_trade_duration_hours: float
     final_balance: float
 
+    # PROJ-31: Extended metrics (Optional for backwards compatibility)
+    net_profit: Optional[float] = None
+    max_drawdown_abs: Optional[float] = None
+    recovery_factor: Optional[float] = None
+    expected_payoff: Optional[float] = None
+    buy_trades: Optional[int] = None
+    buy_win_rate_pct: Optional[float] = None
+    sell_trades: Optional[int] = None
+    sell_win_rate_pct: Optional[float] = None
+    min_trade_duration_minutes: Optional[float] = None
+    max_trade_duration_minutes: Optional[float] = None
+    max_consec_wins_count: Optional[int] = None
+    max_consec_wins_profit: Optional[float] = None
+    max_consec_losses_count: Optional[int] = None
+    max_consec_losses_loss: Optional[float] = None
+    avg_consec_wins: Optional[float] = None
+    avg_consec_losses: Optional[float] = None
+    ahpr: Optional[float] = None
+    ghpr: Optional[float] = None
+    lr_correlation: Optional[float] = None
+    lr_std_error: Optional[float] = None
+    z_score: Optional[float] = None
+    z_score_confidence_pct: Optional[float] = None
+
 
 class EquityCurveOut(BaseModel):
     date: str
@@ -1265,6 +1289,30 @@ async def _backtest_orchestrate_inner(
         consecutive_losses=int(m.get("Consecutive Losses") or 0),
         avg_trade_duration_hours=_f(m.get("Avg Trade Duration")),
         final_balance=result.final_balance,
+
+        # PROJ-31: Extended metrics
+        net_profit=m.get("Net Profit"),
+        max_drawdown_abs=m.get("Max Drawdown Abs"),
+        recovery_factor=m.get("Recovery Factor"),
+        expected_payoff=m.get("Expected Payoff"),
+        buy_trades=int(m.get("Buy Trades") or 0),
+        buy_win_rate_pct=m.get("Buy Win Rate"),
+        sell_trades=int(m.get("Sell Trades") or 0),
+        sell_win_rate_pct=m.get("Sell Win Rate"),
+        min_trade_duration_minutes=m.get("Min Trade Duration"),
+        max_trade_duration_minutes=m.get("Max Trade Duration"),
+        max_consec_wins_count=int(m.get("Max Consec Wins Count") or 0),
+        max_consec_wins_profit=m.get("Max Consec Wins Profit"),
+        max_consec_losses_count=int(m.get("Max Consec Losses Count") or 0),
+        max_consec_losses_loss=m.get("Max Consec Losses Loss"),
+        avg_consec_wins=m.get("Avg Consec Wins"),
+        avg_consec_losses=m.get("Avg Consec Losses"),
+        ahpr=m.get("AHPR"),
+        ghpr=m.get("GHPR"),
+        lr_correlation=m.get("LR Correlation"),
+        lr_std_error=m.get("LR Standard Error"),
+        z_score=m.get("Z-Score"),
+        z_score_confidence_pct=m.get("Z-Score Confidence"),
     )
 
     # Equity curve: rename "time" → "date" to match the frontend type
@@ -2236,6 +2284,7 @@ df = pd.read_parquet(df_path)
 
 spec = importlib.util.spec_from_file_location("_user_sandbox_strategy", strategy_path)
 mod = importlib.util.module_from_spec(spec)
+mod.BaseStrategy = BaseStrategy  # inject into module namespace so user class definition resolves
 spec.loader.exec_module(mod)
 
 strategy_cls = None
@@ -2260,6 +2309,7 @@ from strategies.base import BaseStrategy
 sys.path.remove(sys.argv[2])  # BUG-13: prevent user code from accessing project modules
 spec = importlib.util.spec_from_file_location("_user_strategy_validate", sys.argv[1])
 mod = importlib.util.module_from_spec(spec)
+mod.BaseStrategy = BaseStrategy  # inject into module namespace so user class definition resolves
 spec.loader.exec_module(mod)
 found_name = None
 for name, obj in inspect.getmembers(mod, inspect.isclass):

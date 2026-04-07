@@ -111,6 +111,18 @@ export function ConversionWarnings({
                 </li>
               ))}
             </ul>
+            {unsupportedEntries.some((e) =>
+              e.mql_function.toLowerCase().includes("spread")
+            ) && (
+              <p className="mt-2 text-orange-200/90">
+                <strong>Tipp:</strong> Da der Spread-Filter nicht simuliert werden
+                kann, empfiehlt es sich, den durchschnittlichen Spread des
+                Instruments als{" "}
+                <code className="text-xs">slippage_pips</code> in der
+                Backtest-Konfiguration einzutragen – so wird der Spread-Effekt
+                näherungsweise berücksichtigt.
+              </p>
+            )}
           </AlertDescription>
         </Alert>
       )}
