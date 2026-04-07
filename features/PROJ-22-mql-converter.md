@@ -9,6 +9,7 @@
 - Requires: PROJ-6 (Strategy Library / Plugin System) — converted strategies register as plugins
 - Requires: PROJ-8 (Authentication) — page requires login
 - Requires: PROJ-21 (AI Strategy Generator) — shares sandbox execution infrastructure and Claude API integration
+- Requires: PROJ-30 (Continuous Trailing Stop & Partial Close) — trailing stop and partial close from MQL EAs are mapped to PROJ-30 per-signal engine columns
 - External: Anthropic Claude API (claude-sonnet-4-6)
 
 ## Overview
@@ -31,10 +32,23 @@ A dedicated "MQL Converter" page where the user pastes MQL4 or MQL5 Expert Advis
 ### Order Management Functions
 | MQL Function | Mapping |
 |---|---|
-| `OrderSend(BUY/SELL, lots, price, sl, tp)` | Engine `open_trade(direction, sl, tp)` |
+| `OrderSend(BUY/SELL, lots, price, sl, tp)` | Engine `open_trade(direction, sl, tp)` — lot size is ignored; engine sizing_mode handles it |
 | `OrderClose(ticket, lots, price)` | Engine `close_trade()` |
 | `OrderModify(ticket, price, sl, tp)` | Engine `update_sl_tp(sl, tp)` |
 | `OrdersTotal()` | Engine `has_open_position()` |
+
+### Trailing Stop & Partial Close (via PROJ-30 per-signal columns)
+The engine natively supports both features. The converted strategy sets these columns in signals_df — no manual configuration needed.
+
+| MQL Pattern | signals_df Column | Value |
+|---|---|---|
+| `trade.PositionModify` / `InpUseTrailing=true` | `trail_type` | `'continuous'` |
+| `InpTrailStartR` (e.g. 1.0) × SL pips | `trail_trigger_pips` | float: pip distance to start trailing |
+| `InpTrailDistancePips` (e.g. 250) | `trail_distance_pips` | float: distance of trailing SL from price |
+| `InpTrailDontCrossEntry=true` | `trail_dont_cross_entry` | `1.0` |
+| `ClosePartialByDeal` / `InpUsePartialTP=true` | `partial_close_pct` | float: e.g. `40.0` for 40% |
+| `InpPartialAtR` (e.g. 1.0) | `partial_at_r` | float: R-multiple trigger |
+| Fixed pip trigger | `partial_at_pips` | float: pip distance trigger (takes priority over partial_at_r) |
 
 ### Event Handlers
 | MQL Handler | Mapping |
@@ -45,11 +59,19 @@ A dedicated "MQL Converter" page where the user pastes MQL4 or MQL5 Expert Advis
 
 ### Broker-Specific (Best-Effort / Warning)
 The following are approximated or flagged as unsupported:
-- `AccountBalance()`, `AccountEquity()` — approximated from initial capital parameter
-- `MarketInfo(SYMBOL_SPREAD)` — fixed spread assumption (documented in warning)
+- `MarketInfo(SYMBOL_SPREAD)` / `SymbolInfoInteger(SYMBOL_SPREAD)` — not available in backtesting; spread filter is skipped (documented in warning)
 - `OrderProfit()`, `OrderSwap()` — not available; trade P&L calculated by engine at close
 - Custom tick-based logic (`OnTick` with < 1-minute resolution) — downgraded to 1-minute bars; warning issued
 - `SendMail()`, `Alert()`, `PlaySound()` — ignored with warning
+- `OnTradeTransaction` — approximated by tracking placed dates in a Python set; documented in warning
+
+The following are **NOT** approximated (engine handles them natively — no warnings generated):
+- `AccountBalance()`, `AccountEquity()` — engine uses `initial_balance` + `sizing_mode` config
+- `SymbolInfoDouble(SYMBOL_TRADE_TICK_VALUE/TICK_SIZE)` — engine uses `pip_value_per_lot` from instrument config
+- `SymbolInfoDouble(SYMBOL_VOLUME_MIN/MAX/STEP)` — engine applies its own lot constraints
+- Lot size calculation — engine handles via `sizing_mode`, `risk_percent`, `fixed_lot`
+- `trade.PositionModify` (trailing stop) — mapped to PROJ-30 per-signal columns (see above)
+- `ClosePartialByDeal` (partial close) — mapped to PROJ-30 per-signal columns (see above)
 
 ## User Stories
 - As a trader, I want to paste my MQL4/MQL5 Expert Adviser code and receive a working Python backtest so that I can evaluate the strategy on historical Dukascopy data without MetaTrader.
@@ -427,6 +449,22 @@ User clicks "Convert & Backtest"
 #### BUG-16: Lint Errors — setState in useEffect — **FIXED 2026-04-02**
 - `useEffect + setState` durch React "adjusting state during render" Pattern ersetzt in `code-review-panel.tsx` und `save-conversion-section.tsx`.
 
+#### BUG-17: `pandas_ta` nicht installiert — **FIXED 2026-04-07**
+- **Problem:** System-Prompt instruierte Claude, `import pandas_ta as ta` immer einzufügen, auch wenn keine Indikatoren verwendet werden. `pandas_ta` fehlte in `python/requirements.txt`. → `ModuleNotFoundError` bei jeder Sandbox-Validierung.
+- **Fix:** `pandas_ta==0.3.14b0` zu `requirements.txt` hinzugefügt. System-Prompt aktualisiert: `import pandas_ta as ta` nur wenn die Strategie tatsächlich Indikatorfunktionen verwendet.
+
+#### BUG-18: `params=None` führt zu `AttributeError` — **FIXED 2026-04-07**
+- **Problem:** `_SANDBOX_RUN_SCRIPT` rief `strategy.generate_signals(df, None)` auf. Generierter Code verwendet `params.get(...)` → `AttributeError: 'NoneType' object has no attribute 'get'`.
+- **Fix:** `generate_signals(df, None)` → `generate_signals(df, {})` in `_SANDBOX_RUN_SCRIPT` (`python/main.py`). System-Prompt schreibt zusätzlich `params = params or {}` als erste Zeile in `generate_signals` vor.
+
+#### BUG-19: Trailing Stop & Partial Close als "Unsupported" markiert — **FIXED 2026-04-07**
+- **Problem:** System-Prompt erklärte Trailing Stop und Partial Close für nicht replizierbar. PROJ-30 hat diese Features aber bereits in der Engine via per-Signal-Spalten (`trail_type`, `trail_distance_pips`, `trail_dont_cross_entry`, `partial_close_pct`, `partial_at_r`) implementiert.
+- **Fix:** System-Prompt vollständig überarbeitet: Claude mappt Trailing Stop auf `trail_type='continuous'` + Engine-Spalten, Partial Close auf `partial_close_pct` + `partial_at_r`/`partial_at_pips`. Status beider Mappings: "mapped" statt "unsupported".
+
+#### BUG-20: Unnötige Lot-Sizing-Warnungen — **FIXED 2026-04-07**
+- **Problem:** System-Prompt instruierte Claude, Lot-Sizing-Logik aus `AccountBalance`, `SymbolInfoDouble(SYMBOL_TRADE_TICK_VALUE)`, `SYMBOL_VOLUME_MIN/MAX/STEP` zu replizieren. Die Engine ignoriert jedoch alle berechneten Lot-Größen (kein `lot_size`-Feld in signals_df) und verwendet ausschließlich `sizing_mode`/`risk_percent`/`fixed_lot` aus BacktestConfig. Ergebnis: falscher Code + irreführende Approximations-Warnungen.
+- **Fix:** System-Prompt: "DO NOT calculate lot sizes. Engine handles sizing." Entsprechende Mapping-Einträge und Warnungen werden nicht mehr generiert.
+
 ---
 
 ### Verifizierung der frueheren Bugs (BUG-1 bis BUG-10)
@@ -482,9 +520,9 @@ User clicks "Convert & Backtest"
 
 ## Deployment
 
-**Deployed:** 2026-04-02
+**Deployed:** 2026-04-02 (initial) / **Updated:** 2026-04-07 (BUG-17–20)
 **Git Tag:** `v1.22.0-PROJ-22`
-**Commit:** `1468f93`
+**Commit:** `1468f93` (initial)
 **Supabase Migrations Applied:**
 - `20260401_mql_conversions` — `mql_conversions` table with RLS
 - `20260402_rate_limit` — `rate_limit_log` table + `check_rate_limit()` RPC

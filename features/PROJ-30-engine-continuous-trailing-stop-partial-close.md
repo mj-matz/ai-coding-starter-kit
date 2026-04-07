@@ -9,6 +9,22 @@
 - Requires: PROJ-2 (Backtesting Engine) — extends existing engine internals
 - Required by: PROJ-22 (MQL Converter) — converted strategies rely on these features for accurate results
 
+## MQL Converter Integration (PROJ-22)
+
+The MQL Converter system prompt was updated (2026-04-07) to map MQL trailing stop and partial close patterns directly to PROJ-30 per-signal columns. The engine reads these from signals_df without any additional configuration.
+
+### Mapping Reference for MQL Converter
+
+| MQL EA Pattern | signals_df Column | Notes |
+|---|---|---|
+| `InpUseTrailing=true` / `trade.PositionModify` | `trail_type = 'continuous'` | Marks signal for continuous trailing |
+| `InpTrailStartR * sl_pips` | `trail_trigger_pips` | Pip distance at which trailing begins |
+| `InpTrailDistancePips` | `trail_distance_pips` | Trailing SL distance from bar extreme |
+| `InpTrailDontCrossEntry=true` | `trail_dont_cross_entry = 1.0` | Prevents SL crossing entry price |
+| `InpUsePartialTP=true` / `ClosePartialByDeal` | `partial_close_pct` | Percentage to close (e.g. 40.0) |
+| `InpPartialAtR` | `partial_at_r` | R-multiple trigger (e.g. 1.0) |
+| Fixed pip partial trigger | `partial_at_pips` | Takes priority over `partial_at_r` |
+
 ---
 
 ## Background

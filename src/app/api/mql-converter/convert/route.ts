@@ -34,19 +34,39 @@ The target Python strategy class must:
 1. Extend \`BaseStrategy\` — CRITICAL: do NOT write any import statement for BaseStrategy. It is already injected into the execution context by the sandbox. The class definition must be exactly: \`class Strategy(BaseStrategy):\`
 2. Implement \`validate_params(self, params)\` and \`generate_signals(self, df, params)\`
 3. The \`generate_signals\` method receives a pandas DataFrame \`df\` with columns: open, high, low, close, volume (DatetimeIndex in UTC)
-4. It must return a tuple of (signals_df, skipped_days) where:
+4. The FIRST line inside \`generate_signals\` MUST be: \`params = params or {}\`
+5. It must return a tuple of (signals_df, skipped_days) where:
    - signals_df has columns: long_entry, long_sl, long_tp, short_entry, short_sl, short_tp, signal_expiry (all float, NaN = no signal; signal_expiry is pd.Timestamp or NaT)
    - skipped_days is a list (can be empty)
-5. Use pandas_ta for indicators (e.g. pandas_ta.ema, pandas_ta.rsi, pandas_ta.macd, pandas_ta.atr, pandas_ta.bbands)
-6. Use numpy and pandas for data manipulation
+6. Use numpy and pandas for data manipulation. Use pandas_ta ONLY if the strategy uses technical indicators (moving averages, RSI, MACD, ATR, Bollinger Bands, etc.).
 7. Do NOT use any network calls, file I/O, or subprocess calls
 8. ONLY the following imports are permitted at the top of the file — no others:
    \`\`\`
    import pandas as pd
    import numpy as np
+   \`\`\`
+   If and ONLY IF the strategy uses indicator functions from pandas_ta, also include:
+   \`\`\`
    import pandas_ta as ta
    \`\`\`
    Do NOT import BaseStrategy, strategies, os, sys, subprocess, socket, or any other module.
+
+CRITICAL — DO NOT calculate lot sizes: The backtesting engine handles position sizing via its own configuration (sizing_mode, risk_percent, fixed_lot). Your strategy ONLY needs to emit price levels: entry price, stop-loss price, and take-profit price. Do not replicate AccountBalance, lot sizing, tick value, or volume constraint logic — these produce no effect and generate unnecessary warnings.
+
+TRAILING STOP SUPPORT (fully supported via per-signal columns):
+When the MQL EA uses a trailing stop (trade.PositionModify, TrailingStop, InpUseTrailing, etc.), the backtesting engine handles it natively. Set these columns on every signal row:
+- \`signals_df['trail_type'] = 'continuous'\` (string column — marks this signal as using continuous trailing)
+- \`signals_df['trail_trigger_pips'] = N\` (float: pip distance at which trailing begins, e.g. InpTrailStartR * sl_pips)
+- \`signals_df['trail_distance_pips'] = N\` (float: pip distance of the trailing SL from the bar's favourable extreme, e.g. InpTrailDistancePips)
+- \`signals_df['trail_dont_cross_entry'] = 1.0\` (float 1.0/0.0: set to 1.0 if the EA uses a dont-cross-entry guard)
+These columns map directly to the engine's PROJ-30 position management. Status: "mapped" — not "unsupported".
+
+PARTIAL CLOSE SUPPORT (fully supported via per-signal columns):
+When the MQL EA uses partial close (ClosePartialByDeal, InpUsePartialTP, partial close at R-multiple, etc.), the backtesting engine handles it natively. Set these columns on every signal row:
+- \`signals_df['partial_close_pct'] = N\` (float: percentage of lot to close, e.g. 40.0 for 40%)
+- \`signals_df['partial_at_r'] = N\` (float: R-multiple of initial SL risk, e.g. 1.0 for 1R trigger) OR
+- \`signals_df['partial_at_pips'] = N\` (float: fixed pip distance trigger — takes priority over partial_at_r if both set)
+These columns map directly to the engine's PROJ-30 partial close logic. Status: "mapped" — not "unsupported".
 
 MQL function mappings:
 - iMA() -> pandas_ta.ema() / sma() / wma() depending on method parameter
@@ -61,22 +81,29 @@ MQL function mappings:
 - OrderSend(SELL) -> set short_entry, short_sl, short_tp in signals_df
 - OnTick() -> converted to bar-by-bar iteration in generate_signals
 - OnInit() -> __init__() of the strategy class
-- AccountBalance/AccountEquity -> approximate from initial_balance parameter (document in warning)
-- MarketInfo(SPREAD) -> not available, document in warning
+- AccountBalance/AccountEquity/lot sizing/SYMBOL_TRADE_TICK_VALUE/SYMBOL_VOLUME_MIN/MAX/STEP -> NOT NEEDED. Engine handles sizing. Do NOT replicate. Do NOT include in warnings.
+- SymbolInfoInteger(SYMBOL_SPREAD)/MarketInfo(SPREAD) -> not available in backtesting; skip the spread filter and document in warning
+- SymbolInfoDouble(SYMBOL_POINT)/SYMBOL_DIGITS -> use pip_size: params.get('pip_size', 0.0001)
+- trade.PositionModify (trailing stop) -> per-signal columns trail_type/trail_trigger_pips/trail_distance_pips/trail_dont_cross_entry — status: "mapped"
+- ClosePartialByDeal / partial close -> per-signal columns partial_close_pct/partial_at_r or partial_at_pips — status: "mapped"
+- GlobalVariableCheck/Get/Set -> Python instance variables or sets scoped to generate_signals()
+- TimeCurrent/TimeToStruct -> df.index (DatetimeIndex in UTC)
+- OnTradeTransaction -> approximated by tracking placed dates in a Python set; document in warning
 
 You MUST respond with ONLY a valid JSON object (no markdown, no code fences) with this exact structure:
 {
   "python_code": "...full Python source code...",
   "mapping_report": [
     {"mql_function": "iMA", "python_equivalent": "pandas_ta.ema()", "status": "mapped", "note": "Direct mapping"},
-    {"mql_function": "AccountBalance", "python_equivalent": "N/A", "status": "approximated", "note": "Approximated from initial_balance parameter"}
+    {"mql_function": "trade.PositionModify", "python_equivalent": "signals_df trail_type/trail_trigger_pips/trail_distance_pips columns", "status": "mapped", "note": "Continuous trailing stop via PROJ-30 per-signal engine columns"}
   ],
   "warnings": ["List of any conversion warnings or limitations"]
 }
 
 The "status" field must be one of: "mapped", "approximated", "unsupported".
 Include a mapping_report entry for each MQL function found in the source code.
-Include warnings for any broker-specific functions, unsupported features, or approximations made.`;
+Include warnings only for genuinely unsupported features (e.g. spread filter, OnTradeTransaction approximation, sub-minute tick logic).
+Do NOT include warnings for: lot sizing, account balance, tick values, volume constraints, trailing stop, or partial close — these are all handled by the engine.`;
 
 // ── Route handler ────────────────────────────────────────────────────────────
 

@@ -2249,7 +2249,7 @@ if strategy_cls is None:
     sys.exit(1)
 
 strategy = strategy_cls()
-signals_df, _ = strategy.generate_signals(df, None)
+signals_df, _ = strategy.generate_signals(df, {})
 signals_df.to_parquet(output_path)
 """
 
