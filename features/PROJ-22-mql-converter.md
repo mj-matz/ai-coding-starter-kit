@@ -521,8 +521,8 @@ User clicks "Convert & Backtest"
 ## Deployment
 
 **Deployed:** 2026-04-02 (initial) / **Updated:** 2026-04-07 (BUG-17–20)
-**Git Tag:** `v1.22.0-PROJ-22`
-**Commit:** `1468f93` (initial)
+**Git Tag:** `v1.22.0-PROJ-22` (initial) / `v1.22.1-PROJ-22` (BUG-17–20)
+**Commit:** `1468f93` (initial) / `82b73fd` (BUG-17–20)
 **Supabase Migrations Applied:**
 - `20260401_mql_conversions` — `mql_conversions` table with RLS
 - `20260402_rate_limit` — `rate_limit_log` table + `check_rate_limit()` RPC
