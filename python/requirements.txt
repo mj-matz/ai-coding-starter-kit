@@ -2,7 +2,7 @@ fastapi==0.115.0
 uvicorn[standard]==0.32.0
 yfinance==0.2.50
 pandas==2.2.3
-pandas_ta==0.3.14b0
+pandas_ta==0.4.71b0
 pyarrow==18.1.0
 supabase==2.10.0
 python-dotenv==1.0.1
