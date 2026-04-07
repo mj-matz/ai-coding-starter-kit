@@ -375,7 +375,11 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, symbol, time
                     <span className="inline-flex items-center gap-1">
                       <Badge
                         variant="outline"
-                        className="border-white/10 text-slate-400 bg-white/5"
+                        className={
+                          trade.exit_reason === "PARTIAL"
+                            ? "border-sky-400/40 text-sky-300 bg-sky-500/10"
+                            : "border-white/10 text-slate-400 bg-white/5"
+                        }
                       >
                         {trade.exit_reason}
                       </Badge>

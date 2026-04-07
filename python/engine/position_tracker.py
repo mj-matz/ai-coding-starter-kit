@@ -1,6 +1,6 @@
 """Open-position management: trail trigger, SL/TP evaluation, position close."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, Optional
 
@@ -28,6 +28,16 @@ class OpenPosition:
     trail_lock_pips: Optional[float] = None     # per-signal override; falls back to BacktestConfig
     any_1s_used: bool = False  # True if a 1s zoom-in was performed at any point during this trade
     mae_adverse_price: float = 0.0  # Worst adverse price seen during the trade (min low for long, max high for short)
+    # PROJ-30: Continuous trailing stop (per-signal overrides; None = use BacktestConfig)
+    trail_type: Optional[str] = None
+    trail_distance_pips: Optional[float] = None
+    trail_dont_cross_entry: Optional[bool] = None
+    # PROJ-30: Partial close
+    partial_close_pct: Optional[float] = None    # e.g. 40.0 = close 40 % of position
+    partial_at_pips: Optional[float] = None      # trigger: fixed pip distance
+    partial_at_r: Optional[float] = None         # trigger: R-multiple of initial risk
+    partial_close_done: bool = False             # True once partial close has fired
+    pending_partial_pnl_currency: float = 0.0   # accumulated PnL from partial close(s); added to balance at final close
 
 
 def apply_trail_if_triggered(
@@ -37,11 +47,27 @@ def apply_trail_if_triggered(
     config: BacktestConfig,
 ) -> None:
     """
-    Move the stop loss to trail_lock_pips from entry when unrealised profit
-    reaches trail_trigger_pips.  Fires at most once per trade (in-place).
+    Apply trailing stop logic for the current bar (in-place).
 
-    Uses the bar's favourable extreme (high for long, low for short) to
-    measure peak unrealised profit within the bar.
+    Dispatches to step-trail (existing one-time SL move) or continuous-trail
+    (permanent ratchet following the price) based on trail_type.
+    """
+    trail_type = position.trail_type if position.trail_type is not None else config.trail_type
+    if trail_type == "continuous":
+        _apply_continuous_trail(position, bar_high, bar_low, config)
+    else:
+        _apply_step_trail(position, bar_high, bar_low, config)
+
+
+def _apply_step_trail(
+    position: OpenPosition,
+    bar_high: float,
+    bar_low: float,
+    config: BacktestConfig,
+) -> None:
+    """
+    One-time SL step: move SL to trail_lock_pips from entry when unrealised profit
+    reaches trail_trigger_pips.  Fires at most once per trade (trail_applied guard).
     """
     trigger_pips = (
         position.trail_trigger_pips
@@ -70,6 +96,173 @@ def apply_trail_if_triggered(
         else:
             position.sl_price = position.entry_price - offset
         position.trail_applied = True
+
+
+def _apply_continuous_trail(
+    position: OpenPosition,
+    bar_high: float,
+    bar_low: float,
+    config: BacktestConfig,
+) -> None:
+    """
+    Continuous trailing stop: once the profit threshold is reached, the SL
+    permanently follows the bar's favourable extreme at a fixed pip distance
+    (monotonic ratchet — SL only ever moves in the favourable direction).
+
+    Optional trail_trigger_pips acts as a minimum profit threshold before
+    the trail activates.  If not set, trail is active from the first bar.
+
+    Optional trail_dont_cross_entry prevents the SL from crossing entry price.
+    """
+    trail_distance = (
+        position.trail_distance_pips
+        if position.trail_distance_pips is not None
+        else config.trail_distance_pips
+    )
+    if trail_distance is None:
+        return  # should never happen (validated at startup for config-level; signals set it)
+
+    pip_size = config.instrument.pip_size
+
+    # Respect optional activation threshold
+    trigger_pips = (
+        position.trail_trigger_pips
+        if position.trail_trigger_pips is not None
+        else config.trail_trigger_pips
+    )
+    if trigger_pips is not None:
+        if position.direction == "long":
+            profit_pips = (bar_high - position.entry_price) / pip_size
+        else:
+            profit_pips = (position.entry_price - bar_low) / pip_size
+        if profit_pips < trigger_pips:
+            return
+
+    # Compute candidate SL from this bar's favourable extreme
+    offset = pips_to_price_offset(trail_distance, pip_size)
+    if position.direction == "long":
+        candidate_sl = bar_high - offset
+    else:
+        candidate_sl = bar_low + offset
+
+    # Optionally prevent the SL from crossing the entry price
+    dont_cross = (
+        position.trail_dont_cross_entry
+        if position.trail_dont_cross_entry is not None
+        else config.trail_dont_cross_entry
+    )
+    if dont_cross:
+        if position.direction == "long":
+            candidate_sl = min(candidate_sl, position.entry_price)
+        else:
+            candidate_sl = max(candidate_sl, position.entry_price)
+
+    # Ratchet: only move SL in the favourable direction
+    if position.direction == "long":
+        if candidate_sl > position.sl_price:
+            position.sl_price = candidate_sl
+            position.trail_applied = True
+    else:
+        if candidate_sl < position.sl_price:
+            position.sl_price = candidate_sl
+            position.trail_applied = True
+
+
+def check_and_execute_partial_close(
+    position: OpenPosition,
+    bar_high: float,
+    bar_low: float,
+    bar_time: datetime,
+    config: BacktestConfig,
+) -> Optional[Trade]:
+    """
+    Check whether the partial-close trigger is reached on this bar.
+
+    If triggered:
+    - Creates and returns a Trade record with exit_reason="PARTIAL" for the closed lot.
+    - Reduces position.lot_size to the remaining lot.
+    - Marks position.partial_close_done = True (fires at most once per trade).
+    - Stores the partial PnL in position.pending_partial_pnl_currency; this is
+      added to balance only when the remaining position is finally closed.
+
+    Returns None if partial close does not fire.
+    """
+    if position.partial_close_done:
+        return None
+
+    pct = position.partial_close_pct
+    if pct is None or pct <= 0 or pct >= 100:
+        return None
+
+    pip_size = config.instrument.pip_size
+
+    # Determine trigger in pips (partial_at_pips takes priority over partial_at_r)
+    if position.partial_at_pips is not None:
+        trigger_pips = position.partial_at_pips
+    elif position.partial_at_r is not None:
+        initial_risk_pips = abs(position.entry_price - position.initial_sl_price) / pip_size
+        if initial_risk_pips == 0:
+            return None  # guard against division by zero
+        trigger_pips = position.partial_at_r * initial_risk_pips
+    else:
+        return None  # no trigger configured
+
+    # Measure unrealised profit at bar's favourable extreme
+    if position.direction == "long":
+        profit_pips = (bar_high - position.entry_price) / pip_size
+        exit_price_raw = bar_high
+    else:
+        profit_pips = (position.entry_price - bar_low) / pip_size
+        exit_price_raw = bar_low
+
+    if profit_pips < trigger_pips:
+        return None
+
+    # --- Trigger reached: compute partial Trade record ---
+    pip_value_per_lot = config.instrument.pip_value_per_lot
+    slippage_offset = pips_to_price_offset(config.slippage_pips, pip_size)
+
+    partial_lot = round(position.lot_size * pct / 100, 2)
+    remaining_lot = round(position.lot_size * (1.0 - pct / 100), 2)
+
+    if position.direction == "long":
+        actual_exit = exit_price_raw - slippage_offset
+        pnl_pips = (actual_exit - position.entry_price) / pip_size
+    else:
+        actual_exit = exit_price_raw + slippage_offset
+        pnl_pips = (position.entry_price - actual_exit) / pip_size
+
+    pnl_currency = (
+        pnl_pips * pip_value_for_lot(partial_lot, pip_value_per_lot)
+        - config.commission
+    )
+
+    initial_risk_pips = price_diff_to_pips(
+        position.entry_price - position.initial_sl_price, pip_size
+    )
+    initial_risk_currency = initial_risk_pips * pip_value_for_lot(partial_lot, pip_value_per_lot)
+
+    trade = Trade(
+        entry_time=position.entry_time,
+        entry_price=position.entry_price,
+        exit_time=bar_time,
+        exit_price=round(actual_exit, 5),
+        exit_reason="PARTIAL",
+        direction=position.direction,
+        lot_size=partial_lot,
+        pnl_pips=round(pnl_pips, 1),
+        pnl_currency=round(pnl_currency, 2),
+        initial_risk_pips=round(initial_risk_pips, 1),
+        initial_risk_currency=round(initial_risk_currency, 2),
+        entry_gap_pips=position.entry_gap_pips,
+    )
+
+    # Mutate position in-place
+    position.lot_size = remaining_lot
+    position.partial_close_done = True
+    position.pending_partial_pnl_currency = round(pnl_currency, 2)
+
+    return trade
 
 
 def check_sl_tp(

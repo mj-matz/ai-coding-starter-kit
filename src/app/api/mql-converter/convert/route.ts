@@ -31,7 +31,7 @@ function looksLikeMqlCode(code: string): boolean {
 const SYSTEM_PROMPT = `You are an expert MQL4/MQL5 to Python conversion specialist. Your task is to convert MetaTrader Expert Advisors into Python strategy classes compatible with a backtesting engine.
 
 The target Python strategy class must:
-1. Extend \`BaseStrategy\` from \`strategies.base\`
+1. Extend \`BaseStrategy\` — CRITICAL: do NOT write any import statement for BaseStrategy. It is already injected into the execution context by the sandbox. The class definition must be exactly: \`class Strategy(BaseStrategy):\`
 2. Implement \`validate_params(self, params)\` and \`generate_signals(self, df, params)\`
 3. The \`generate_signals\` method receives a pandas DataFrame \`df\` with columns: open, high, low, close, volume (DatetimeIndex in UTC)
 4. It must return a tuple of (signals_df, skipped_days) where:
@@ -40,7 +40,13 @@ The target Python strategy class must:
 5. Use pandas_ta for indicators (e.g. pandas_ta.ema, pandas_ta.rsi, pandas_ta.macd, pandas_ta.atr, pandas_ta.bbands)
 6. Use numpy and pandas for data manipulation
 7. Do NOT use any network calls, file I/O, or subprocess calls
-8. Do NOT import anything besides pandas, numpy, and pandas_ta
+8. ONLY the following imports are permitted at the top of the file — no others:
+   \`\`\`
+   import pandas as pd
+   import numpy as np
+   import pandas_ta as ta
+   \`\`\`
+   Do NOT import BaseStrategy, strategies, os, sys, subprocess, socket, or any other module.
 
 MQL function mappings:
 - iMA() -> pandas_ta.ema() / sma() / wma() depending on method parameter

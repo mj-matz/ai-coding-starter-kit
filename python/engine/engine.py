@@ -16,6 +16,7 @@ from .pip_utils import pips_to_price_offset
 from .position_tracker import (
     OpenPosition,
     apply_trail_if_triggered,
+    check_and_execute_partial_close,
     check_sl_tp,
     close_position,
     is_sl_tp_ambiguous,
@@ -55,6 +56,19 @@ def _extract_pending_orders(sig_row: pd.Series) -> List[PendingOrder]:
     trail_lock_raw = sig_row.get("trail_lock_pips", np.nan)
     trail_trigger_pips = float(trail_trigger_raw) if pd.notna(trail_trigger_raw) else None
     trail_lock_pips = float(trail_lock_raw) if pd.notna(trail_lock_raw) else None
+    # PROJ-30
+    tt_raw = sig_row.get("trail_type", None)
+    trail_type = str(tt_raw) if pd.notna(tt_raw) and tt_raw is not None else None
+    td_raw = sig_row.get("trail_distance_pips", np.nan)
+    trail_distance_pips = float(td_raw) if pd.notna(td_raw) else None
+    dce_raw = sig_row.get("trail_dont_cross_entry", np.nan)
+    trail_dont_cross_entry = bool(dce_raw) if pd.notna(dce_raw) else None
+    pct_raw = sig_row.get("partial_close_pct", np.nan)
+    partial_close_pct = float(pct_raw) if pd.notna(pct_raw) else None
+    ap_raw = sig_row.get("partial_at_pips", np.nan)
+    partial_at_pips = float(ap_raw) if pd.notna(ap_raw) else None
+    ar_raw = sig_row.get("partial_at_r", np.nan)
+    partial_at_r = float(ar_raw) if pd.notna(ar_raw) else None
 
     long_entry = sig_row.get("long_entry", np.nan)
     if pd.notna(long_entry):
@@ -68,6 +82,12 @@ def _extract_pending_orders(sig_row: pd.Series) -> List[PendingOrder]:
                 expiry=expiry,
                 trail_trigger_pips=trail_trigger_pips,
                 trail_lock_pips=trail_lock_pips,
+                trail_type=trail_type,
+                trail_distance_pips=trail_distance_pips,
+                trail_dont_cross_entry=trail_dont_cross_entry,
+                partial_close_pct=partial_close_pct,
+                partial_at_pips=partial_at_pips,
+                partial_at_r=partial_at_r,
             )
         )
 
@@ -83,6 +103,12 @@ def _extract_pending_orders(sig_row: pd.Series) -> List[PendingOrder]:
                 expiry=expiry,
                 trail_trigger_pips=trail_trigger_pips,
                 trail_lock_pips=trail_lock_pips,
+                trail_type=trail_type,
+                trail_distance_pips=trail_distance_pips,
+                trail_dont_cross_entry=trail_dont_cross_entry,
+                partial_close_pct=partial_close_pct,
+                partial_at_pips=partial_at_pips,
+                partial_at_r=partial_at_r,
             )
         )
 
@@ -134,6 +160,12 @@ def run_backtest(
     Maximum one open position at a time; new signals while a position is open
     are ignored.
     """
+    # PROJ-30: Pre-validation — continuous trail requires trail_distance_pips
+    if config.trail_type == "continuous" and config.trail_distance_pips is None:
+        raise ValueError(
+            "BacktestConfig: trail_type='continuous' requires trail_distance_pips to be set."
+        )
+
     exit_time = _parse_time_exit(config.time_exit)
     exit_tz = ZoneInfo(config.timezone)
     slippage_offset = pips_to_price_offset(
@@ -166,6 +198,14 @@ def run_backtest(
     _nat_col       = np.array([pd.NaT] * len(signals))
     _sig_expiry    = signals["signal_expiry"].to_numpy() if "signal_expiry" in signals.columns else _nat_col
     _signal_exit   = signals["signal_exit"].to_numpy(dtype=float) if "signal_exit" in signals.columns else _nan_col
+    # PROJ-30: New signal columns
+    _none_col         = np.full(len(signals), None, dtype=object)
+    _trail_type_arr   = signals["trail_type"].to_numpy(dtype=object)        if "trail_type"            in signals.columns else _none_col
+    _trail_dist       = signals["trail_distance_pips"].to_numpy(dtype=float) if "trail_distance_pips"  in signals.columns else _nan_col
+    _trail_dce        = signals["trail_dont_cross_entry"].to_numpy(dtype=float) if "trail_dont_cross_entry" in signals.columns else _nan_col
+    _partial_pct      = signals["partial_close_pct"].to_numpy(dtype=float)  if "partial_close_pct"     in signals.columns else _nan_col
+    _partial_at_pips  = signals["partial_at_pips"].to_numpy(dtype=float)    if "partial_at_pips"       in signals.columns else _nan_col
+    _partial_at_r     = signals["partial_at_r"].to_numpy(dtype=float)       if "partial_at_r"          in signals.columns else _nan_col
 
     # ── Option B: Pre-compute time-exit flags (avoid tz_convert per bar) ─────
     if exit_time is not None:
@@ -177,6 +217,15 @@ def run_backtest(
     else:
         exit_flags = None
         _local_dates = None
+
+    def _str_val(v) -> Optional[str]:
+        """Return string value from object array cell, or None if NaN/None."""
+        if v is None:
+            return None
+        if isinstance(v, float) and v != v:  # NaN check (NaN != NaN)
+            return None
+        s = str(v)
+        return s if s and s.lower() != "nan" else None
 
     balance: float = config.initial_balance
     trades: List[Trade] = []
@@ -198,7 +247,7 @@ def run_backtest(
                 trade = close_position(position, bar_time, bar_open, "TIME", config,
                                        used_1s_resolution=position.any_1s_used)
                 trades.append(trade)
-                balance += trade.pnl_currency
+                balance += trade.pnl_currency + position.pending_partial_pnl_currency
                 equity_curve.append(
                     {"time": bar_time.isoformat(), "balance": round(balance, 2)}
                 )
@@ -214,7 +263,7 @@ def run_backtest(
                 trade = close_position(position, prev_time, prev_close, "TIME", config,
                                        used_1s_resolution=position.any_1s_used)
                 trades.append(trade)
-                balance += trade.pnl_currency
+                balance += trade.pnl_currency + position.pending_partial_pnl_currency
                 equity_curve.append(
                     {"time": prev_time.isoformat(), "balance": round(balance, 2)}
                 )
@@ -229,7 +278,7 @@ def run_backtest(
             trade = close_position(position, bar_time, bar_open, "SIGNAL", config,
                                    used_1s_resolution=position.any_1s_used)
             trades.append(trade)
-            balance += trade.pnl_currency
+            balance += trade.pnl_currency + position.pending_partial_pnl_currency
             equity_curve.append(
                 {"time": bar_time.isoformat(), "balance": round(balance, 2)}
             )
@@ -247,6 +296,14 @@ def run_backtest(
                 )
                 _ttp_flip = float(_trail_trigger[i - 1]) if not np.isnan(_trail_trigger[i - 1]) else None
                 _tlp_flip = float(_trail_lock[i - 1]) if not np.isnan(_trail_lock[i - 1]) else None
+                # PROJ-30
+                _flip_trail_type = _str_val(_trail_type_arr[i - 1])
+                _flip_trail_dist = float(_trail_dist[i - 1]) if not np.isnan(_trail_dist[i - 1]) else None
+                _flip_dce_raw = _trail_dce[i - 1]
+                _flip_dce = bool(_flip_dce_raw) if not np.isnan(_flip_dce_raw) else None
+                _flip_pct = float(_partial_pct[i - 1]) if not np.isnan(_partial_pct[i - 1]) else None
+                _flip_at_pips = float(_partial_at_pips[i - 1]) if not np.isnan(_partial_at_pips[i - 1]) else None
+                _flip_at_r = float(_partial_at_r[i - 1]) if not np.isnan(_partial_at_r[i - 1]) else None
                 flip_orders: List[PendingOrder] = []
                 if not np.isnan(_le_flip):
                     _ltp_flip = _long_tp[i - 1]
@@ -258,6 +315,12 @@ def run_backtest(
                         expiry=_expiry_flip,
                         trail_trigger_pips=_ttp_flip,
                         trail_lock_pips=_tlp_flip,
+                        trail_type=_flip_trail_type,
+                        trail_distance_pips=_flip_trail_dist,
+                        trail_dont_cross_entry=_flip_dce,
+                        partial_close_pct=_flip_pct,
+                        partial_at_pips=_flip_at_pips,
+                        partial_at_r=_flip_at_r,
                     ))
                 if not np.isnan(_se_flip):
                     _stp_flip = _short_tp[i - 1]
@@ -269,6 +332,12 @@ def run_backtest(
                         expiry=_expiry_flip,
                         trail_trigger_pips=_ttp_flip,
                         trail_lock_pips=_tlp_flip,
+                        trail_type=_flip_trail_type,
+                        trail_distance_pips=_flip_trail_dist,
+                        trail_dont_cross_entry=_flip_dce,
+                        partial_close_pct=_flip_pct,
+                        partial_at_pips=_flip_at_pips,
+                        partial_at_r=_flip_at_r,
                     ))
                 if flip_orders:
                     pending_orders = flip_orders
@@ -347,12 +416,19 @@ def run_backtest(
                     exit_gap=exit_gap, used_1s_resolution=position.any_1s_used or used_1s,
                 )
                 trades.append(trade)
-                balance += trade.pnl_currency
+                balance += trade.pnl_currency + position.pending_partial_pnl_currency
                 equity_curve.append(
                     {"time": bar_time.isoformat(), "balance": round(balance, 2)}
                 )
                 position = None
                 pending_orders = []
+            else:
+                # ── 1c. Partial close (PROJ-30) — only when SL/TP not hit ──
+                partial_trade = check_and_execute_partial_close(
+                    position, bar_high, bar_low, bar_time, config
+                )
+                if partial_trade is not None:
+                    trades.append(partial_trade)
 
         # ── 1d. Expire pending orders past their deadline ─────────────────
         if pending_orders:
@@ -406,6 +482,12 @@ def run_backtest(
                     entry_gap_pips=entry_gap_pips,
                     trail_trigger_pips=triggered.trail_trigger_pips,
                     trail_lock_pips=triggered.trail_lock_pips,
+                    trail_type=triggered.trail_type,
+                    trail_distance_pips=triggered.trail_distance_pips,
+                    trail_dont_cross_entry=triggered.trail_dont_cross_entry,
+                    partial_close_pct=triggered.partial_close_pct,
+                    partial_at_pips=triggered.partial_at_pips,
+                    partial_at_r=triggered.partial_at_r,
                 )
                 pending_orders = []  # cancel OCO partner
 
@@ -494,11 +576,19 @@ def run_backtest(
                             exit_gap=entry_exit_gap, used_1s_resolution=used_1s,
                         )
                         trades.append(trade)
-                        balance += trade.pnl_currency
+                        # pending_partial_pnl_currency is 0 here (partial can't fire before entry-bar SL/TP)
+                        balance += trade.pnl_currency + position.pending_partial_pnl_currency
                         equity_curve.append(
                             {"time": bar_time.isoformat(), "balance": round(balance, 2)}
                         )
                         position = None
+                    else:
+                        # ── PROJ-30: Partial close on entry bar (SL/TP not hit) ──
+                        partial_trade = check_and_execute_partial_close(
+                            position, bar_high, bar_low, bar_time, config
+                        )
+                        if partial_trade is not None:
+                            trades.append(partial_trade)
 
         # ── 3. New signal for next bar ──────────────────────────────────────
         # Signals are intentionally discarded while a position is open (max 1
@@ -517,6 +607,14 @@ def run_backtest(
                 _tl = _trail_lock[i]
                 _ttp = float(_tt) if not np.isnan(_tt) else None
                 _tlp = float(_tl) if not np.isnan(_tl) else None
+                # PROJ-30 fields
+                _sig_trail_type = _str_val(_trail_type_arr[i])
+                _sig_trail_dist = float(_trail_dist[i]) if not np.isnan(_trail_dist[i]) else None
+                _dce_raw = _trail_dce[i]
+                _sig_dce = bool(_dce_raw) if not np.isnan(_dce_raw) else None
+                _sig_pct = float(_partial_pct[i]) if not np.isnan(_partial_pct[i]) else None
+                _sig_at_pips = float(_partial_at_pips[i]) if not np.isnan(_partial_at_pips[i]) else None
+                _sig_at_r = float(_partial_at_r[i]) if not np.isnan(_partial_at_r[i]) else None
                 new_orders: List[PendingOrder] = []
                 if not np.isnan(_le):
                     _ltp = _long_tp[i]
@@ -528,6 +626,12 @@ def run_backtest(
                         expiry=_expiry,
                         trail_trigger_pips=_ttp,
                         trail_lock_pips=_tlp,
+                        trail_type=_sig_trail_type,
+                        trail_distance_pips=_sig_trail_dist,
+                        trail_dont_cross_entry=_sig_dce,
+                        partial_close_pct=_sig_pct,
+                        partial_at_pips=_sig_at_pips,
+                        partial_at_r=_sig_at_r,
                     ))
                 if not np.isnan(_se):
                     _stp = _short_tp[i]
@@ -539,6 +643,12 @@ def run_backtest(
                         expiry=_expiry,
                         trail_trigger_pips=_ttp,
                         trail_lock_pips=_tlp,
+                        trail_type=_sig_trail_type,
+                        trail_distance_pips=_sig_trail_dist,
+                        trail_dont_cross_entry=_sig_dce,
+                        partial_close_pct=_sig_pct,
+                        partial_at_pips=_sig_at_pips,
+                        partial_at_r=_sig_at_r,
                     ))
                 if new_orders:
                     pending_orders = new_orders
@@ -551,7 +661,7 @@ def run_backtest(
             used_1s_resolution=position.any_1s_used,
         )
         trades.append(trade)
-        balance += trade.pnl_currency
+        balance += trade.pnl_currency + position.pending_partial_pnl_currency
         equity_curve.append(
             {"time": last_time.isoformat(), "balance": round(balance, 2)}
         )

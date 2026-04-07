@@ -17,6 +17,14 @@ class PendingOrder:
     expiry: Optional[pd.Timestamp] = field(default=None)  # UTC timestamp; order expires after this time
     trail_trigger_pips: Optional[float] = None  # overrides BacktestConfig when set
     trail_lock_pips: Optional[float] = None     # overrides BacktestConfig when set
+    # PROJ-30: Continuous trailing stop (all optional; None = use BacktestConfig global)
+    trail_type: Optional[str] = None             # "step" or "continuous"
+    trail_distance_pips: Optional[float] = None  # pip distance for continuous trail
+    trail_dont_cross_entry: Optional[bool] = None
+    # PROJ-30: Partial close (all optional; None = disabled)
+    partial_close_pct: Optional[float] = None    # e.g. 40.0 = close 40% of position
+    partial_at_pips: Optional[float] = None      # trigger: fixed pip distance from entry
+    partial_at_r: Optional[float] = None         # trigger: R-multiple of initial risk
 
 
 def evaluate_pending_orders(

@@ -34,6 +34,11 @@ class BacktestConfig:
     trail_lock_pips: Optional[float] = None     # pips from entry to which SL is moved
     gap_fill: bool = False                      # True = realistic gap behaviour; False = TradingView-compatible exact fills
 
+    # PROJ-30: Continuous trailing stop
+    trail_type: str = "step"                     # "step" (default, existing behaviour) or "continuous"
+    trail_distance_pips: Optional[float] = None  # pip distance for continuous trail (required when trail_type="continuous")
+    trail_dont_cross_entry: bool = False         # True = SL may never move past the entry price
+
 
 @dataclass
 class Trade:
@@ -43,7 +48,7 @@ class Trade:
     entry_price: float
     exit_time: datetime
     exit_price: float
-    exit_reason: Literal["SL", "SL_TRAILED", "TP", "TIME", "SIGNAL"]
+    exit_reason: Literal["SL", "SL_TRAILED", "TP", "TIME", "SIGNAL", "PARTIAL"]
     direction: Literal["long", "short"]
     lot_size: float
     pnl_pips: float

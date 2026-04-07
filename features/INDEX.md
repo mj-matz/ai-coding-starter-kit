@@ -42,7 +42,9 @@
 | PROJ-26 | Strategy Export to MT5 EA | In Progress | [PROJ-26-strategy-export-mt5-ea.md](PROJ-26-strategy-export-mt5-ea.md) | 2026-03-31 |
 | PROJ-27 | Persistent Market Data Store (Monthly Chunks) | Planned | [PROJ-27-persistent-market-data-store.md](PROJ-27-persistent-market-data-store.md) | 2026-03-31 |
 | PROJ-28 | User-Defined Strategies (MQL → Strategy Library) | Planned | [PROJ-28-user-defined-strategies.md](PROJ-28-user-defined-strategies.md) | 2026-04-01 |
+| PROJ-29 | Backtest Realism – Bid-Price Data & First-Breakout Direction | Planned | [PROJ-29-backtest-realism-bid-data-breakout-direction.md](PROJ-29-backtest-realism-bid-data-breakout-direction.md) | 2026-04-02 |
+| PROJ-30 | Engine – Continuous Trailing Stop & Partial Close | In Review | [PROJ-30-engine-continuous-trailing-stop-partial-close.md](PROJ-30-engine-continuous-trailing-stop-partial-close.md) | 2026-04-05 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-29
+## Next Available ID: PROJ-31

@@ -35,6 +35,8 @@ A personal web-based backtesting platform for systematic trading strategies. The
 | P1 | User-Defined Strategies (MQL → Strategy Library) | Planned |
 | P1 | Export Backtest Results (Excel / CSV) | Planned |
 | P1 | Strategy Export to MT5 EA | Planned |
+| P1 | Backtest Realism – Bid-Price Data & First-Breakout Direction | Planned |
+| P1 | Engine – Continuous Trailing Stop & Partial Close | Planned |
 
 ## Success Metrics
 - Backtesting engine produces identical results on repeated runs (deterministic)
