@@ -2584,10 +2584,10 @@ async def sandbox_run(
     )
 
     try:
-        backtest_result = run_backtest(
-            df, signals_df, engine_config,
-            get_1s_data=create_1s_data_provider(symbol, bar_duration_minutes=_bar_minutes) if symbol else None,
-        )
+        # Sandbox runs always use 1-minute resolution (no 1s-zoom) to avoid
+        # fetching tick data from Dukascopy for every trade, which would easily
+        # exceed the 90s upstream timeout with a full-year dataset.
+        backtest_result = run_backtest(df, signals_df, engine_config, get_1s_data=None)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
