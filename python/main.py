@@ -2256,14 +2256,6 @@ df_path = sys.argv[2]
 output_path = sys.argv[3]
 project_root = sys.argv[4]
 
-# BUG-11: Block network access at Python level
-import socket as _socket
-def _sandbox_no_network(*args, **kwargs):
-    raise RuntimeError("Network access is not allowed in sandbox")
-_socket.socket = _sandbox_no_network
-_socket.create_connection = _sandbox_no_network
-_socket.getaddrinfo = _sandbox_no_network
-
 # BUG-12: Remove os/subprocess attributes exposed via allowed modules
 import numpy as _np
 import pandas as _pd
@@ -2279,6 +2271,17 @@ for _m in (_np, _pd):
 sys.path.insert(0, project_root)
 from strategies.base import BaseStrategy
 sys.path.remove(project_root)
+
+# BUG-11: Block network access at Python level.
+# Must happen AFTER BaseStrategy import: pydantic's import chain reaches ssl.py
+# which does `class SSLSocket(socket):` — patching socket.socket beforehand
+# replaces the class with a plain function and causes a TypeError.
+import socket as _socket
+def _sandbox_no_network(*args, **kwargs):
+    raise RuntimeError("Network access is not allowed in sandbox")
+_socket.socket = _sandbox_no_network
+_socket.create_connection = _sandbox_no_network
+_socket.getaddrinfo = _sandbox_no_network
 
 df = pd.read_parquet(df_path)
 
