@@ -2369,7 +2369,7 @@ class SandboxRunRequest(BaseModel):
     config: BacktestConfigRequest
 
 
-@app.post("/sandbox/run", response_model=BacktestRunResponse)
+@app.post("/sandbox/run", response_model=BacktestOrchestrationResponse)
 async def sandbox_run(
     request: SandboxRunRequest,
     token: dict = Depends(verify_jwt),
@@ -2597,60 +2597,161 @@ async def sandbox_run(
     # ── 6. Analytics ────────────────────────────────────────────────────────
     try:
         analytics_result = calculate_analytics(backtest_result)
-        analytics_out = AnalyticsResponse(
-            summary=[
-                MetricResponse(
-                    name=m.name,
-                    value=None if (m.value is None or m.value == float("inf")) else m.value,
-                    value_string="Infinity" if m.value == float("inf") else None,
-                    unit=m.unit,
-                    note=m.note,
-                )
-                for m in analytics_result.summary
-            ],
-            monthly_r=[
-                MonthlyRResponse(
-                    month=mr.month,
-                    r_earned=mr.r_earned,
-                    trade_count=mr.trade_count,
-                    win_rate_pct=mr.win_rate_pct,
-                    avg_loss_pips=mr.avg_loss_pips,
-                    avg_mae_pips=mr.avg_mae_pips,
-                )
-                for mr in analytics_result.monthly_r
-            ],
-        )
     except Exception as e:
         logger.error(f"Sandbox analytics error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Analytics calculation failed.")
 
-    # ── 7. Serialise and return ──────────────────────────────────────────────
-    trades_out = [
-        TradeResponse(
+    # ── 7. Build BacktestOrchestrationResponse (same format as /backtest) ────
+    # The frontend expects BacktestOrchestrationResponse (metrics, drawdown_curve,
+    # skipped_days, monthly_r, symbol, timeframe). Using BacktestRunResponse caused
+    # a client-side crash because 'metrics' was undefined.
+    m = {metric.name: metric.value for metric in analytics_result.summary}
+
+    def _f(v, default: float = 0.0) -> float:
+        if v is None:
+            return default
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return default
+        return default if (f != f or f == float("inf")) else f
+
+    cagr_val = _f(m.get("CAGR"))
+    dd_val = _f(m.get("Max Drawdown"))
+    calmar_val = round(cagr_val / abs(dd_val), 2) if dd_val != 0.0 else 0.0
+
+    metrics_out = BacktestMetricsOut(
+        total_return_pct=_f(m.get("Total Return")),
+        cagr_pct=cagr_val,
+        sharpe_ratio=_f(m.get("Sharpe Ratio")),
+        sortino_ratio=_f(m.get("Sortino Ratio")),
+        max_drawdown_pct=dd_val,
+        calmar_ratio=calmar_val,
+        longest_drawdown_days=_f(m.get("Max Drawdown Duration")),
+        total_trades=int(m.get("Total Trades") or 0),
+        winning_trades=int(m.get("Winning Trades") or 0),
+        losing_trades=int(m.get("Losing Trades") or 0),
+        win_rate_pct=_f(m.get("Win Rate")),
+        gross_profit=_f(m.get("Gross Profit")),
+        gross_loss=_f(m.get("Gross Loss")),
+        gross_profit_pips=_f(m.get("Gross Profit (Pips)")),
+        gross_loss_pips=_f(m.get("Gross Loss (Pips)")),
+        avg_win=_f(m.get("Avg Win")),
+        avg_loss=_f(m.get("Avg Loss")),
+        avg_win_pips=_f(m.get("Avg Win (Pips)")),
+        avg_loss_pips=_f(m.get("Avg Loss (Pips)")),
+        avg_win_loss_ratio=_f(m.get("Avg Win / Avg Loss")),
+        profit_factor=_f(m.get("Profit Factor (Pips)")),
+        avg_r_multiple=_f(m.get("Avg R per Trade")),
+        total_r=_f(m.get("Total R")),
+        avg_r_per_month=_f(m.get("Avg R per Month")),
+        expectancy_pips=_f(m.get("Expectancy (Pips)")),
+        best_trade=_f(m.get("Best Trade")),
+        worst_trade=_f(m.get("Worst Trade")),
+        consecutive_wins=int(m.get("Consecutive Wins") or 0),
+        consecutive_losses=int(m.get("Consecutive Losses") or 0),
+        avg_trade_duration_hours=_f(m.get("Avg Trade Duration")),
+        final_balance=backtest_result.final_balance,
+        net_profit=m.get("Net Profit"),
+        max_drawdown_abs=m.get("Max Drawdown Abs"),
+        recovery_factor=m.get("Recovery Factor"),
+        expected_payoff=m.get("Expected Payoff"),
+        buy_trades=int(m.get("Buy Trades") or 0),
+        buy_win_rate_pct=m.get("Buy Win Rate"),
+        sell_trades=int(m.get("Sell Trades") or 0),
+        sell_win_rate_pct=m.get("Sell Win Rate"),
+        min_trade_duration_minutes=m.get("Min Trade Duration"),
+        max_trade_duration_minutes=m.get("Max Trade Duration"),
+        max_consec_wins_count=int(m.get("Max Consec Wins Count") or 0),
+        max_consec_wins_profit=m.get("Max Consec Wins Profit"),
+        max_consec_losses_count=int(m.get("Max Consec Losses Count") or 0),
+        max_consec_losses_loss=m.get("Max Consec Losses Loss"),
+        avg_consec_wins=m.get("Avg Consec Wins"),
+        avg_consec_losses=m.get("Avg Consec Losses"),
+        ahpr=m.get("AHPR"),
+        ghpr=m.get("GHPR"),
+        lr_correlation=m.get("LR Correlation"),
+        lr_std_error=m.get("LR Standard Error"),
+        z_score=m.get("Z-Score"),
+        z_score_confidence_pct=m.get("Z-Score Confidence"),
+    )
+
+    equity_curve_out = [
+        EquityCurveOut(date=pt["time"], balance=pt["balance"])
+        for pt in backtest_result.equity_curve
+    ]
+
+    peak = backtest_result.initial_balance
+    drawdown_curve_out: list[DrawdownCurveOut] = []
+    for pt in backtest_result.equity_curve:
+        bal = pt["balance"]
+        if bal > peak:
+            peak = bal
+        dd_pct = round((bal - peak) / peak * 100, 4) if peak > 0 else 0.0
+        drawdown_curve_out.append(DrawdownCurveOut(date=pt["time"], drawdown_pct=dd_pct))
+
+    trades_detail_out: list[TradeDetailOut] = []
+    for i, t in enumerate(backtest_result.trades):
+        duration_minutes = int((t.exit_time - t.entry_time).total_seconds() / 60)
+        direction_prefix = "long" if t.direction == "long" else "short"
+        sl_col = f"{direction_prefix}_sl"
+        tp_col = f"{direction_prefix}_tp"
+        signal_before_entry = signals_df.loc[:t.entry_time, f"{direction_prefix}_entry"].dropna()
+        if not signal_before_entry.empty:
+            sig_ts = signal_before_entry.index[-1]
+            stop_loss_val = float(signals_df.at[sig_ts, sl_col]) if pd.notna(signals_df.at[sig_ts, sl_col]) else 0.0
+            take_profit_val = float(signals_df.at[sig_ts, tp_col]) if (tp_col in signals_df.columns and pd.notna(signals_df.at[sig_ts, tp_col])) else 0.0
+        else:
+            stop_loss_val = 0.0
+            take_profit_val = 0.0
+        trades_detail_out.append(TradeDetailOut(
+            id=i + 1,
             entry_time=t.entry_time.isoformat(),
-            entry_price=t.entry_price,
             exit_time=t.exit_time.isoformat(),
-            exit_price=t.exit_price,
-            exit_reason=t.exit_reason,
             direction=t.direction,
+            entry_price=t.entry_price,
+            exit_price=t.exit_price,
             lot_size=t.lot_size,
             pnl_pips=t.pnl_pips,
             pnl_currency=t.pnl_currency,
-            initial_risk_pips=t.initial_risk_pips,
-            initial_risk_currency=t.initial_risk_currency,
-            r_multiple=compute_r_multiple(t),
+            r_multiple=_f(compute_r_multiple(t)),
+            exit_reason=t.exit_reason,
+            duration_minutes=duration_minutes,
+            entry_gap_pips=t.entry_gap_pips,
+            exit_gap=t.exit_gap,
             used_1s_resolution=t.used_1s_resolution,
             mae_pips=t.mae_pips,
+            range_high=0.0,
+            range_low=0.0,
+            stop_loss=stop_loss_val,
+            take_profit=take_profit_val,
+        ))
+
+    monthly_r_out = [
+        MonthlyRResponse(
+            month=mr.month,
+            r_earned=mr.r_earned,
+            trade_count=mr.trade_count,
+            win_rate_pct=mr.win_rate_pct,
+            avg_loss_pips=mr.avg_loss_pips,
+            avg_mae_pips=mr.avg_mae_pips,
         )
-        for t in backtest_result.trades
+        for mr in analytics_result.monthly_r
     ]
 
-    return BacktestRunResponse(
-        trades=trades_out,
-        equity_curve=backtest_result.equity_curve,
-        final_balance=backtest_result.final_balance,
-        initial_balance=backtest_result.initial_balance,
-        analytics=analytics_out,
+    _tf_map = {1: "1m", 2: "2m", 3: "3m", 5: "5m", 15: "15m", 30: "30m", 60: "1h", 240: "4h", 1440: "1d"}
+    timeframe_str = _tf_map.get(_bar_minutes, f"{_bar_minutes}m")
+
+    return BacktestOrchestrationResponse(
+        metrics=metrics_out,
+        equity_curve=equity_curve_out,
+        drawdown_curve=drawdown_curve_out,
+        trades=trades_detail_out,
+        skipped_days=[],
+        monthly_r=monthly_r_out,
+        cache_id=request.cache_id,
+        symbol=symbol,
+        timeframe=timeframe_str,
     )
 
 
