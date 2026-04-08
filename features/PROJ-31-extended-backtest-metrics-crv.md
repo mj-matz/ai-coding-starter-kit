@@ -1,8 +1,8 @@
 # PROJ-31: Extended Backtest Metrics & CRV Display
 
-## Status: Planned
+## Status: Deployed
 **Created:** 2026-04-07
-**Last Updated:** 2026-04-07
+**Last Updated:** 2026-04-08
 
 ## Dependencies
 - Requires: PROJ-2 (Backtesting Engine) – metrics are computed there
@@ -230,7 +230,7 @@ Die Excel/CSV-Export-Logik liest direkt aus `BacktestMetrics`. Neue Felder werde
 
 **Date:** 2026-04-08
 **Tester:** /qa skill (automated + code review)
-**Status:** NOT READY (2 Medium + 2 Low bugs found)
+**Status:** READY — all 4 bugs fixed in commit `30d3ed0`
 
 ---
 
@@ -293,21 +293,21 @@ Die Excel/CSV-Export-Logik liest direkt aus `BacktestMetrics`. Neue Felder werde
 
 ### Bugs Found
 
-#### BUG-1 · Medium: Recovery Factor hidden when max drawdown = 0
+#### ~~BUG-1~~ · ✓ FIXED: Recovery Factor hidden when max drawdown = 0
 **Where:** `results-panel.tsx` → `metrics-summary-card.tsx` (Overview + Risk cards)
 **Steps to reproduce:** Run a backtest that is profitable with zero drawdown (all winning trades, equity only goes up).
 **Expected:** Recovery Factor shows "∞" or "—" per spec.
 **Actual:** Row is hidden entirely (`{m.recovery_factor != null && ...}`).
 **Impact:** A positive strategy characteristic is invisible.
 
-#### BUG-2 · Medium: CRV not shown in History detail view
+#### ~~BUG-2~~ · ✓ FIXED: CRV not shown in History detail view
 **Where:** `src/app/(dashboard)/history/page.tsx` line 202 — `MetricsSummaryCard` called without `crv` prop.
 **Steps to reproduce:** Save a backtest run → go to History → open the saved run.
 **Expected:** CRV should appear as first row in Overview card (config data is stored with the run).
 **Actual:** CRV is absent; the `crv` prop is not passed to `MetricsSummaryCard` from the history page.
 **Fix:** Compute `crv` from `(config?.strategyParams as Record<string, unknown>)?.takeProfit / stopLoss` and pass it to `MetricsSummaryCard`.
 
-#### BUG-3 · Low: Negative monetary values have misplaced dollar sign
+#### ~~BUG-3~~ · ✓ FIXED: Negative monetary values have misplaced dollar sign
 **Where:** `formatDollar` function in `metrics-summary-card.tsx`
 **Steps to reproduce:** Run a losing backtest (negative net profit). Observe "Net Profit" value.
 **Expected:** `-$150.00`
@@ -315,7 +315,7 @@ Die Excel/CSV-Export-Logik liest direkt aus `BacktestMetrics`. Neue Felder werde
 **Affected fields:** Net Profit (negative), Expected Payoff (negative), Max Consec. Losses P&L.
 **Fix:** Check sign first: `value < 0 ? '-$' + Math.abs(value).toLocaleString(...) : '$' + value.toLocaleString(...)`
 
-#### BUG-4 · Low: Empty direction win-rate shows "—" instead of "—%"
+#### ~~BUG-4~~ · ✓ FIXED: Empty direction win-rate shows "—" instead of "—%"
 **Where:** `metrics-summary-card.tsx`, Buy Trades / Sell Trades rows
 **Steps to reproduce:** Run a long-only strategy — Sell Trades shows `0 (—)`.
 **Expected:** `0 (—%)` per spec edge case documentation.
@@ -337,9 +337,7 @@ Die Excel/CSV-Export-Logik liest direkt aus `BacktestMetrics`. Neue Felder werde
 - PROJ-25 export: new metrics automatically included via `Object.entries(metrics)`. ✓
 
 ### Production-Ready Decision
-**NOT READY** — 2 Medium bugs must be fixed before deployment.
-- BUG-1 and BUG-2 are user-visible functional gaps specified in acceptance criteria.
-- BUG-3 and BUG-4 are cosmetic but can be fixed alongside BUG-1/BUG-2.
+**READY** — All 4 bugs fixed in commit `30d3ed0 fix(PROJ-31): Fix 4 QA bugs — recovery factor, CRV history, dollar sign, win-rate %`
 
 ## Deployment
 _To be added by /deploy_

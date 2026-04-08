@@ -25,7 +25,7 @@ CREATE POLICY "Users can view own runs"
   TO authenticated
   USING (
     auth.uid() = user_id
-    OR (auth.jwt() -> 'user_metadata' ->> 'role') = 'admin'
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
   );
 
 -- INSERT: Users can insert own runs only

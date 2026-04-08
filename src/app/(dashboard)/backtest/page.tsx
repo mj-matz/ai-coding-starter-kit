@@ -177,6 +177,7 @@ function BacktestPageInner() {
             onSaveRun={handleSaveRun}
             isSaving={isSaving}
             defaultRunName={defaultRunName}
+            strategyParams={lastConfig?.strategyParams}
           />
         </div>
       </div>

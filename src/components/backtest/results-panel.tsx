@@ -39,6 +39,7 @@ interface ResultsPanelProps {
   onSaveRun?: (name: string) => Promise<void>;
   isSaving?: boolean;
   defaultRunName?: string;
+  strategyParams?: Record<string, unknown>;
 }
 
 function EmptyState() {
@@ -140,6 +141,7 @@ export function ResultsPanel({
   onSaveRun,
   isSaving = false,
   defaultRunName = "",
+  strategyParams,
 }: ResultsPanelProps) {
   if (status === "loading") {
     return <LoadingState isTimedOut={isTimedOut} onCancel={onCancel} />;
@@ -157,10 +159,16 @@ export function ResultsPanel({
     return <NoTradesState />;
   }
 
+  // Compute CRV from strategy config (takeProfit / stopLoss)
+  const sp = strategyParams ?? {};
+  const tp = typeof sp.takeProfit === "number" ? sp.takeProfit : null;
+  const sl = typeof sp.stopLoss === "number" ? sp.stopLoss : null;
+  const crv = tp != null && sl != null && sl > 0 ? tp / sl : null;
+
   return (
     <div className="space-y-6">
       {/* Metrics Summary (always visible) */}
-      <MetricsSummaryCard metrics={result.metrics} initialCapital={initialCapital} monthlyR={result.monthly_r} />
+      <MetricsSummaryCard metrics={result.metrics} initialCapital={initialCapital} monthlyR={result.monthly_r} crv={crv} />
 
       {/* Tabbed content: Charts and Trade List */}
       <Tabs defaultValue="charts" className="w-full">

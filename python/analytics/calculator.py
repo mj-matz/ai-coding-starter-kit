@@ -38,8 +38,18 @@ from .trade_metrics import (
     avg_r_per_trade,
     expectancy_currency,
     expectancy_pips,
+    long_short_breakdown,
+    min_trade_duration_minutes,
+    max_trade_duration_minutes,
+    consecutive_streaks_extended,
+    ahpr,
+    ghpr,
+    z_score_runs_test,
+    net_profit,
+    recovery_factor,
+    expected_payoff,
 )
-from .equity_metrics import total_return_pct, cagr, max_drawdown
+from .equity_metrics import total_return_pct, cagr, max_drawdown, lr_correlation, lr_standard_error
 from .risk_metrics import sharpe_ratio, sortino_ratio
 from .monthly_metrics import monthly_r_breakdown, avg_r_per_month
 
@@ -77,8 +87,30 @@ def calculate_analytics(result: BacktestResult) -> AnalyticsResult:
     # Streaks
     cons_wins, cons_losses = consecutive_streaks(trades)
 
-    # Drawdown
-    dd_pct, dd_duration = max_drawdown(equity)
+    # Extended streaks
+    streaks_ext = consecutive_streaks_extended(trades)
+
+    # Drawdown (now returns 3 values)
+    dd_pct, dd_duration, dd_abs = max_drawdown(equity)
+
+    # Direction breakdown
+    dir_breakdown = long_short_breakdown(trades)
+
+    # Net profit, recovery factor, expected payoff
+    net_profit_val = net_profit(trades)
+    recovery_factor_val = recovery_factor(net_profit_val, dd_abs)
+    expected_payoff_val = expected_payoff(trades)
+
+    # AHPR / GHPR
+    ahpr_val = ahpr(trades, initial)
+    ghpr_val = ghpr(trades, initial)
+
+    # Z-Score
+    z_score_val, z_score_conf = z_score_runs_test(trades)
+
+    # LR metrics
+    lr_corr_val = lr_correlation(equity)
+    lr_se_val = lr_standard_error(equity)
 
     # CAGR sub-year note
     cagr_note: Optional[str] = None
@@ -147,6 +179,42 @@ def calculate_analytics(result: BacktestResult) -> AnalyticsResult:
         Metric("Total R", _round_opt(total_r(trades), 2), "R"),
         Metric("Avg R per Trade", _round_opt(avg_r_per_trade(trades), 2), "R"),
         Metric("Avg R per Month", _round_opt(avg_r_month, 2), "R"),
+
+        # -- PROJ-31: Extended metrics --
+        Metric("Net Profit", _round_opt(net_profit_val, 2), "currency"),
+        Metric("Max Drawdown Abs", _round_opt(dd_abs, 2), "currency"),
+        Metric("Recovery Factor", _round_opt(recovery_factor_val, 2), "ratio"),
+        Metric("Expected Payoff", _round_opt(expected_payoff_val, 2), "currency"),
+
+        # Direction breakdown
+        Metric("Buy Trades", dir_breakdown["buy_trades"], "count"),
+        Metric("Buy Win Rate", _round_opt(dir_breakdown["buy_win_rate_pct"], 2), "%"),
+        Metric("Sell Trades", dir_breakdown["sell_trades"], "count"),
+        Metric("Sell Win Rate", _round_opt(dir_breakdown["sell_win_rate_pct"], 2), "%"),
+
+        # Min / Max duration
+        Metric("Min Trade Duration", _round_opt(min_trade_duration_minutes(trades), 1), "minutes"),
+        Metric("Max Trade Duration", _round_opt(max_trade_duration_minutes(trades), 1), "minutes"),
+
+        # Extended streaks
+        Metric("Max Consec Wins Count", streaks_ext["max_consec_wins_count"], "count"),
+        Metric("Max Consec Wins Profit", _round_opt(streaks_ext["max_consec_wins_profit"], 2), "currency"),
+        Metric("Max Consec Losses Count", streaks_ext["max_consec_losses_count"], "count"),
+        Metric("Max Consec Losses Loss", _round_opt(streaks_ext["max_consec_losses_loss"], 2), "currency"),
+        Metric("Avg Consec Wins", _round_opt(streaks_ext["avg_consec_wins"], 2), "count"),
+        Metric("Avg Consec Losses", _round_opt(streaks_ext["avg_consec_losses"], 2), "count"),
+
+        # AHPR / GHPR
+        Metric("AHPR", _round_opt(ahpr_val, 6), "ratio"),
+        Metric("GHPR", _round_opt(ghpr_val, 6), "ratio"),
+
+        # LR metrics
+        Metric("LR Correlation", _round_opt(lr_corr_val, 4), "ratio"),
+        Metric("LR Standard Error", _round_opt(lr_se_val, 2), "currency"),
+
+        # Z-Score
+        Metric("Z-Score", _round_opt(z_score_val, 2), "ratio"),
+        Metric("Z-Score Confidence", _round_opt(z_score_conf, 2), "%"),
     ]
 
     return AnalyticsResult(summary=summary, monthly_r=monthly)
