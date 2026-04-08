@@ -32,6 +32,11 @@ CONCURRENT_REQUESTS = 6
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = [0.5, 1, 2]
 
+# Circuit breaker: abort if this many consecutive HTTP 503/5xx responses are seen
+# across all concurrent tasks. Prevents spending 60+ seconds retrying when
+# Dukascopy is clearly unavailable.
+CIRCUIT_BREAK_THRESHOLD = 10
+
 _POOL_LIMITS = httpx.Limits(max_connections=25, max_keepalive_connections=20)
 
 
@@ -200,16 +205,24 @@ async def _download_candle_raw(
     duka_symbol: str,
     day: date,
     side: str,
+    abort_event: Optional[asyncio.Event] = None,
+    fail_counter: Optional[list] = None,
 ) -> Optional[bytes]:
     """Download raw .bi5 candle data for one day/side.
 
     Returns None on HTTP 404 or empty body (holiday / no data).
     Raises RuntimeError on HTTP errors or connection issues after all retries.
     """
+    if abort_event and abort_event.is_set():
+        raise RuntimeError("Circuit breaker triggered — Dukascopy returning 503")
+
     url = _day_candle_url(duka_symbol, day.year, day.month, day.day, side)
     day_str = str(day)
 
     for attempt in range(1 + MAX_RETRIES):
+        if abort_event and abort_event.is_set():
+            raise RuntimeError("Circuit breaker triggered — Dukascopy returning 503")
+
         backoff: Optional[float] = None
 
         async with semaphore:
@@ -234,6 +247,18 @@ async def _download_candle_raw(
                     return resp.content
 
                 # Non-200, non-404 (e.g. 429, 503, 500)
+                if fail_counter is not None:
+                    fail_counter[0] += 1
+                    if fail_counter[0] >= CIRCUIT_BREAK_THRESHOLD and abort_event is not None:
+                        logger.warning(
+                            "Circuit breaker triggered: %d HTTP %d responses — aborting candle fetch",
+                            fail_counter[0], resp.status_code,
+                        )
+                        abort_event.set()
+                        raise RuntimeError(
+                            f"Circuit breaker: {fail_counter[0]} HTTP {resp.status_code} responses from Dukascopy"
+                        )
+
                 if attempt < MAX_RETRIES:
                     backoff = RETRY_BACKOFF_SECONDS[attempt]
                     logger.info(
@@ -265,17 +290,19 @@ async def _fetch_all_candles(
     Caller should catch RuntimeError and fall back to the tick endpoint.
     """
     semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
+    abort_event = asyncio.Event()
+    fail_counter = [0]
 
     async with httpx.AsyncClient(limits=_POOL_LIMITS) as client:
         bid_tasks = {
             d: asyncio.create_task(
-                _download_candle_raw(client, semaphore, duka_symbol, d, "BID")
+                _download_candle_raw(client, semaphore, duka_symbol, d, "BID", abort_event, fail_counter)
             )
             for d in days
         }
         ask_tasks = {
             d: asyncio.create_task(
-                _download_candle_raw(client, semaphore, duka_symbol, d, "ASK")
+                _download_candle_raw(client, semaphore, duka_symbol, d, "ASK", abort_event, fail_counter)
             )
             for d in days
         }
@@ -368,6 +395,8 @@ async def _download_hour_async(
     duka_symbol: str,
     dt: datetime,
     point: int,
+    abort_event: Optional[asyncio.Event] = None,
+    fail_counter: Optional[list] = None,
 ) -> Optional[pd.DataFrame]:
     """Download one hour of tick data with retry logic and semaphore-based concurrency.
 
@@ -376,10 +405,16 @@ async def _download_hour_async(
     - Does NOT retry on HTTP 404 (expected for weekends/holidays).
     - Backoff sleep happens OUTSIDE the semaphore to free the slot for other tasks.
     """
+    if abort_event and abort_event.is_set():
+        return None
+
     url = _hour_url(duka_symbol, dt)
     iso_ts = dt.isoformat()
 
     for attempt in range(1 + MAX_RETRIES):
+        if abort_event and abort_event.is_set():
+            return None
+
         backoff: Optional[float] = None
 
         async with semaphore:  # slot acquired only for the HTTP request
@@ -406,7 +441,17 @@ async def _download_hour_async(
                         return None
 
                 else:
-                    # Non-200, non-404 (e.g. 429, 503, 500)
+                    # Non-200, non-404 (e.g. 429, 503, 500) — track for circuit breaker
+                    if fail_counter is not None:
+                        fail_counter[0] += 1
+                        if fail_counter[0] >= CIRCUIT_BREAK_THRESHOLD and abort_event is not None:
+                            logger.warning(
+                                "Circuit breaker triggered: %d HTTP %d responses — aborting tick fetch",
+                                fail_counter[0], resp.status_code,
+                            )
+                            abort_event.set()
+                            return None
+
                     if attempt < MAX_RETRIES:
                         backoff = RETRY_BACKOFF_SECONDS[attempt]
                         logger.info("HTTP %d for %s (attempt %d/%d) — retry in %gs",
@@ -428,16 +473,20 @@ async def _fetch_all_hours(
     hours: list[datetime],
     point: int,
     symbol: str,
+    fail_counter: Optional[list] = None,
 ) -> tuple[list[pd.DataFrame], bool]:
     """Download all hours concurrently using an async client with connection pooling."""
     semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
+    abort_event = asyncio.Event()
+    if fail_counter is None:
+        fail_counter = [0]
     frames: list[pd.DataFrame] = []
     partial_timeout = False
 
     async with httpx.AsyncClient(limits=_POOL_LIMITS) as client:
         tasks = [
             asyncio.create_task(
-                _download_hour_async(client, semaphore, duka_symbol, h, point)
+                _download_hour_async(client, semaphore, duka_symbol, h, point, abort_event, fail_counter)
             )
             for h in hours
         ]
@@ -583,6 +632,7 @@ def fetch_dukascopy(
     candle_fallback = False
     partial_timeout = False
     frames: list[pd.DataFrame] = []
+    tick_fail_counter = [0]
 
     try:
         frames = _run_async(_fetch_all_candles(duka_symbol, days, point, hour_from, hour_to, symbol))
@@ -592,9 +642,14 @@ def fetch_dukascopy(
             "Candle-API failed for %s — falling back to tick endpoint: %s", symbol, exc
         )
         candle_fallback = True
-        frames, partial_timeout = _run_async(_fetch_all_hours(duka_symbol, hours, point, symbol))
+        frames, partial_timeout = _run_async(_fetch_all_hours(duka_symbol, hours, point, symbol, tick_fail_counter))
 
     if not frames:
+        if candle_fallback and tick_fail_counter[0] >= CIRCUIT_BREAK_THRESHOLD:
+            raise ValueError(
+                f"Dukascopy is temporarily unavailable for {symbol} — "
+                f"all requests returned HTTP 503. Please try again in a few minutes."
+            )
         raise ValueError(
             f"No data returned from Dukascopy for {symbol} ({duka_symbol}) "
             f"between {date_from} and {date_to}. "
