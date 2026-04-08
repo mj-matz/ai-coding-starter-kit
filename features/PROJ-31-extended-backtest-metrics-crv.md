@@ -227,7 +227,119 @@ Keine neuen Packages erforderlich – alle benötigten shadcn-Komponenten sind b
 Die Excel/CSV-Export-Logik liest direkt aus `BacktestMetrics`. Neue Felder werden dort ergänzt – keine strukturellen Änderungen am Export-Mechanismus nötig.
 
 ## QA Test Results
-_To be added by /qa_
+
+**Date:** 2026-04-08
+**Tester:** /qa skill (automated + code review)
+**Status:** NOT READY (2 Medium + 2 Low bugs found)
+
+---
+
+### Acceptance Criteria Results
+
+#### CRV Display
+| # | Criterion | Status | Notes |
+|---|-----------|--------|-------|
+| 1 | CRV is first row in Overview card | PASS | `{crv != null && <CrvRow crv={crv} />}` before Total Return |
+| 2 | CRV formatted as "1 : X.XX" | PASS | `1 : {crv.toFixed(2)}` |
+| 3 | CRV derived from strategyParams.takeProfit / stopLoss | PASS | Computed in results-panel.tsx; null when TP/SL absent |
+| 4 | CRV visually distinct (white/bold) | PASS | fontWeight 700, color "white" |
+
+#### Backend Metrics
+| # | Metric | Status | Notes |
+|---|--------|--------|-------|
+| 1 | net_profit | PASS | Correctly sums pnl_currency |
+| 2 | recovery_factor | PARTIAL | Returns null when dd=0; spec says show "∞" or "—" → BUG-1 |
+| 3 | expected_payoff | PASS | net_profit / total_trades |
+| 4 | max_drawdown_abs | PASS | Peak-to-trough in $ |
+| 5 | buy_trades / buy_win_rate_pct | PASS | Filters by direction=="long" |
+| 6 | sell_trades / sell_win_rate_pct | PASS | Filters by direction=="short" |
+| 7 | min_trade_duration_minutes | PASS | Returns None for empty trades |
+| 8 | max_trade_duration_minutes | PASS | Returns None for empty trades |
+| 9 | max_consec_wins_count / max_consec_wins_profit | PASS | |
+| 10 | max_consec_losses_count / max_consec_losses_loss | PASS | |
+| 11 | avg_consec_wins / avg_consec_losses | PASS | |
+| 12 | ahpr | PASS | Arithmetic mean of per-trade multipliers |
+| 13 | ghpr | PASS | Clamps at 0.001 to avoid log(0) |
+| 14 | lr_correlation | PASS | Returns R² (0–1), correct for flat curve (0.0) |
+| 15 | lr_std_error | PASS | Standard error of regression |
+| 16 | z_score + z_score_confidence_pct | PASS | MT5 formula verified mathematically |
+
+#### Frontend Display
+| # | Criterion | Status | Notes |
+|---|-----------|--------|-------|
+| 1 | Overview card: CRV, Net Profit, Recovery Factor, Expected Payoff | PARTIAL | Recovery Factor hidden when dd=0 (BUG-1); CRV missing in history view (BUG-2) |
+| 2 | Trade Stats card: Buy/Sell trades + win%, Min/Max duration | PASS | |
+| 3 | P&L card: Max consec wins/losses + $, Avg consec W/L | PASS | |
+| 4 | Risk card: Max Drawdown abs ($), Recovery Factor (ref) | PARTIAL | Recovery Factor hidden when dd=0 (BUG-1) |
+| 5 | Advanced card collapsible, collapsed by default | PASS | `useState(false)` |
+| 6 | AHPR, GHPR, LR Correlation, LR Std Error, Z-Score in Advanced | PASS | |
+| 7 | Z-Score low-sample warning (<30 trades) | PASS | Yellow badge with tooltip |
+| 8 | Locale-aware monetary formatting | PARTIAL | Negative values show `$-50.00` instead of `-$50.00` (BUG-3) |
+| 9 | All new metrics included in Excel/CSV export (PROJ-25) | PASS | Export uses `Object.entries(metrics)` — all fields auto-included |
+
+#### Edge Cases
+| # | Case | Status | Notes |
+|---|------|--------|-------|
+| 1 | No trades – CRV still shown | PASS | CRV comes from config, not trades |
+| 2 | Strategy without TP/SL – CRV hidden | PASS | Returns null → not rendered |
+| 3 | Recovery Factor with zero drawdown | FAIL | Hidden instead of showing "∞"/"—" (BUG-1) |
+| 4 | Z-Score <30 trades – "(low sample)" warning | PASS | |
+| 5 | All trades same direction | PARTIAL | Win rate for other direction shows "—" not "—%" (BUG-4) |
+| 6 | Single trade – min=max=avg duration | PASS | |
+| 7 | GHPR with losses >100% | PASS | Clamped at 0.001 |
+| 8 | LR Correlation for flat equity | PASS | Returns 0.0, no error |
+
+---
+
+### Bugs Found
+
+#### BUG-1 · Medium: Recovery Factor hidden when max drawdown = 0
+**Where:** `results-panel.tsx` → `metrics-summary-card.tsx` (Overview + Risk cards)
+**Steps to reproduce:** Run a backtest that is profitable with zero drawdown (all winning trades, equity only goes up).
+**Expected:** Recovery Factor shows "∞" or "—" per spec.
+**Actual:** Row is hidden entirely (`{m.recovery_factor != null && ...}`).
+**Impact:** A positive strategy characteristic is invisible.
+
+#### BUG-2 · Medium: CRV not shown in History detail view
+**Where:** `src/app/(dashboard)/history/page.tsx` line 202 — `MetricsSummaryCard` called without `crv` prop.
+**Steps to reproduce:** Save a backtest run → go to History → open the saved run.
+**Expected:** CRV should appear as first row in Overview card (config data is stored with the run).
+**Actual:** CRV is absent; the `crv` prop is not passed to `MetricsSummaryCard` from the history page.
+**Fix:** Compute `crv` from `(config?.strategyParams as Record<string, unknown>)?.takeProfit / stopLoss` and pass it to `MetricsSummaryCard`.
+
+#### BUG-3 · Low: Negative monetary values have misplaced dollar sign
+**Where:** `formatDollar` function in `metrics-summary-card.tsx`
+**Steps to reproduce:** Run a losing backtest (negative net profit). Observe "Net Profit" value.
+**Expected:** `-$150.00`
+**Actual:** `$-150.00` (dollar sign before minus sign)
+**Affected fields:** Net Profit (negative), Expected Payoff (negative), Max Consec. Losses P&L.
+**Fix:** Check sign first: `value < 0 ? '-$' + Math.abs(value).toLocaleString(...) : '$' + value.toLocaleString(...)`
+
+#### BUG-4 · Low: Empty direction win-rate shows "—" instead of "—%"
+**Where:** `metrics-summary-card.tsx`, Buy Trades / Sell Trades rows
+**Steps to reproduce:** Run a long-only strategy — Sell Trades shows `0 (—)`.
+**Expected:** `0 (—%)` per spec edge case documentation.
+**Actual:** `0 (—)` (missing percent sign).
+
+---
+
+### Security Audit
+- No new API endpoints introduced — existing auth protects all routes. ✓
+- New Python functions are pure calculations with no I/O or injection vectors. ✓
+- TypeScript types are optional fields — no schema breaking changes. ✓
+- No secrets or credentials referenced. ✓
+
+### Regression Testing
+- `npm run build` — Passed (no TypeScript errors, no compilation failures). ✓
+- `npm run lint` — Passed (only pre-existing warnings unrelated to PROJ-31). ✓
+- Z-Score formula verified against MT5 spec formula mathematically. ✓
+- All 22 new metrics verified in calculator.py, main.py serialization, and BacktestMetrics interface. ✓
+- PROJ-25 export: new metrics automatically included via `Object.entries(metrics)`. ✓
+
+### Production-Ready Decision
+**NOT READY** — 2 Medium bugs must be fixed before deployment.
+- BUG-1 and BUG-2 are user-visible functional gaps specified in acceptance criteria.
+- BUG-3 and BUG-4 are cosmetic but can be fixed alongside BUG-1/BUG-2.
 
 ## Deployment
 _To be added by /deploy_
