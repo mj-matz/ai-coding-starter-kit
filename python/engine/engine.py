@@ -50,7 +50,8 @@ def _extract_pending_orders(sig_row: pd.Series) -> List[PendingOrder]:
     raw_expiry = sig_row.get("signal_expiry", pd.NaT)
     expiry: Optional[pd.Timestamp] = None
     if pd.notna(raw_expiry):
-        expiry = pd.Timestamp(raw_expiry)
+        _ts = pd.Timestamp(raw_expiry)
+        expiry = _ts if _ts.tzinfo is not None else _ts.tz_localize("UTC")
 
     trail_trigger_raw = sig_row.get("trail_trigger_pips", np.nan)
     trail_lock_raw = sig_row.get("trail_lock_pips", np.nan)
@@ -291,9 +292,10 @@ def run_backtest(
             _se_flip = _short_entry[i - 1]
             if not (np.isnan(_le_flip) and np.isnan(_se_flip)):
                 _raw_exp_flip = _sig_expiry[i - 1]
-                _expiry_flip: Optional[pd.Timestamp] = (
-                    pd.Timestamp(_raw_exp_flip) if not pd.isnull(_raw_exp_flip) else None
-                )
+                _expiry_flip: Optional[pd.Timestamp] = None
+                if not pd.isnull(_raw_exp_flip):
+                    _ts_flip = pd.Timestamp(_raw_exp_flip)
+                    _expiry_flip = _ts_flip if _ts_flip.tzinfo is not None else _ts_flip.tz_localize("UTC")
                 _ttp_flip = float(_trail_trigger[i - 1]) if not np.isnan(_trail_trigger[i - 1]) else None
                 _tlp_flip = float(_trail_lock[i - 1]) if not np.isnan(_trail_lock[i - 1]) else None
                 # PROJ-30
@@ -600,9 +602,10 @@ def run_backtest(
             _se = _short_entry[i]
             if not (np.isnan(_le) and np.isnan(_se)):
                 _raw_exp = _sig_expiry[i]
-                _expiry: Optional[pd.Timestamp] = (
-                    pd.Timestamp(_raw_exp) if not pd.isnull(_raw_exp) else None
-                )
+                _expiry: Optional[pd.Timestamp] = None
+                if not pd.isnull(_raw_exp):
+                    _ts = pd.Timestamp(_raw_exp)
+                    _expiry = _ts if _ts.tzinfo is not None else _ts.tz_localize("UTC")
                 _tt = _trail_trigger[i]
                 _tl = _trail_lock[i]
                 _ttp = float(_tt) if not np.isnan(_tt) else None
