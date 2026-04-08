@@ -170,6 +170,10 @@ function RunDetailView({ run, onBack }: RunDetailViewProps) {
   const rangeEnd = (config?.rangeEnd as string) ?? "06:00";
   const triggerDeadline = (config?.triggerDeadline as string) ?? "12:00";
   const initialCapital = (config?.initialCapital as number) ?? 10000;
+  const sp = (config?.strategyParams ?? {}) as Record<string, unknown>;
+  const tp = typeof sp.takeProfit === "number" ? sp.takeProfit : null;
+  const sl = typeof sp.stopLoss === "number" ? sp.stopLoss : null;
+  const crv = tp != null && sl != null && sl > 0 ? tp / sl : null;
 
   return (
     <div className="space-y-6">
@@ -203,6 +207,7 @@ function RunDetailView({ run, onBack }: RunDetailViewProps) {
           metrics={summary.metrics}
           initialCapital={initialCapital}
           monthlyR={summary.monthly_r}
+          crv={crv}
         />
       ) : (
         <p className="text-slate-500 text-sm">Keine Metriken verfügbar.</p>
