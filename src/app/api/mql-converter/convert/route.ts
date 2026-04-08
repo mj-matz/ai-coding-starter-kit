@@ -37,6 +37,8 @@ The target Python strategy class must:
 4. The FIRST line inside \`generate_signals\` MUST be: \`params = params or {}\`
 5. It must return a tuple of (signals_df, skipped_days) where:
    - signals_df has columns: long_entry, long_sl, long_tp, short_entry, short_sl, short_tp, signal_expiry (all float, NaN = no signal; signal_expiry is pd.Timestamp or NaT)
+   - signal_expiry MUST be initialized as timezone-aware UTC: \`signals_df['signal_expiry'] = pd.Series(pd.NaT, index=df.index, dtype='datetime64[ns, UTC]')\`
+   - When assigning a signal_expiry value, always ensure it is UTC-aware: \`pd.Timestamp(...).tz_localize('UTC')\` or \`pd.Timestamp(..., tz='UTC')\`. Never assign a tz-naive datetime into a tz-aware column.
    - skipped_days is a list (can be empty)
 6. Use numpy and pandas for data manipulation. Use pandas_ta ONLY if the strategy uses technical indicators (moving averages, RSI, MACD, ATR, Bollinger Bands, etc.).
 7. Do NOT use any network calls, file I/O, or subprocess calls
@@ -60,6 +62,11 @@ When the MQL EA uses a trailing stop (trade.PositionModify, TrailingStop, InpUse
 - \`signals_df['trail_distance_pips'] = N\` (float: pip distance of the trailing SL from the bar's favourable extreme, e.g. InpTrailDistancePips)
 - \`signals_df['trail_dont_cross_entry'] = 1.0\` (float 1.0/0.0: set to 1.0 if the EA uses a dont-cross-entry guard)
 These columns map directly to the engine's PROJ-30 position management. Status: "mapped" — not "unsupported".
+
+CRITICAL — STRING COLUMNS MUST USE None, NOT np.nan:
+String columns (trail_type) cannot use np.nan as a fill value — numpy cannot promote string and float dtypes. Always use None as the no-value sentinel for string columns:
+CORRECT:   \`signals_df['trail_type'] = np.where(condition, 'continuous', None)\`
+WRONG:     \`signals_df['trail_type'] = np.where(condition, 'continuous', np.nan)\`  ← raises DTypePromotionError
 
 PARTIAL CLOSE SUPPORT (fully supported via per-signal columns):
 When the MQL EA uses partial close (ClosePartialByDeal, InpUsePartialTP, partial close at R-multiple, etc.), the backtesting engine handles it natively. Set these columns on every signal row:
