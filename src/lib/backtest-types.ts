@@ -122,6 +122,30 @@ export interface BacktestMetrics {
   consecutive_losses: number;
   avg_trade_duration_hours: number;
   final_balance: number;
+
+  // PROJ-31: Extended metrics
+  net_profit?: number;
+  max_drawdown_abs?: number;
+  recovery_factor?: number;
+  expected_payoff?: number;
+  buy_trades?: number;
+  buy_win_rate_pct?: number;
+  sell_trades?: number;
+  sell_win_rate_pct?: number;
+  min_trade_duration_minutes?: number;
+  max_trade_duration_minutes?: number;
+  max_consec_wins_count?: number;
+  max_consec_wins_profit?: number;
+  max_consec_losses_count?: number;
+  max_consec_losses_loss?: number;
+  avg_consec_wins?: number;
+  avg_consec_losses?: number;
+  ahpr?: number;
+  ghpr?: number;
+  lr_correlation?: number;
+  lr_std_error?: number;
+  z_score?: number;
+  z_score_confidence_pct?: number;
 }
 
 export interface MonthlyR {
