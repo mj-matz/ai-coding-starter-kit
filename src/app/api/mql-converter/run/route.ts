@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 
-export const maxDuration = 120; // Sandbox 60s + buffer
+export const maxDuration = 300; // Vercel Pro: up to 300s; Hobby: max 60s
 
 const FASTAPI_URL = process.env.FASTAPI_URL;
-const UPSTREAM_TIMEOUT_MS = 90_000; // 90 seconds
+const UPSTREAM_TIMEOUT_MS = 280_000; // 280s — leaves 20s buffer under maxDuration
 
 // ── Zod schemas ──────────────────────────────────────────────────────────────
 

@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 
+export const maxDuration = 300; // Vercel Pro: up to 300s; Hobby: max 60s
+
 const FASTAPI_URL = process.env.FASTAPI_URL;
+const UPSTREAM_TIMEOUT_MS = 280_000; // 280s — leaves 20s buffer under maxDuration
 const RATE_LIMIT_MAX = 30;
 const RATE_LIMIT_WINDOW_SECONDS = 60;
 
@@ -106,6 +109,7 @@ export async function POST(request: NextRequest) {
       method: "POST",
       headers,
       body: JSON.stringify(parsed.data),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
 
     const data = await response.json();
