@@ -97,6 +97,14 @@ MQL function mappings:
 - TimeCurrent/TimeToStruct -> df.index (DatetimeIndex in UTC)
 - OnTradeTransaction -> approximated by tracking placed dates in a Python set; document in warning
 
+PARAMETER EXTRACTION:
+After converting the code, extract all MQL \`input\` variables (e.g. \`input int InpStopLoss = 50;\`, \`input double InpTakeProfit = 100.0;\`, \`extern int Period_MA = 14;\`) into a "parameters" array. Rules:
+- Only extract variables explicitly declared as \`input\` or \`extern\` in the original MQL code — never include calculated/derived values.
+- For each parameter, provide: name (the Python snake_case key used in params.get()), label (human-readable display name, e.g. "Stop Loss (Pips)"), type ("number" for doubles/floats, "integer" for ints, "string" for strings), default (the original value from the MQL code), mql_input_name (the original MQL variable name).
+- The generated Python code MUST read all extracted parameters via \`params.get("name", default)\` — never hardcode.
+- Use snake_case names that are NOT Python keywords (e.g. use "stop_loss_pips" not "type").
+- If no input/extern variables are found, return an empty "parameters" array.
+
 You MUST respond with ONLY a valid JSON object (no markdown, no code fences) with this exact structure:
 {
   "python_code": "...full Python source code...",
@@ -104,7 +112,11 @@ You MUST respond with ONLY a valid JSON object (no markdown, no code fences) wit
     {"mql_function": "iMA", "python_equivalent": "pandas_ta.ema()", "status": "mapped", "note": "Direct mapping"},
     {"mql_function": "trade.PositionModify", "python_equivalent": "signals_df trail_type/trail_trigger_pips/trail_distance_pips columns", "status": "mapped", "note": "Continuous trailing stop via PROJ-30 per-signal engine columns"}
   ],
-  "warnings": ["List of any conversion warnings or limitations"]
+  "warnings": ["List of any conversion warnings or limitations"],
+  "parameters": [
+    {"name": "stop_loss_pips", "label": "Stop Loss (Pips)", "type": "integer", "default": 50, "mql_input_name": "InpStopLoss"},
+    {"name": "take_profit_pips", "label": "Take Profit (Pips)", "type": "number", "default": 100.0, "mql_input_name": "InpTakeProfit"}
+  ]
 }
 
 The "status" field must be one of: "mapped", "approximated", "unsupported".
@@ -236,6 +248,13 @@ export async function POST(request: NextRequest) {
         note: string;
       }>;
       warnings: string[];
+      parameters?: Array<{
+        name: string;
+        label: string;
+        type: "number" | "integer" | "string";
+        default: number | string;
+        mql_input_name: string;
+      }>;
     };
 
     try {
@@ -273,6 +292,7 @@ export async function POST(request: NextRequest) {
       python_code: result.python_code,
       mapping_report: result.mapping_report,
       warnings,
+      parameters: Array.isArray(result.parameters) ? result.parameters : [],
     });
   } catch (error) {
     console.error("Claude API error:", error);

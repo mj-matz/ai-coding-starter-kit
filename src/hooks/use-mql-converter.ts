@@ -15,10 +15,21 @@ export interface MappingEntry {
   note: string;
 }
 
+export interface StrategyParameter {
+  name: string;
+  label: string;
+  type: "number" | "integer" | "string";
+  default: number | string;
+  mql_input_name: string;
+}
+
 export interface ConvertResult {
   python_code: string;
   mapping_report: MappingEntry[];
   warnings: string[];
+  parameters?: StrategyParameter[];
+  /** Saved parameter values to restore when loading a conversion (not set on fresh conversions) */
+  initialParameterValues?: Record<string, number | string>;
 }
 
 export interface SavedConversionMetrics {
@@ -52,7 +63,7 @@ interface UseMqlConverterReturn {
 
   convertAndRun: (params: ConvertAndRunParams) => Promise<void>;
   rerunBacktest: (params: RerunParams) => Promise<void>;
-  loadConversionResult: (pythonCode: string, mappingReport: MappingEntry[]) => void;
+  loadConversionResult: (pythonCode: string, mappingReport: MappingEntry[], parameters?: StrategyParameter[], savedValues?: Record<string, number | string>) => void;
   cancel: () => void;
   reset: () => void;
 
@@ -92,6 +103,7 @@ export interface RerunParams {
   fixedLot?: number;
   commission: number;
   slippage: number;
+  params?: Record<string, number | string>;
 }
 
 interface SaveParams {
@@ -101,6 +113,8 @@ interface SaveParams {
   pythonCode: string;
   mappingReport: MappingEntry[];
   backtestResult?: BacktestResult;
+  parameters?: StrategyParameter[];
+  parameterValues?: Record<string, number | string>;
 }
 
 // ── Instrument config lookup ────────────────────────────────────────────────
@@ -282,8 +296,19 @@ export function useMqlConverter(): UseMqlConverterReturn {
 
   // ── Load a saved conversion result without re-converting ─────────────────
 
-  const loadConversionResult = useCallback((pythonCode: string, mappingReport: MappingEntry[]) => {
-    setConvertResult({ python_code: pythonCode, mapping_report: mappingReport, warnings: [] });
+  const loadConversionResult = useCallback((
+    pythonCode: string,
+    mappingReport: MappingEntry[],
+    parameters?: StrategyParameter[],
+    savedValues?: Record<string, number | string>
+  ) => {
+    setConvertResult({
+      python_code: pythonCode,
+      mapping_report: mappingReport,
+      warnings: [],
+      parameters,
+      initialParameterValues: savedValues,
+    });
     setBacktestResult(null);
     setStatus("idle");
     setError(null);
@@ -304,27 +329,33 @@ export function useMqlConverter(): UseMqlConverterReturn {
     try {
       const instrument = await getInstrumentConfig(params.symbol);
 
+      const runPayload: Record<string, unknown> = {
+        python_code: params.pythonCode,
+        cache_id: params.cacheId,
+        config: {
+          initial_balance: params.initialCapital,
+          sizing_mode: params.sizingMode,
+          instrument: {
+            pip_size: instrument.pip_size,
+            pip_value_per_lot: instrument.pip_value_per_lot,
+          },
+          ...(params.sizingMode === "fixed_lot"
+            ? { fixed_lot: params.fixedLot }
+            : { risk_percent: params.riskPercent }),
+          commission: params.commission,
+          slippage_pips: params.slippage,
+          timezone: instrument.timezone,
+        },
+      };
+
+      if (params.params && Object.keys(params.params).length > 0) {
+        runPayload.params = params.params;
+      }
+
       const runRes = await fetch("/api/mql-converter/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          python_code: params.pythonCode,
-          cache_id: params.cacheId,
-          config: {
-            initial_balance: params.initialCapital,
-            sizing_mode: params.sizingMode,
-            instrument: {
-              pip_size: instrument.pip_size,
-              pip_value_per_lot: instrument.pip_value_per_lot,
-            },
-            ...(params.sizingMode === "fixed_lot"
-              ? { fixed_lot: params.fixedLot }
-              : { risk_percent: params.riskPercent }),
-            commission: params.commission,
-            slippage_pips: params.slippage,
-            timezone: instrument.timezone,
-          },
-        }),
+        body: JSON.stringify(runPayload),
         signal: controller.signal,
       });
 
@@ -384,6 +415,8 @@ export function useMqlConverter(): UseMqlConverterReturn {
           backtest_result: params.backtestResult
             ? { metrics: params.backtestResult.metrics }
             : undefined,
+          parameters: params.parameters ?? undefined,
+          parameter_values: params.parameterValues ?? undefined,
         }),
       });
 

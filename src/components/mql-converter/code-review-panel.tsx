@@ -54,6 +54,10 @@ interface CodeReviewPanelProps {
   mappingReport: MappingEntry[];
   isRunning: boolean;
   onRerun: (editedCode: string) => void;
+  /** When false, the Re-run button is disabled (e.g. invalid parameter values). Defaults to true. */
+  parametersValid?: boolean;
+  /** When false, the Re-run button is disabled (e.g. no cacheId available). Defaults to true. */
+  canRerun?: boolean;
 }
 
 export function CodeReviewPanel({
@@ -61,6 +65,8 @@ export function CodeReviewPanel({
   mappingReport,
   isRunning,
   onRerun,
+  parametersValid = true,
+  canRerun = true,
 }: CodeReviewPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [prevPythonCode, setPrevPythonCode] = useState(pythonCode);
@@ -108,7 +114,7 @@ export function CodeReviewPanel({
                   variant="outline"
                   size="sm"
                   onClick={() => onRerun(editedCode)}
-                  disabled={isRunning}
+                  disabled={isRunning || !parametersValid || !canRerun}
                   className="border-white/20 bg-white/10 text-slate-200 hover:bg-white/20"
                   aria-label="Re-run backtest with edited code"
                 >

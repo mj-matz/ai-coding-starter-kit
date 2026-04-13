@@ -42,10 +42,12 @@
 | PROJ-26 | Strategy Export to MT5 EA | In Progress | [PROJ-26-strategy-export-mt5-ea.md](PROJ-26-strategy-export-mt5-ea.md) | 2026-03-31 |
 | PROJ-27 | Persistent Market Data Store (Monthly Chunks) | Planned | [PROJ-27-persistent-market-data-store.md](PROJ-27-persistent-market-data-store.md) | 2026-03-31 |
 | PROJ-28 | User-Defined Strategies (MQL → Strategy Library) | Planned | [PROJ-28-user-defined-strategies.md](PROJ-28-user-defined-strategies.md) | 2026-04-01 |
-| PROJ-29 | Backtest Realism – Bid-Price Data & First-Breakout Direction | Planned | [PROJ-29-backtest-realism-bid-data-breakout-direction.md](PROJ-29-backtest-realism-bid-data-breakout-direction.md) | 2026-04-02 |
+| PROJ-29 | Backtest Realism – Bid-Price Data & First-Breakout Direction | In Progress | [PROJ-29-backtest-realism-bid-data-breakout-direction.md](PROJ-29-backtest-realism-bid-data-breakout-direction.md) | 2026-04-02 |
 | PROJ-30 | Engine – Continuous Trailing Stop & Partial Close | Deployed | [PROJ-30-engine-continuous-trailing-stop-partial-close.md](PROJ-30-engine-continuous-trailing-stop-partial-close.md) | 2026-04-05 |
 | PROJ-31 | Extended Backtest Metrics & CRV Display (MT5-Parität) | Deployed | [PROJ-31-extended-backtest-metrics-crv.md](PROJ-31-extended-backtest-metrics-crv.md) | 2026-04-07 |
+| PROJ-32 | MQL Converter – Editable Strategy Parameters | Deployed | [PROJ-32-mql-converter-editable-parameters.md](PROJ-32-mql-converter-editable-parameters.md) | 2026-04-09 |
+| PROJ-33 | MQL Converter – MT5 EA Export | Planned | [PROJ-33-mql-converter-mt5-export.md](PROJ-33-mql-converter-mt5-export.md) | 2026-04-09 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-32
+## Next Available ID: PROJ-34

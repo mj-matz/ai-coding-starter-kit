@@ -4,6 +4,14 @@ import { createClient } from "@/lib/supabase/server";
 
 // ── Zod schema for POST ──────────────────────────────────────────────────────
 
+const StrategyParameterSchema = z.object({
+  name: z.string(),
+  label: z.string(),
+  type: z.enum(["number", "integer", "string"]),
+  default: z.union([z.number(), z.string()]),
+  mql_input_name: z.string(),
+});
+
 const SaveConversionSchema = z.object({
   name: z.string().min(1, "Name is required").max(100, "Name must not exceed 100 characters"),
   mql_code: z.string().min(1).max(50000),
@@ -18,6 +26,8 @@ const SaveConversionSchema = z.object({
     })
   ),
   backtest_result: z.record(z.string(), z.unknown()).optional(),
+  parameters: z.array(StrategyParameterSchema).optional(),
+  parameter_values: z.record(z.string(), z.union([z.number(), z.string()])).optional(),
 });
 
 // ── GET: list saved conversions ──────────────────────────────────────────────
@@ -81,6 +91,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Build parameters JSON: store the parameter definitions with current values overlaid
+  let parametersJson: unknown = null;
+  if (parsed.data.parameters && parsed.data.parameters.length > 0) {
+    const paramValues = parsed.data.parameter_values ?? {};
+    parametersJson = {
+      definitions: parsed.data.parameters,
+      values: paramValues,
+    };
+  }
+
   const { data, error } = await supabase
     .from("mql_conversions")
     .insert({
@@ -91,6 +111,7 @@ export async function POST(request: NextRequest) {
       python_code: parsed.data.python_code,
       mapping_report: parsed.data.mapping_report,
       backtest_result: parsed.data.backtest_result ?? null,
+      parameters: parametersJson,
     })
     .select("id, name, created_at")
     .single();

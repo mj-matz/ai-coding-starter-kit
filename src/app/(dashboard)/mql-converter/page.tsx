@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { AlertCircle, RefreshCw } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -12,6 +12,13 @@ import type { MqlInputValues } from "@/components/mql-converter/mql-input-panel"
 import { ConversionProgress } from "@/components/mql-converter/conversion-progress";
 import { ConversionWarnings } from "@/components/mql-converter/conversion-warnings";
 import { CodeReviewPanel } from "@/components/mql-converter/code-review-panel";
+import {
+  ParametersPanel,
+  areParametersValid,
+  buildParamsDict,
+  initParameterValues,
+} from "@/components/mql-converter/parameters-panel";
+import type { StrategyParameter } from "@/components/mql-converter/parameters-panel";
 import { SaveConversionSection } from "@/components/mql-converter/save-conversion-section";
 import { SavedConversionsList } from "@/components/mql-converter/saved-conversions-list";
 import { ResultsPanel } from "@/components/backtest/results-panel";
@@ -49,10 +56,29 @@ export default function MqlConverterPage() {
     mappingReport: MappingEntry[];
   } | null>(null);
 
+  // Parameter state (extracted from conversion, editable by user)
+  const [strategyParameters, setStrategyParameters] = useState<StrategyParameter[]>([]);
+  const [parameterValues, setParameterValues] = useState<Record<string, number | string>>({});
+
   const isRunning =
     status === "converting" ||
     status === "fetching_data" ||
     status === "running";
+
+  // Sync parameters when a new conversion result arrives
+  useEffect(() => {
+    if (convertResult?.parameters && convertResult.parameters.length > 0) {
+      setStrategyParameters(convertResult.parameters);
+      setParameterValues(initParameterValues(convertResult.parameters, convertResult.initialParameterValues));
+    } else if (convertResult && !convertResult.parameters) {
+      // Altdaten or no parameters extracted
+      setStrategyParameters([]);
+      setParameterValues({});
+    }
+  }, [convertResult]);
+
+  const hasParameters = strategyParameters.length > 0;
+  const parametersValid = !hasParameters || areParametersValid(strategyParameters, parameterValues);
 
   // ── Handle Convert & Backtest ─────────────────────────────────────────────
 
@@ -83,6 +109,10 @@ export default function MqlConverterPage() {
   function handleRerun(editedCode: string) {
     if (!cacheId || !lastInputValues) return;
 
+    const paramsDict = hasParameters
+      ? buildParamsDict(strategyParameters, parameterValues)
+      : undefined;
+
     rerunBacktest({
       pythonCode: editedCode,
       cacheId,
@@ -93,6 +123,7 @@ export default function MqlConverterPage() {
       fixedLot: lastInputValues.fixedLot,
       commission: lastInputValues.commission,
       slippage: lastInputValues.slippage,
+      params: paramsDict,
     });
   }
 
@@ -109,6 +140,10 @@ export default function MqlConverterPage() {
         pythonCode: convertResult.python_code,
         mappingReport: convertResult.mapping_report,
         backtestResult: backtestResult ?? undefined,
+        parameters: hasParameters ? strategyParameters : undefined,
+        parameterValues: hasParameters
+          ? buildParamsDict(strategyParameters, parameterValues)
+          : undefined,
       });
 
       if (success) {
@@ -126,7 +161,7 @@ export default function MqlConverterPage() {
 
       return success;
     },
-    [convertResult, lastInputValues, backtestResult, saveConversion, toast]
+    [convertResult, lastInputValues, backtestResult, saveConversion, toast, hasParameters, strategyParameters, parameterValues]
   );
 
   // ── Handle Load saved conversion ──────────────────────────────────────────
@@ -141,7 +176,7 @@ export default function MqlConverterPage() {
         const supabase = createClient();
         const { data, error: fetchError } = await supabase
           .from("mql_conversions")
-          .select("mql_code, mql_version, python_code, mapping_report")
+          .select("mql_code, mql_version, python_code, mapping_report, parameters")
           .eq("id", id)
           .single();
 
@@ -160,7 +195,18 @@ export default function MqlConverterPage() {
           pythonCode: data.python_code,
           mappingReport: data.mapping_report ?? [],
         });
-        loadConversionResult(data.python_code, data.mapping_report ?? []);
+        // Restore parameters from saved data (if available).
+        // Pass both definitions and saved values into loadConversionResult so the
+        // useEffect can initialise parameterValues correctly without a second render
+        // overwriting them with defaults.
+        const savedParams = data.parameters as { definitions?: StrategyParameter[]; values?: Record<string, number | string> } | null;
+        loadConversionResult(
+          data.python_code,
+          data.mapping_report ?? [],
+          savedParams?.definitions,
+          savedParams?.values,
+        );
+
         setActiveTab("converter");
 
         toast({
@@ -175,7 +221,7 @@ export default function MqlConverterPage() {
         });
       }
     },
-    [toast]
+    [toast, loadConversionResult]
   );
 
   // ── Handle Delete ─────────────────────────────────────────────────────────
@@ -296,6 +342,25 @@ export default function MqlConverterPage() {
                 />
               )}
 
+              {/* Parameters Panel */}
+              {convertResult && !isRunning && hasParameters && (
+                <ParametersPanel
+                  parameters={strategyParameters}
+                  values={parameterValues}
+                  onChange={setParameterValues}
+                  disabled={isRunning}
+                />
+              )}
+
+              {/* Empty parameters hint */}
+              {convertResult && !isRunning && convertResult.parameters && convertResult.parameters.length === 0 && (
+                <ParametersPanel
+                  parameters={[]}
+                  values={{}}
+                  onChange={() => {}}
+                />
+              )}
+
               {/* Code Review Panel */}
               {convertResult && !isRunning && (
                 <CodeReviewPanel
@@ -303,6 +368,8 @@ export default function MqlConverterPage() {
                   mappingReport={convertResult.mapping_report}
                   isRunning={isRunning}
                   onRerun={handleRerun}
+                  parametersValid={parametersValid}
+                  canRerun={!!cacheId && !!lastInputValues}
                 />
               )}
 

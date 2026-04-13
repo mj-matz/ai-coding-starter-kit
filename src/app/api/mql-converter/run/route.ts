@@ -56,6 +56,7 @@ const RunRequestSchema = z.object({
   python_code: z.string().min(1, "Python code is required"),
   cache_id: z.string().uuid("cache_id must be a valid UUID"),
   config: BacktestConfigSchema,
+  params: z.record(z.string(), z.union([z.number(), z.string()])).optional(),
 });
 
 // ── Route handler ────────────────────────────────────────────────────────────
@@ -111,14 +112,20 @@ export async function POST(request: NextRequest) {
       headers["Authorization"] = `Bearer ${session.access_token}`;
     }
 
+    const sandboxPayload: Record<string, unknown> = {
+      python_code: parsed.data.python_code,
+      cache_id: parsed.data.cache_id,
+      config: parsed.data.config,
+    };
+
+    if (parsed.data.params && Object.keys(parsed.data.params).length > 0) {
+      sandboxPayload.params = parsed.data.params;
+    }
+
     const response = await fetch(`${FASTAPI_URL}/sandbox/run`, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        python_code: parsed.data.python_code,
-        cache_id: parsed.data.cache_id,
-        config: parsed.data.config,
-      }),
+      body: JSON.stringify(sandboxPayload),
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
 
