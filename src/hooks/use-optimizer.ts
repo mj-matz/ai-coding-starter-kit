@@ -175,8 +175,15 @@ export function useOptimizer(): UseOptimizerReturn {
       setResults([]);
 
       try {
+        // PROJ-29: translate camelCase form fields to snake_case API fields for Python
+        const { commissionPerLot, mt5Mode, spreadPips, ...restConfig } =
+          backtestConfig;
         const body = {
-          ...backtestConfig,
+          ...restConfig,
+          commission_per_lot: commissionPerLot,
+          price_type: "bid",
+          mt5_mode: mt5Mode,
+          spread_pips: spreadPips,
           parameter_group: parameterGroup,
           target_metric: targetMetric,
           parameter_ranges: parameterRanges,

@@ -28,7 +28,8 @@ const OptimizerRunSchema = z.object({
   endDate: z.string().min(1),
   // Strategy-specific params (schema-driven)
   strategyParams: z.record(z.string(), z.unknown()).default({}),
-  commission: z.number().min(0).default(0),
+  // PROJ-29: per-lot commission (snake_case — matches Python)
+  commission_per_lot: z.number().min(0).default(0),
   slippage: z.number().min(0).default(0),
   initialCapital: z.number().positive(),
   sizingMode: z.enum(["risk_percent", "fixed_lot"]),
@@ -37,6 +38,10 @@ const OptimizerRunSchema = z.object({
   gapFill: z.boolean().default(false),
   tradingDays: z.array(z.number().int().min(0).max(4)).default([0, 1, 2, 3, 4]),
   newsDates: z.array(z.string()).optional(),
+  // PROJ-29: Backtest Realism
+  price_type: z.enum(["bid", "mid"]).default("bid"),
+  mt5_mode: z.boolean().default(false),
+  spread_pips: z.number().min(0).default(0),
 
   // Optimizer-specific
   parameter_group: z.enum(["crv", "time_exit", "trigger_deadline", "range_window", "trailing_stop"]),
