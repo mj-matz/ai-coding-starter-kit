@@ -186,8 +186,8 @@ class BreakoutStrategy(BaseStrategy):
             )
 
     def generate_signals(
-        self, df: pd.DataFrame, params: BreakoutParams
-    ) -> tuple[pd.DataFrame, list[SkippedDay]]:
+        self, df: pd.DataFrame, params: BreakoutParams, mt5_mode: bool = False
+    ) -> tuple[pd.DataFrame, list[SkippedDay], list[str]]:
         """
         Generate breakout signals from OHLCV data.
 
@@ -200,10 +200,11 @@ class BreakoutStrategy(BaseStrategy):
 
         Returns
         -------
-        tuple[pd.DataFrame, list[SkippedDay]]
+        tuple[pd.DataFrame, list[SkippedDay], list[str]]
             - DataFrame: Same index as df. Signal columns are NaN / NaT except on
               the first bar after range_end for each valid trading day.
             - list[SkippedDay]: Days that were skipped with reason codes.
+            - list[str]: PROJ-29 Already-Past Rejection dates (only populated when mt5_mode=True).
         """
         self.validate_params(params)
 
@@ -219,9 +220,10 @@ class BreakoutStrategy(BaseStrategy):
         )
 
         skipped_days: list[SkippedDay] = []
+        rejected_order_dates: list[str] = []
 
         if df.empty:
-            return (signals, skipped_days)
+            return (signals, skipped_days, rejected_order_dates)
 
         tz = ZoneInfo(params.timezone)
         from datetime import datetime as dt
@@ -239,7 +241,8 @@ class BreakoutStrategy(BaseStrategy):
         # ~252 days, not 250 000 bars).
         if not is_overnight:
             return self._generate_signals_intraday(
-                df, params, tz, local_times, dates, unique_dates, signals, skipped_days
+                df, params, tz, local_times, dates, unique_dates, signals, skipped_days,
+                mt5_mode=mt5_mode, rejected_order_dates=rejected_order_dates,
             )
 
         # ── Overnight path (iterative — unchanged) ─────────────────────────
@@ -293,10 +296,19 @@ class BreakoutStrategy(BaseStrategy):
                     skipped_days.append(SkippedDay(date=str(day), reason="DEADLINE_MISSED"))
                     continue
 
-            self._write_signal(signals, signal_bar_idx, params, range_high, range_low,
-                               expiry_naive, tz)
+            # PROJ-29: Already-Past Rejection (only when mt5_mode=True)
+            range_close = float(df.loc[range_indices[-1], "close"])
+            direction_override = self._apply_already_past_rejection(
+                params.direction_filter, range_close, range_high, range_low,
+                mt5_mode, rejected_order_dates, str(day),
+            )
+            if direction_override is None:
+                continue  # both sides rejected — skip day
 
-        return signals, skipped_days
+            self._write_signal(signals, signal_bar_idx, params, range_high, range_low,
+                               expiry_naive, tz, direction_override=direction_override)
+
+        return signals, skipped_days, rejected_order_dates
 
     # ------------------------------------------------------------------
     def _generate_signals_intraday(
@@ -309,8 +321,12 @@ class BreakoutStrategy(BaseStrategy):
         unique_dates: list,
         signals: pd.DataFrame,
         skipped_days: list,
-    ) -> tuple[pd.DataFrame, list]:
+        mt5_mode: bool = False,
+        rejected_order_dates: Optional[list] = None,
+    ) -> tuple[pd.DataFrame, list, list]:
         """Vectorised signal generation for normal (intraday) ranges."""
+        if rejected_order_dates is None:
+            rejected_order_dates = []
         from datetime import datetime as dt
 
         # Precompute per-bar minute-of-day in local tz
@@ -330,20 +346,22 @@ class BreakoutStrategy(BaseStrategy):
             # No range bars at all → every day skipped
             for day in unique_dates:
                 skipped_days.append(SkippedDay(date=str(day), reason="NO_RANGE_BARS"))
-            return signals, skipped_days
+            return signals, skipped_days, rejected_order_dates
 
         range_dates = all_dates_arr[range_idx_pos]
         range_highs = df["high"].to_numpy(dtype=float)[range_idx_pos]
         range_lows  = df["low"].to_numpy(dtype=float)[range_idx_pos]
+        range_closes = df["close"].to_numpy(dtype=float)[range_idx_pos]  # PROJ-29
 
-        # groupby day: compute max(high), min(low) per day
+        # groupby day: compute max(high), min(low), last close per day
         # Use pandas groupby on a small temp frame
         range_frame = pd.DataFrame(
-            {"_date": range_dates, "h": range_highs, "l": range_lows}
+            {"_date": range_dates, "h": range_highs, "l": range_lows, "c": range_closes}
         )
         range_agg = range_frame.groupby("_date").agg(
             range_high=("h", "max"),
             range_low=("l", "min"),
+            range_close=("c", "last"),  # close of the last range bar (for Already-Past Rejection)
         )
         # Filter flat ranges
         flat_mask = range_agg["range_high"] == range_agg["range_low"]
@@ -392,6 +410,7 @@ class BreakoutStrategy(BaseStrategy):
             row = range_agg.loc[day]
             range_high = float(row["range_high"])
             range_low  = float(row["range_low"])
+            range_close = float(row["range_close"])  # PROJ-29
 
             # Find signal bar
             if params.entry_delay_bars == 0:
@@ -415,12 +434,70 @@ class BreakoutStrategy(BaseStrategy):
                     skipped_days.append(SkippedDay(date=str(day), reason="DEADLINE_MISSED"))
                     continue
 
+            # PROJ-29: Already-Past Rejection (only when mt5_mode=True)
+            direction_override = self._apply_already_past_rejection(
+                params.direction_filter, range_close, range_high, range_low,
+                mt5_mode, rejected_order_dates, str(day),
+            )
+            if direction_override is None:
+                continue  # both sides rejected — skip day
+
             signal_bar_idx = df.index[bar_pos]
             expiry_naive = dt.combine(day, params.trigger_deadline)
             self._write_signal(signals, signal_bar_idx, params, range_high, range_low,
-                               expiry_naive, ZoneInfo(params.timezone))
+                               expiry_naive, ZoneInfo(params.timezone),
+                               direction_override=direction_override)
 
-        return signals, skipped_days
+        return signals, skipped_days, rejected_order_dates
+
+    # ------------------------------------------------------------------
+    def _apply_already_past_rejection(
+        self,
+        direction_filter: str,
+        range_close: float,
+        range_high: float,
+        range_low: float,
+        mt5_mode: bool,
+        rejected_order_dates: list,
+        day_str: str,
+    ) -> Optional[str]:
+        """PROJ-29: Apply Already-Past Rejection logic (mt5_mode only).
+
+        When the close of the last range bar has already passed a breakout level,
+        MT5 brokers reject the stop order for that direction.
+
+        Returns the effective direction_filter after rejection, or None if both
+        sides are rejected (caller should skip the day entirely).
+        """
+        if not mt5_mode:
+            return direction_filter  # no-op
+
+        reject_long = (
+            direction_filter != "short_only"
+            and range_close > range_high  # strictly past (spec: "exakt auf Niveau → keine Rejection")
+        )
+        reject_short = (
+            direction_filter != "long_only"
+            and range_close < range_low   # strictly past
+        )
+
+        if reject_long and reject_short:
+            rejected_order_dates.append(f"{day_str} (both)")
+            return None  # signal day fully skipped
+
+        if reject_long:
+            rejected_order_dates.append(f"{day_str} (long)")
+            if direction_filter == "both":
+                return "short_only"
+            return direction_filter  # direction_filter was already long_only — shouldn't reach here given guard above
+
+        if reject_short:
+            rejected_order_dates.append(f"{day_str} (short)")
+            if direction_filter == "both":
+                return "long_only"
+            return direction_filter
+
+        return direction_filter  # no rejection
 
     # ------------------------------------------------------------------
     def _write_signal(
@@ -432,8 +509,11 @@ class BreakoutStrategy(BaseStrategy):
         range_low: float,
         expiry_naive,
         tz,
+        direction_override: Optional[str] = None,
     ) -> None:
         """Compute prices and write one signal row into `signals`."""
+        direction = direction_override if direction_override is not None else params.direction_filter
+
         entry_offset = params.entry_offset_pips * params.pip_size
         sl_offset    = params.stop_loss_pips    * params.pip_size
         tp_offset    = params.take_profit_pips  * params.pip_size
@@ -447,12 +527,12 @@ class BreakoutStrategy(BaseStrategy):
 
         expiry_utc = pd.Timestamp(expiry_naive, tz=tz).tz_convert("UTC")
 
-        if params.direction_filter != "short_only":
+        if direction != "short_only":
             signals.at[signal_bar_idx, "long_entry"] = long_entry
             signals.at[signal_bar_idx, "long_sl"]    = long_sl
             signals.at[signal_bar_idx, "long_tp"]    = long_tp
 
-        if params.direction_filter != "long_only":
+        if direction != "long_only":
             signals.at[signal_bar_idx, "short_entry"] = short_entry
             signals.at[signal_bar_idx, "short_sl"]    = short_sl
             signals.at[signal_bar_idx, "short_tp"]    = short_tp

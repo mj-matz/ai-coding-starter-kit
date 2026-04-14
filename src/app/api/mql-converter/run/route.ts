@@ -21,7 +21,7 @@ const BacktestConfigSchema = z
     instrument: InstrumentConfigSchema,
     fixed_lot: z.number().positive().optional(),
     risk_percent: z.number().positive().max(100).optional(),
-    commission: z.number().min(0).default(0),
+    commission_per_lot: z.number().min(0).default(0),
     slippage_pips: z.number().min(0).default(0),
     time_exit: z
       .string()
@@ -30,6 +30,9 @@ const BacktestConfigSchema = z
     timezone: z.string().min(1).default("UTC"),
     trail_trigger_pips: z.number().positive().optional(),
     trail_lock_pips: z.number().positive().optional(),
+    price_type: z.enum(["bid", "mid"]).default("bid"),
+    mt5_mode: z.boolean().default(false),
+    spread_pips: z.number().min(0).default(0),
   })
   .refine(
     (d) =>
@@ -112,10 +115,17 @@ export async function POST(request: NextRequest) {
       headers["Authorization"] = `Bearer ${session.access_token}`;
     }
 
+    // PROJ-29: MQL Converter always runs in MT5 mode (MQL code is MT5 by definition)
+    const configWithMt5 = {
+      ...parsed.data.config,
+      mt5_mode: true,
+      price_type: "bid" as const,
+    };
+
     const sandboxPayload: Record<string, unknown> = {
       python_code: parsed.data.python_code,
       cache_id: parsed.data.cache_id,
-      config: parsed.data.config,
+      config: configWithMt5,
     };
 
     if (parsed.data.params && Object.keys(parsed.data.params).length > 0) {

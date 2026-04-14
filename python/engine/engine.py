@@ -172,6 +172,11 @@ def run_backtest(
     slippage_offset = pips_to_price_offset(
         config.slippage_pips, config.instrument.pip_size
     )
+    # PROJ-29: pre-compute spread offset (0.0 when mt5_mode=False or spread_pips=0)
+    spread_offset = (
+        pips_to_price_offset(config.spread_pips, config.instrument.pip_size)
+        if config.mt5_mode else 0.0
+    )
 
     if ohlcv.empty:
         return BacktestResult(
@@ -360,13 +365,13 @@ def run_backtest(
                 else:
                     position.mae_adverse_price = max(position.mae_adverse_price, bar_high)
 
-            exit_reason = check_sl_tp(position, bar_high, bar_low)
+            exit_reason = check_sl_tp(position, bar_high, bar_low, spread_offset=spread_offset)
             if exit_reason is not None:
                 used_1s = False
                 # PROJ-15: If both SL and TP are hit on the same bar, try to
                 # resolve the ambiguity using 1-second data.
                 if (
-                    is_sl_tp_ambiguous(position, bar_high, bar_low)
+                    is_sl_tp_ambiguous(position, bar_high, bar_low, spread_offset=spread_offset)
                     and get_1s_data is not None
                 ):
                     ohlcv_1s = get_1s_data(bar_time)
@@ -445,7 +450,7 @@ def run_backtest(
 
         # ── 2. Check pending orders ─────────────────────────────────────────
         if position is None and pending_orders:
-            triggered = evaluate_pending_orders(pending_orders, bar_high, bar_low, bar_open)
+            triggered = evaluate_pending_orders(pending_orders, bar_high, bar_low, bar_open, spread_offset=spread_offset)
             if triggered is not None:
                 # Entry fill logic.
                 # gap_fill=True:  if bar opens beyond the stop level, fill at bar_open (realistic).
@@ -461,7 +466,8 @@ def run_backtest(
                     fill_base = triggered.entry_price  # TradingView-mode: exact entry
 
                 if triggered.direction == "long":
-                    actual_entry = fill_base + slippage_offset
+                    # PROJ-29: Long fills at Ask price; in BID data Ask = BID + spread
+                    actual_entry = fill_base + slippage_offset + spread_offset
                 else:
                     actual_entry = fill_base - slippage_offset
 
@@ -504,7 +510,7 @@ def run_backtest(
                 # Apply trail logic first (per user requirement), then check SL/TP.
                 apply_trail_if_triggered(position, bar_high, bar_low, config)
 
-                entry_bar_exit = check_sl_tp(position, bar_high, bar_low)
+                entry_bar_exit = check_sl_tp(position, bar_high, bar_low, spread_offset=spread_offset)
                 if entry_bar_exit is not None:
                     used_1s = False
                     # PROJ-15 (BUG-6 fix): On the entry bar, a SL hit may have

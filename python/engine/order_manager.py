@@ -32,6 +32,7 @@ def evaluate_pending_orders(
     bar_high: float,
     bar_low: float,
     bar_open: float = 0.0,
+    spread_offset: float = 0.0,
 ) -> Optional[PendingOrder]:
     """
     Return the order triggered first in this bar, or None.
@@ -39,13 +40,17 @@ def evaluate_pending_orders(
     Long  orders trigger when bar_high  >= entry_price (buy stop).
     Short orders trigger when bar_low   <= entry_price (sell stop).
 
+    PROJ-29 Bid/Ask-Split-Execution (spread_offset > 0):
+      Long Buy Stop: Ask must reach entry_price, i.e. BID_high >= entry_price - spread_offset
+      Short Sell Stop: unchanged (BID_low <= entry_price, since short orders fill at Bid)
+
     For OCO pairs, if both sides trigger on the same bar the order whose
     entry_price is closer to bar_open is returned (i.e. triggered first).
     Ties are broken in favour of the long order.
     """
     triggered = [
         order for order in orders
-        if (order.direction == "long" and bar_high >= order.entry_price)
+        if (order.direction == "long" and bar_high >= order.entry_price - spread_offset)
         or (order.direction == "short" and bar_low <= order.entry_price)
     ]
     if not triggered:

@@ -17,7 +17,8 @@ export const backtestFormSchema = z
     strategyParams: z.record(z.string(), z.unknown()).default({}),
 
     // Engine params (always present regardless of strategy)
-    commission: z.coerce.number().min(0, "Commission must be >= 0"),
+    // PROJ-29: commission is now per-lot (replaces flat commission)
+    commissionPerLot: z.coerce.number().min(0, "Commission per lot must be >= 0").default(0),
     slippage: z.coerce.number().min(0, "Slippage must be >= 0"),
 
     // Trading day filter (0=Mo … 4=Fr)
@@ -31,6 +32,10 @@ export const backtestFormSchema = z
 
     // Simulation options
     gapFill: z.boolean().default(false),
+
+    // PROJ-29: Backtest Realism – MT5 execution mode (price_type is always "bid")
+    mt5Mode: z.boolean().default(false),
+    spreadPips: z.coerce.number().min(0, "Spread must be >= 0").default(0),
 
     // Capital & sizing
     initialCapital: z.coerce.number().positive("Initial capital must be > 0"),
@@ -77,7 +82,7 @@ export const defaultFormValues: BacktestFormValues = {
     direction: "both",
     entryDelayBars: 1,
   },
-  commission: 0,
+  commissionPerLot: 0,
   slippage: 0,
   tradingDays: [0, 1, 2, 3, 4],
   tradeNewsDays: true,
@@ -86,6 +91,9 @@ export const defaultFormValues: BacktestFormValues = {
   sizingMode: "risk_percent",
   riskPercent: 1.0,
   fixedLot: undefined,
+  // PROJ-29: MT5 mode opt-in (price_type is always "bid")
+  mt5Mode: false,
+  spreadPips: 0,
 };
 
 // ── API Response Types ───────────────────────────────────────────────────────
@@ -203,6 +211,12 @@ export interface SkippedDay {
   reason: string;
 }
 
+// PROJ-29: Already-Past Rejection record
+export interface RejectedOrderDate {
+  date: string;
+  side: "long" | "short";
+}
+
 export interface BacktestResult {
   metrics: BacktestMetrics;
   equity_curve: EquityCurvePoint[];
@@ -213,6 +227,8 @@ export interface BacktestResult {
   cache_id?: string;
   symbol: string;
   timeframe: string;
+  // PROJ-29: MT5-mode rejected stop-orders (Already-Past Rejection)
+  rejected_order_dates?: RejectedOrderDate[];
 }
 
 // ── localStorage helpers ─────────────────────────────────────────────────────

@@ -283,8 +283,12 @@ async def _fetch_all_candles(
     hour_from: int,
     hour_to: int,
     symbol: str,
+    price_type: str = "bid",
 ) -> list[pd.DataFrame]:
-    """Download BID+ASK candles for all trading days concurrently and return MID DataFrames.
+    """Download candles for all trading days concurrently.
+
+    price_type="bid"  → BID-only candles (new default; matches TradingView/MT5 standard)
+    price_type="mid"  → BID+ASK averaged (legacy behaviour)
 
     Raises RuntimeError if any download fails or the overall timeout is exceeded.
     Caller should catch RuntimeError and fall back to the tick endpoint.
@@ -300,14 +304,19 @@ async def _fetch_all_candles(
             )
             for d in days
         }
-        ask_tasks = {
-            d: asyncio.create_task(
-                _download_candle_raw(client, semaphore, duka_symbol, d, "ASK", abort_event, fail_counter)
-            )
-            for d in days
-        }
 
-        all_tasks = list(bid_tasks.values()) + list(ask_tasks.values())
+        if price_type == "mid":
+            ask_tasks = {
+                d: asyncio.create_task(
+                    _download_candle_raw(client, semaphore, duka_symbol, d, "ASK", abort_event, fail_counter)
+                )
+                for d in days
+            }
+            all_tasks = list(bid_tasks.values()) + list(ask_tasks.values())
+        else:
+            ask_tasks = {}
+            all_tasks = list(bid_tasks.values())
+
         done, pending = await asyncio.wait(all_tasks, timeout=FETCH_TIMEOUT_SECONDS)
 
         if pending:
@@ -319,7 +328,7 @@ async def _fetch_all_candles(
                 f"{len(pending)} of {len(all_tasks)} requests still pending for {symbol}"
             )
 
-        # Collect raw bytes per day/side — task.result() re-raises any exception from the task
+        # Collect raw bytes per day — task.result() re-raises any exception from the task
         bid_raw: dict = {}
         ask_raw: dict = {}
         for d, task in bid_tasks.items():
@@ -327,39 +336,50 @@ async def _fetch_all_candles(
         for d, task in ask_tasks.items():
             ask_raw[d] = task.result()
 
-    # Merge BID + ASK per day → MID DataFrame
     frames: list[pd.DataFrame] = []
-    for d in days:
-        b = bid_raw[d]
-        a = ask_raw[d]
 
-        if b is None and a is None:
-            continue  # Holiday / no data — expected
+    if price_type == "bid":
+        # BID-only path: decode BID candles directly, no averaging
+        for d in days:
+            b = bid_raw[d]
+            if b is None:
+                continue  # Holiday / no data — expected
+            bid_df = _decode_candle_bi5(b, d.year, d.month, d.day, point, hour_from, hour_to)
+            if bid_df is not None:
+                frames.append(bid_df)
+    else:
+        # MID path: merge BID + ASK per day → MID DataFrame
+        for d in days:
+            b = bid_raw[d]
+            a = ask_raw[d]
 
-        if b is None or a is None:
-            raise RuntimeError(f"Only one side available for {symbol} on {d} — cannot compute MID")
+            if b is None and a is None:
+                continue  # Holiday / no data — expected
 
-        bid_df = _decode_candle_bi5(b, d.year, d.month, d.day, point, hour_from, hour_to)
-        ask_df = _decode_candle_bi5(a, d.year, d.month, d.day, point, hour_from, hour_to)
+            if b is None or a is None:
+                raise RuntimeError(f"Only one side available for {symbol} on {d} — cannot compute MID")
 
-        if bid_df is None and ask_df is None:
-            continue
+            bid_df = _decode_candle_bi5(b, d.year, d.month, d.day, point, hour_from, hour_to)
+            ask_df = _decode_candle_bi5(a, d.year, d.month, d.day, point, hour_from, hour_to)
 
-        if bid_df is None or ask_df is None:
-            raise RuntimeError(f"Only one side decoded for {symbol} on {d}")
+            if bid_df is None and ask_df is None:
+                continue
 
-        merged = bid_df.merge(ask_df, on="datetime", suffixes=("_bid", "_ask"))
-        if merged.empty:
-            continue
+            if bid_df is None or ask_df is None:
+                raise RuntimeError(f"Only one side decoded for {symbol} on {d}")
 
-        frames.append(pd.DataFrame({
-            "datetime": merged["datetime"],
-            "open":   (merged["open_bid"]  + merged["open_ask"])  / 2,
-            "high":   (merged["high_bid"]  + merged["high_ask"])  / 2,
-            "low":    (merged["low_bid"]   + merged["low_ask"])   / 2,
-            "close":  (merged["close_bid"] + merged["close_ask"]) / 2,
-            "volume":  merged["volume_bid"] + merged["volume_ask"],
-        }))
+            merged = bid_df.merge(ask_df, on="datetime", suffixes=("_bid", "_ask"))
+            if merged.empty:
+                continue
+
+            frames.append(pd.DataFrame({
+                "datetime": merged["datetime"],
+                "open":   (merged["open_bid"]  + merged["open_ask"])  / 2,
+                "high":   (merged["high_bid"]  + merged["high_ask"])  / 2,
+                "low":    (merged["low_bid"]   + merged["low_ask"])   / 2,
+                "close":  (merged["close_bid"] + merged["close_ask"]) / 2,
+                "volume":  merged["volume_bid"] + merged["volume_ask"],
+            }))
 
     return frames
 
@@ -579,16 +599,18 @@ def fetch_dukascopy(
     date_to: date,
     hour_from: int = 0,
     hour_to: int = 23,
+    price_type: str = "bid",
 ) -> pd.DataFrame:
     """
     Fetch tick data from Dukascopy and return a 1-minute OHLCV DataFrame.
 
     Args:
-        symbol:    Instrument symbol (e.g. "XAUUSD", "EURUSD", "GER40")
-        date_from: Start date (inclusive)
-        date_to:   End date (inclusive)
-        hour_from: First UTC hour to download, 0-23 inclusive (default 0)
-        hour_to:   Last UTC hour to download, 0-23 inclusive (default 23)
+        symbol:     Instrument symbol (e.g. "XAUUSD", "EURUSD", "GER40")
+        date_from:  Start date (inclusive)
+        date_to:    End date (inclusive)
+        hour_from:  First UTC hour to download, 0-23 inclusive (default 0)
+        hour_to:    Last UTC hour to download, 0-23 inclusive (default 23)
+        price_type: "bid" (default) = BID-only candles; "mid" = legacy BID+ASK average
 
     Returns:
         DataFrame with columns: datetime (UTC), open, high, low, close, volume.
@@ -635,7 +657,7 @@ def fetch_dukascopy(
     tick_fail_counter = [0]
 
     try:
-        frames = _run_async(_fetch_all_candles(duka_symbol, days, point, hour_from, hour_to, symbol))
+        frames = _run_async(_fetch_all_candles(duka_symbol, days, point, hour_from, hour_to, symbol, price_type=price_type))
         logger.info("Candle-API: %d day-frames for %s", len(frames), symbol)
     except Exception as exc:
         logger.warning(

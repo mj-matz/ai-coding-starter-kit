@@ -11,6 +11,7 @@ const QuerySchema = z.object({
   entry_time: z.string().min(1),
   exit_time: z.string().min(1),
   range_start_time: z.string().optional(),
+  price_type: z.enum(["bid", "mid"]).default("bid"),
 });
 
 export async function GET(request: NextRequest) {
@@ -31,6 +32,7 @@ export async function GET(request: NextRequest) {
     entry_time: searchParams.get("entry_time"),
     exit_time: searchParams.get("exit_time"),
     range_start_time: searchParams.get("range_start_time") ?? undefined,
+    price_type: searchParams.get("price_type") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -62,6 +64,7 @@ export async function GET(request: NextRequest) {
       timeframe: parsed.data.timeframe,
       entry_time: parsed.data.entry_time,
       exit_time: parsed.data.exit_time,
+      price_type: parsed.data.price_type,
     });
     if (parsed.data.range_start_time) {
       upstreamParams.set("range_start_time", parsed.data.range_start_time);

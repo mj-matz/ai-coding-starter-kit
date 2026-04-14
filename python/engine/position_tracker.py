@@ -234,7 +234,7 @@ def check_and_execute_partial_close(
 
     pnl_currency = (
         pnl_pips * pip_value_for_lot(partial_lot, pip_value_per_lot)
-        - config.commission
+        - config.commission_per_lot * partial_lot
     )
 
     initial_risk_pips = price_diff_to_pips(
@@ -269,24 +269,28 @@ def check_sl_tp(
     position: OpenPosition,
     bar_high: float,
     bar_low: float,
+    spread_offset: float = 0.0,
 ) -> Optional[Literal["SL", "SL_TRAILED", "TP"]]:
     """
     Check whether SL or TP was hit in this bar.
 
     If both are hit in the same bar, SL wins (worst-case assumption).
     Returns the exit reason, or None if neither level was reached.
+
+    PROJ-29 Bid/Ask-Split-Execution (spread_offset > 0):
+      Long SL/TP: unchanged — long exits fill at Bid price (BID_low/high vs. level)
+      Short SL:   Ask must reach sl_price, i.e. BID_high >= sl_price - spread_offset
+      Short TP:   Ask must reach tp_price, i.e. BID_low  <= tp_price - spread_offset
     """
-    sl_hit = (
-        (position.direction == "long"  and bar_low  <= position.sl_price)
-        or (position.direction == "short" and bar_high >= position.sl_price)
-    )
-    tp_hit = (
-        position.tp_price is not None
-        and (
-            (position.direction == "long"  and bar_high >= position.tp_price)
-            or (position.direction == "short" and bar_low  <= position.tp_price)
+    if position.direction == "long":
+        sl_hit = bar_low <= position.sl_price
+        tp_hit = position.tp_price is not None and bar_high >= position.tp_price
+    else:  # short
+        sl_hit = bar_high >= position.sl_price - spread_offset
+        tp_hit = (
+            position.tp_price is not None
+            and bar_low <= position.tp_price - spread_offset
         )
-    )
 
     if sl_hit:
         return "SL_TRAILED" if position.trail_applied else "SL"
@@ -299,11 +303,13 @@ def is_sl_tp_ambiguous(
     position: OpenPosition,
     bar_high: float,
     bar_low: float,
+    spread_offset: float = 0.0,
 ) -> bool:
     """
     Return True if both SL and TP are hit on the same bar (ambiguous outcome).
 
     This is used to decide whether a 1-second zoom-in is needed.
+    Uses the same spread-adjusted thresholds as check_sl_tp (PROJ-29).
     """
     if position.tp_price is None:
         return False
@@ -312,8 +318,8 @@ def is_sl_tp_ambiguous(
         sl_hit = bar_low <= position.sl_price
         tp_hit = bar_high >= position.tp_price
     else:
-        sl_hit = bar_high >= position.sl_price
-        tp_hit = bar_low <= position.tp_price
+        sl_hit = bar_high >= position.sl_price - spread_offset
+        tp_hit = bar_low <= position.tp_price - spread_offset
 
     return sl_hit and tp_hit
 
@@ -424,7 +430,7 @@ def close_position(
 
     pnl_currency = (
         pnl_pips * pip_value_for_lot(position.lot_size, pip_value_per_lot)
-        - config.commission
+        - config.commission_per_lot * position.lot_size
     )
 
     # price_diff_to_pips applies abs() internally, so this is correct for

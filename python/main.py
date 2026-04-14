@@ -22,7 +22,7 @@ from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -372,13 +372,17 @@ class BacktestConfigRequest(BaseModel):
     instrument: InstrumentConfigRequest
     fixed_lot: Optional[float] = Field(default=None, gt=0)
     risk_percent: Optional[float] = Field(default=None, gt=0, le=100)
-    commission: float = Field(default=0.0, ge=0)
+    commission_per_lot: float = Field(default=0.0, ge=0)
     slippage_pips: float = Field(default=0.0, ge=0)
     time_exit: Optional[str] = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # "HH:MM" (BUG-10)
     timezone: str = "UTC"                                                                    # IANA timezone (BUG-7)
     trail_trigger_pips: Optional[float] = Field(default=None, gt=0)
     trail_lock_pips: Optional[float] = Field(default=None, ge=0)                            # ge=0 allows 0.0 (breakeven); engine also defaults None → 0.0
     gap_fill: bool = False
+    # PROJ-29
+    price_type: Literal["bid", "mid"] = "bid"
+    mt5_mode: bool = False
+    spread_pips: float = Field(default=0.0, ge=0)
 
     @field_validator("timezone")
     @classmethod
@@ -579,13 +583,16 @@ async def backtest_run(
         ),
         fixed_lot=cfg.fixed_lot,
         risk_percent=cfg.risk_percent,
-        commission=cfg.commission,
+        commission_per_lot=cfg.commission_per_lot,
         slippage_pips=cfg.slippage_pips,
         time_exit=cfg.time_exit,
         timezone=cfg.timezone,
         trail_trigger_pips=cfg.trail_trigger_pips,
         trail_lock_pips=cfg.trail_lock_pips,
         gap_fill=cfg.gap_fill,
+        price_type=cfg.price_type,
+        mt5_mode=cfg.mt5_mode,
+        spread_pips=cfg.spread_pips,
     )
 
     _bar_minutes = (
@@ -811,7 +818,7 @@ class BacktestOrchestrationRequest(BaseModel):
     stopLoss: float = Field(gt=0)
     takeProfit: Optional[float] = Field(default=None, gt=0)
     direction: Literal["long", "short", "both"]
-    commission: float = Field(default=0.0, ge=0)
+    commission_per_lot: float = Field(default=0.0, ge=0)
     slippage: float = Field(default=0.0, ge=0)
     initialCapital: float = Field(gt=0)
     sizingMode: Literal["risk_percent", "fixed_lot"]
@@ -830,6 +837,10 @@ class BacktestOrchestrationRequest(BaseModel):
     rsiPeriod: Optional[int] = Field(default=None, ge=2, le=200)
     oversoldLevel: Optional[float] = Field(default=None, ge=1, le=99)
     overboughtLevel: Optional[float] = Field(default=None, ge=1, le=99)
+    # PROJ-29
+    price_type: Literal["bid", "mid"] = "bid"
+    mt5_mode: bool = False
+    spread_pips: float = Field(default=0.0, ge=0)
 
 
 class BacktestMetricsOut(BaseModel):
@@ -1148,7 +1159,9 @@ async def _backtest_orchestrate_inner(
         )
         strategy = BreakoutStrategy()
         try:
-            signals_df, skipped_days = strategy.generate_signals(df, breakout_params)
+            signals_df, skipped_days, _rejected_dates = strategy.generate_signals(
+                df, breakout_params, mt5_mode=request.mt5_mode
+            )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -1164,6 +1177,7 @@ async def _backtest_orchestrate_inner(
             direction_filter=_DIRECTION_MAP[request.direction],
         )
         strategy = MovingAverageCrossoverStrategy()
+        _rejected_dates: list[str] = []
         try:
             signals_df, skipped_days = strategy.generate_signals(df, ma_params)
         except ValueError as e:
@@ -1182,6 +1196,7 @@ async def _backtest_orchestrate_inner(
             direction_filter=_DIRECTION_MAP[request.direction],
         )
         strategy = RSIThresholdStrategy()
+        _rejected_dates = []
         try:
             signals_df, skipped_days = strategy.generate_signals(df, rsi_params)
         except ValueError as e:
@@ -1211,11 +1226,14 @@ async def _backtest_orchestrate_inner(
         ),
         fixed_lot=request.fixedLot,
         risk_percent=request.riskPercent,
-        commission=request.commission,
+        commission_per_lot=request.commission_per_lot,
         slippage_pips=request.slippage,
         time_exit=request.timeExit,
         timezone=instrument["timezone"],
         gap_fill=request.gapFill,
+        price_type=request.price_type,
+        mt5_mode=request.mt5_mode,
+        spread_pips=request.spread_pips,
     )
 
     try:
@@ -1228,6 +1246,15 @@ async def _backtest_orchestrate_inner(
     except Exception as e:
         logger.error(f"Backtest engine error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal engine error.")
+
+    # PROJ-29: Propagate Already-Past Rejection dates into skipped_days
+    # Format produced by breakout.py: "{date} (long|short|both)"
+    _APR_REASON = {"long": "APR_REJECTED_LONG", "short": "APR_REJECTED_SHORT", "both": "APR_REJECTED_BOTH"}
+    for apr_str in _rejected_dates:
+        # e.g. "2024-01-15 (long)" → date="2024-01-15", side="long"
+        if " (" in apr_str and apr_str.endswith(")"):
+            apr_date, apr_side = apr_str[:-1].rsplit(" (", 1)
+            skipped_days.append(SkippedDay(date=apr_date, reason=_APR_REASON.get(apr_side, "APR_REJECTED")))
 
     # Days where pending orders expired without triggering (Trigger Deadline days)
     for d_str in result.expired_order_dates:
@@ -1536,7 +1563,7 @@ async def get_trade_candles(
     ]
 
 
-async def _fetch_df_for_date(source: str, symbol: str, timeframe: str, trade_date: date, user_id: str) -> pd.DataFrame:
+async def _fetch_df_for_date(source: str, symbol: str, timeframe: str, trade_date: date, user_id: str, price_type: str = "bid") -> pd.DataFrame:
     """
     Fetch OHLCV data for a single day from the appropriate source and save to cache.
     Fetches trade_date and the next day to cover overnight positions.
@@ -1549,7 +1576,7 @@ async def _fetch_df_for_date(source: str, symbol: str, timeframe: str, trade_dat
 
     if source == "dukascopy":
         base_df = await loop.run_in_executor(
-            None, lambda: fetch_dukascopy(symbol, fetch_from, fetch_to)
+            None, lambda: fetch_dukascopy(symbol, fetch_from, fetch_to, price_type=price_type)
         )
         df = base_df if timeframe == "1m" else resample_ohlcv(base_df, timeframe)
     elif source == "yfinance":
@@ -1589,6 +1616,7 @@ async def get_trade_candles_by_symbol(
     entry_time: str,
     exit_time: str,
     range_start_time: Optional[str] = None,
+    price_type: str = "bid",
     token: dict = Depends(verify_jwt),
 ):
     """
@@ -1660,7 +1688,7 @@ async def get_trade_candles_by_symbol(
                 client.table("data_cache").delete().eq("file_path", file_path).execute()
             except Exception:
                 pass
-            df = await _fetch_df_for_date(source, symbol.upper(), timeframe, trade_date, user_id)
+            df = await _fetch_df_for_date(source, symbol.upper(), timeframe, trade_date, user_id, price_type=price_type)
     else:
         # ── Step 4: No cache entry — look up source from instruments table ────
         try:
@@ -2044,7 +2072,7 @@ class OptimizerStartRequest(BaseModel):
     stopLoss: float = Field(gt=0)
     takeProfit: float = Field(gt=0)
     direction: Literal["long", "short", "both"]
-    commission: float = Field(default=0.0, ge=0)
+    commission_per_lot: float = Field(default=0.0, ge=0)
     slippage: float = Field(default=0.0, ge=0)
     initialCapital: float = Field(gt=0)
     sizingMode: Literal["risk_percent", "fixed_lot"]
@@ -2056,6 +2084,10 @@ class OptimizerStartRequest(BaseModel):
     gapFill: bool = False
     tradingDays: List[int] = Field(default=[0, 1, 2, 3, 4])
     newsDates: Optional[List[str]] = None
+    # PROJ-29
+    price_type: Literal["bid", "mid"] = "bid"
+    mt5_mode: bool = False
+    spread_pips: float = Field(default=0.0, ge=0)
 
     # Optimizer-specific fields
     parameter_group: str = Field(
@@ -2248,13 +2280,14 @@ async def optimizer_cancel(
 _SANDBOX_ALLOWED_IMPORTS = {"pandas", "pandas_ta", "numpy"}
 
 _SANDBOX_RUN_SCRIPT = """\
-import sys, importlib.util, inspect
+import sys, importlib.util, inspect, json
 import pandas as pd
 
 strategy_path = sys.argv[1]
 df_path = sys.argv[2]
 output_path = sys.argv[3]
 project_root = sys.argv[4]
+params = json.loads(sys.argv[5]) if len(sys.argv) > 5 else {}
 
 # BUG-12: Remove os/subprocess attributes exposed via allowed modules
 import numpy as _np
@@ -2301,7 +2334,7 @@ if strategy_cls is None:
     sys.exit(1)
 
 strategy = strategy_cls()
-signals_df, _ = strategy.generate_signals(df, {})
+signals_df, _ = strategy.generate_signals(df, params)
 signals_df.to_parquet(output_path)
 """
 
@@ -2367,6 +2400,7 @@ class SandboxRunRequest(BaseModel):
     python_code: str = Field(min_length=1)
     cache_id: str
     config: BacktestConfigRequest
+    params: dict[str, Union[float, str]] = Field(default_factory=dict)
 
 
 @app.post("/sandbox/run", response_model=BacktestOrchestrationResponse)
@@ -2505,7 +2539,8 @@ async def sandbox_run(
 
         try:
             result = subprocess.run(
-                [sys.executable, run_script_tmp, code_tmp2, df_tmp, signals_tmp, project_root],
+                [sys.executable, run_script_tmp, code_tmp2, df_tmp, signals_tmp, project_root,
+                 json.dumps(request.params)],
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -2569,13 +2604,16 @@ async def sandbox_run(
         ),
         fixed_lot=cfg.fixed_lot,
         risk_percent=cfg.risk_percent,
-        commission=cfg.commission,
+        commission_per_lot=cfg.commission_per_lot,
         slippage_pips=cfg.slippage_pips,
         time_exit=cfg.time_exit,
         timezone=cfg.timezone,
         trail_trigger_pips=cfg.trail_trigger_pips,
         trail_lock_pips=cfg.trail_lock_pips,
         gap_fill=cfg.gap_fill,
+        price_type=cfg.price_type,
+        mt5_mode=cfg.mt5_mode,
+        spread_pips=cfg.spread_pips,
     )
 
     _bar_minutes = (

@@ -9,7 +9,7 @@ Instrument: XAUUSD-like
   pip_value_per_lot  = 1.00   (1 pip with 1.0 lot = $1.00)
   → 100 pips = $100 per lot
 
-Default config: 10 000 USD balance, 1.0 fixed lot, no commission/slippage.
+Default config: 10 000 USD balance, 1.0 fixed lot, no commission_per_lot/slippage.
 """
 
 import sys
@@ -479,7 +479,7 @@ class TestTrailTrigger:
 
 class TestCommissionAndSlippage:
     def test_commission_deducted(self):
-        """Commission of $10 per trade is deducted from PnL."""
+        """commission_per_lot of $10/lot is deducted from PnL (1.0 lot → $10 deducted)."""
         ohlcv = make_ohlcv([
             ("2024-01-02T09:00:00Z", 1950, 1956, 1948, 1954),
             ("2024-01-02T09:01:00Z", 1954, 1962, 1953, 1960),  # entry
@@ -490,10 +490,10 @@ class TestCommissionAndSlippage:
                 "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 1970.0
             },
         })
-        result = run_backtest(ohlcv, signals, cfg(commission=10.0))
+        result = run_backtest(ohlcv, signals, cfg(commission_per_lot=10.0))
 
         t = result.trades[0]
-        # Gross PnL = (1970-1955)/0.01 * 1.0 = 1500 pips = $1500; minus $10 commission
+        # Gross PnL = (1970-1955)/0.01 * 1.0 = 1500 pips = $1500; minus $10 (commission_per_lot=10 × 1 lot)
         assert t.pnl_currency == pytest.approx(1490.0, abs=0.01)
         assert result.final_balance == pytest.approx(11_490.0, abs=0.01)
 
@@ -519,7 +519,7 @@ class TestCommissionAndSlippage:
         assert t.pnl_pips == pytest.approx(1496.0, abs=0.1)
 
     def test_commission_and_slippage_combined(self):
-        """Both commission and slippage apply simultaneously; effects are additive."""
+        """Both commission_per_lot and slippage apply simultaneously; effects are additive."""
         ohlcv = make_ohlcv([
             ("2024-01-02T09:00:00Z", 1950, 1956, 1948, 1954),
             ("2024-01-02T09:01:00Z", 1954, 1962, 1953, 1960),  # entry
@@ -530,13 +530,13 @@ class TestCommissionAndSlippage:
                 "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 1970.0
             },
         })
-        result = run_backtest(ohlcv, signals, cfg(slippage_pips=2.0, commission=10.0))
+        result = run_backtest(ohlcv, signals, cfg(slippage_pips=2.0, commission_per_lot=10.0))
 
         t = result.trades[0]
         # Entry: 1955.00 + 0.02 = 1955.02  (adverse entry slippage)
         # Exit:  1970.00 - 0.02 = 1969.98  (adverse exit slippage)
         # Gross pips: (1969.98 - 1955.02) / 0.01 = 1496.0
-        # PnL currency: 1496.0 * 1.0 - 10.0 = $1486.0
+        # PnL currency: 1496.0 * 1.0 - 10.0 (commission_per_lot=10 × 1 lot) = $1486.0
         assert t.exit_price == pytest.approx(1969.98, abs=0.001)
         assert t.pnl_pips == pytest.approx(1496.0, abs=0.1)
         assert t.pnl_currency == pytest.approx(1486.0, abs=0.01)

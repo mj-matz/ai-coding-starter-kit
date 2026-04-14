@@ -417,7 +417,7 @@ export function ConfigurationPanel({
               <div className="grid grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
-                  name="commission"
+                  name="commissionPerLot"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel className="text-gray-300">Commission (per lot)</FormLabel>
@@ -428,7 +428,7 @@ export function ConfigurationPanel({
                           step="0.01"
                           min="0"
                           className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
-                          aria-label="Commission in account currency per trade"
+                          aria-label="Commission per lot in account currency (round-turn)"
                         />
                       </FormControl>
                       <FormMessage />
@@ -457,6 +457,59 @@ export function ConfigurationPanel({
                   )}
                 />
               </div>
+
+              {/* PROJ-29: MT5-Mode Toggle */}
+              <FormField
+                control={form.control}
+                name="mt5Mode"
+                render={({ field }) => (
+                  <FormItem className="flex items-center justify-between rounded-md border border-white/10 bg-black/20 px-4 py-3">
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <FormLabel className="cursor-help text-gray-300 underline decoration-dotted underline-offset-2">
+                            MT5 Mode
+                          </FormLabel>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" align="start" className="max-w-72">
+                          Already-Past Rejection + Bid/Ask execution logic as in the MT5 Strategy Tester. Automatically forces BID price data.
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        aria-label="Enable MT5 Mode"
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              {/* PROJ-29: Spread (Pips) — only when MT5 mode is active */}
+              {form.watch("mt5Mode") && (
+                <FormField
+                  control={form.control}
+                  name="spreadPips"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-gray-300">Spread (pips)</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          className="border-white/10 bg-black/20 text-gray-100 rounded-lg"
+                          aria-label="Spread in pips for Bid/Ask split execution"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
             </CollapsibleContent>
           </Collapsible>
 

@@ -17,9 +17,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { FileDown, FileSpreadsheet } from "lucide-react";
+import { FileDown, FileSpreadsheet, FileCode2 } from "lucide-react";
 import { useExportBacktest } from "@/hooks/use-export-backtest";
 import { useToast } from "@/hooks/use-toast";
+import { SUPPORTED_STRATEGIES } from "@/lib/mt5-templates";
 
 function BacktestPageInner() {
   const searchParams = useSearchParams();
@@ -38,6 +39,7 @@ function BacktestPageInner() {
   const { exportExcel, exportCsv, isExporting } = useExportBacktest();
   const { saveRun, isSaving } = useBacktestRuns();
   const { toast } = useToast();
+  const [isExportingMt5, setIsExportingMt5] = useState(false);
   const [initialCapital, setInitialCapital] = useState(10000);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -53,6 +55,52 @@ function BacktestPageInner() {
     setStrategy(config.strategy);
     setLastConfig(config);
     runBacktest(config);
+  }
+
+  async function handleExportMt5() {
+    if (!lastConfig || !result) return;
+    if (!SUPPORTED_STRATEGIES.includes(lastConfig.strategy)) {
+      toast({
+        title: "Export nicht verfügbar",
+        description: `Strategie "${lastConfig.strategy}" hat kein MQL5-Template.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setIsExportingMt5(true);
+    try {
+      const response = await fetch("/api/backtest/export-mt5", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          strategy_id: lastConfig.strategy,
+          symbol: lastConfig.symbol,
+          date_from: lastConfig.startDate,
+          date_to: lastConfig.endDate,
+          strategy_params: lastConfig.strategyParams,
+        }),
+      });
+      if (!response.ok) {
+        const err = await response.json();
+        toast({
+          title: "Export fehlgeschlagen",
+          description: err.error ?? "Unbekannter Fehler",
+          variant: "destructive",
+        });
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const cd = response.headers.get("Content-Disposition");
+      const match = cd?.match(/filename="(.+)"/);
+      a.download = match?.[1] ?? `${lastConfig.strategy}_${lastConfig.symbol}.mq5`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsExportingMt5(false);
+    }
   }
 
   const handleSaveRun = useCallback(
@@ -138,13 +186,25 @@ function BacktestPageInner() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => exportCsv(result, startDate, endDate)}
+              onClick={() => exportCsv(result, startDate, endDate, lastConfig?.mt5Mode ?? false)}
               disabled={isExporting}
               className="border-white/20 bg-white/10 text-slate-200 hover:bg-white/20"
             >
               <FileDown className="mr-2 h-4 w-4" />
               Export CSV
             </Button>
+            {SUPPORTED_STRATEGIES.includes(strategy) && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExportMt5}
+                disabled={isExportingMt5}
+                className="border-white/20 bg-white/10 text-slate-200 hover:bg-white/20"
+              >
+                <FileCode2 className="mr-2 h-4 w-4" />
+                {isExportingMt5 ? "Exportiere…" : "Export MT5 EA"}
+              </Button>
+            )}
           </div>
         )}
       </div>

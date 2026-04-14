@@ -20,7 +20,8 @@ const BacktestRequestSchema = z
     endDate: z.string().min(1),
     // Strategy-specific params — validated by the Python strategy schema on the FastAPI side
     strategyParams: z.record(z.string(), z.unknown()).default({}),
-    commission: z.number().min(0),
+    // PROJ-29: per-lot commission (snake_case — matches Python `BacktestConfig.commission_per_lot`)
+    commission_per_lot: z.number().min(0).default(0),
     slippage: z.number().min(0),
     initialCapital: z.number().positive(),
     sizingMode: z.enum(["risk_percent", "fixed_lot"]),
@@ -30,6 +31,10 @@ const BacktestRequestSchema = z
     tradeNewsDays: z.boolean().default(true),
     newsDates: z.array(z.string()).optional(),
     gapFill: z.boolean().default(false),
+    // PROJ-29: Backtest Realism – BID data & MT5 execution mode (snake_case for Python)
+    price_type: z.enum(["bid", "mid"]).default("bid"),
+    mt5_mode: z.boolean().default(false),
+    spread_pips: z.number().min(0).default(0),
   })
   .refine((data) => new Date(data.endDate) > new Date(data.startDate), {
     message: "End date must be after start date",

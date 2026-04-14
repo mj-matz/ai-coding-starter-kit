@@ -1,6 +1,6 @@
 """Dataclasses for the backtesting engine (PROJ-2)."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, Optional
 
@@ -25,8 +25,8 @@ class BacktestConfig:
     fixed_lot: Optional[float] = None
     risk_percent: Optional[float] = None  # e.g. 1.0 means 1 %
 
-    commission: float = 0.0        # fixed cost deducted per trade (account currency)
-    slippage_pips: float = 0.0     # adverse price offset applied on entry and exit
+    commission_per_lot: float = 0.0  # round-turn commission per lot (account currency); replaces old flat commission
+    slippage_pips: float = 0.0       # adverse price offset applied on entry and exit
 
     time_exit: Optional[str] = None         # "HH:MM" in instrument local timezone, e.g. "21:00"
     timezone: str = "UTC"                   # IANA timezone for time_exit, e.g. "Europe/Berlin"
@@ -38,6 +38,11 @@ class BacktestConfig:
     trail_type: str = "step"                     # "step" (default, existing behaviour) or "continuous"
     trail_distance_pips: Optional[float] = None  # pip distance for continuous trail (required when trail_type="continuous")
     trail_dont_cross_entry: bool = False         # True = SL may never move past the entry price
+
+    # PROJ-29: Realism – BID data & MT5 execution
+    price_type: Literal["bid", "mid"] = "bid"   # "bid" = BID-only candles (new default); "mid" = legacy averaged
+    mt5_mode: bool = False                        # True = Already-Past Rejection + Bid/Ask-Split-Execution
+    spread_pips: float = 0.0                      # spread in pips for Bid/Ask-Split (used when mt5_mode=True)
 
 
 @dataclass
@@ -65,8 +70,9 @@ class Trade:
 class BacktestResult:
     """Output of run_backtest()."""
 
-    trades: list                  # List[Trade]
-    equity_curve: list            # List[{"time": str, "balance": float}]
+    trades: list                   # List[Trade]
+    equity_curve: list             # List[{"time": str, "balance": float}]
     final_balance: float
     initial_balance: float
-    expired_order_dates: list     # List[str] — local-tz dates where pending orders expired without triggering
+    expired_order_dates: list      # List[str] — local-tz dates where pending orders expired without triggering
+    rejected_order_dates: list = field(default_factory=list)  # List[str] — PROJ-29: dates where Already-Past Rejection fired

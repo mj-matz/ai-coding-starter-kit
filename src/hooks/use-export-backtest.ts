@@ -134,7 +134,8 @@ export function useExportBacktest() {
   function exportCsv(
     result: BacktestResult,
     startDate: string,
-    endDate: string
+    endDate: string,
+    mt5Mode: boolean = false
   ) {
     setIsExporting(true);
     try {
@@ -158,6 +159,7 @@ export function useExportBacktest() {
         "stop_loss",
         "take_profit",
         "reason",
+        "mt5_mode",
       ];
 
       type CsvRow = { date: string; values: (string | number | boolean | null)[] };
@@ -184,6 +186,7 @@ export function useExportBacktest() {
           t.stop_loss,
           t.take_profit,
           "",
+          mt5Mode,
         ],
       }));
 
@@ -210,6 +213,7 @@ export function useExportBacktest() {
             "",
             "",
             s.reason,
+            mt5Mode,
           ],
         })
       );
