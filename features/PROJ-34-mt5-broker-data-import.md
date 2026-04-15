@@ -1,6 +1,6 @@
 # PROJ-34: MT5 Broker Data Import
 
-## Status: In Progress
+## Status: Deployed
 **Created:** 2026-04-14
 **Last Updated:** 2026-04-14
 
@@ -366,4 +366,7 @@ npm run test:e2e ⚠️  No E2E tests added for PROJ-34
 BUG-3 and BUG-4 are acceptable risk for a single-admin deployment but should be fixed for multi-user correctness.
 
 ## Deployment
-_To be added by /deploy_
+
+**Deployed:** 2026-04-16
+**Commit:** 667c63d
+**Branch:** main → Vercel auto-deploy

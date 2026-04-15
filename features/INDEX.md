@@ -47,7 +47,7 @@
 | PROJ-31 | Extended Backtest Metrics & CRV Display (MT5-Parität) | Deployed | [PROJ-31-extended-backtest-metrics-crv.md](PROJ-31-extended-backtest-metrics-crv.md) | 2026-04-07 |
 | PROJ-32 | MQL Converter – Editable Strategy Parameters | Deployed | [PROJ-32-mql-converter-editable-parameters.md](PROJ-32-mql-converter-editable-parameters.md) | 2026-04-09 |
 | PROJ-33 | MQL Converter – MT5 EA Export | Planned | [PROJ-33-mql-converter-mt5-export.md](PROJ-33-mql-converter-mt5-export.md) | 2026-04-09 |
-| PROJ-34 | MT5 Broker Data Import | In Review | [PROJ-34-mt5-broker-data-import.md](PROJ-34-mt5-broker-data-import.md) | 2026-04-14 |
+| PROJ-34 | MT5 Broker Data Import | Deployed | [PROJ-34-mt5-broker-data-import.md](PROJ-34-mt5-broker-data-import.md) | 2026-04-14 |
 
 <!-- Add features above this line -->
 
