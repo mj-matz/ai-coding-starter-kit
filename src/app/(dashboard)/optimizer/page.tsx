@@ -4,12 +4,8 @@ import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Play, RotateCcw, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { Mt5DataStatusBadge } from "@/components/shared/mt5-data-status-badge";
-import { useMt5Data } from "@/hooks/use-mt5-data";
 
 import { useOptimizer } from "@/hooks/use-optimizer";
 import { ConfigInheritancePanel } from "@/components/optimizer/config-inheritance-panel";
@@ -28,7 +24,6 @@ import { calculateCombinations, OPTIMIZER_MAX_COMBINATIONS, OPTIMIZER_WARN_COMBI
 export default function OptimizerPage() {
   const { toast } = useToast();
   const router = useRouter();
-  const { findDataset } = useMt5Data();
 
   const {
     status,
@@ -51,24 +46,6 @@ export default function OptimizerPage() {
 
   // Tab state (controlled so we can switch programmatically)
   const [activeTab, setActiveTab] = useState<"optimizer" | "history">("optimizer");
-
-  // PROJ-34: Independent MT5 Mode toggle (null = follow backtest config, true/false = user override)
-  const [mt5ModeOverride, setMt5ModeOverride] = useState<boolean | null>(null);
-  const mt5Mode = mt5ModeOverride !== null ? mt5ModeOverride : (backtestConfig?.mt5Mode ?? false);
-
-  // PROJ-34: Block start when MT5 mode is on but data doesn't cover the backtest range
-  const mt5Dataset = mt5Mode && backtestConfig
-    ? findDataset(backtestConfig.symbol, backtestConfig.timeframe)
-    : undefined;
-  const isMt5RangeBlocked = (() => {
-    if (!mt5Mode || !mt5Dataset || !backtestConfig?.startDate || !backtestConfig?.endDate) return false;
-    const dataStart = new Date(mt5Dataset.start_date).getTime();
-    const dataEnd = new Date(mt5Dataset.end_date).getTime();
-    const reqStart = new Date(backtestConfig.startDate).getTime();
-    const reqEnd = new Date(backtestConfig.endDate).getTime();
-    if (Number.isNaN(reqStart) || Number.isNaN(reqEnd)) return false;
-    return dataStart > reqStart || dataEnd < reqEnd;
-  })();
 
   // Config state
   const [parameterGroup, setParameterGroup] = useState<ParameterGroup | null>(null);
@@ -98,8 +75,7 @@ export default function OptimizerPage() {
     !!targetMetric &&
     combinationCount > 0 &&
     !exceedsMax &&
-    !needsWarning &&
-    !isMt5RangeBlocked;
+    !needsWarning;
 
   const parameterKeys = Object.keys(parameterRanges);
 
@@ -136,7 +112,7 @@ export default function OptimizerPage() {
     }
 
     setDuplicateRun(null);
-    await startOptimization({ parameterGroup, targetMetric, parameterRanges, mt5ModeOverride: mt5Mode });
+    await startOptimization({ parameterGroup, targetMetric, parameterRanges });
   }
 
   function handleReset() {
@@ -147,7 +123,6 @@ export default function OptimizerPage() {
     setWarningAcknowledged(false);
     setDuplicateRun(null);
     setLoadedHistoricalRun(null);
-    setMt5ModeOverride(null);
   }
 
   const handleLoadRun = useCallback(
@@ -253,28 +228,6 @@ export default function OptimizerPage() {
             >
               Reload Configuration
             </Button>
-          )}
-
-          {/* PROJ-34: Independent MT5 Mode toggle for the optimizer */}
-          {backtestConfig && !isRunning && !isDone && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between rounded-md border border-white/10 bg-black/20 px-4 py-3">
-                <Label className="cursor-pointer text-gray-300">MT5 Mode</Label>
-                <Switch
-                  checked={mt5Mode}
-                  onCheckedChange={setMt5ModeOverride}
-                  aria-label="Enable MT5 Mode for optimizer"
-                />
-              </div>
-              <Mt5DataStatusBadge
-                mt5ModeEnabled={mt5Mode}
-                asset={backtestConfig.symbol}
-                timeframe={backtestConfig.timeframe}
-                startDate={backtestConfig.startDate}
-                endDate={backtestConfig.endDate}
-                dataset={mt5Dataset}
-              />
-            </div>
           )}
 
           {/* Error state */}
