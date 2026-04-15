@@ -279,9 +279,7 @@ export function TradeChartDialog({
       const rangeStartUtc = buildLocalTimestamp(dateRef, rangeStart);
       const rangeEndUtc   = buildLocalTimestamp(dateRef, rangeEnd);
       const rStart = toChartTime(rangeStartUtc);
-      // Extend rEnd by one bar so the box visually covers the last candle in the range
-      // (lightweight-charts places the right edge at the *start* of the last bar).
-      const rEnd   = toChartTime(rangeEndUtc + timeframeToSeconds(timeframe));
+      const rEnd   = toChartTime(rangeEndUtc);
 
       // For trades: use known range_high / range_low; for skipped: derive from candles
       let rHigh = 0;
