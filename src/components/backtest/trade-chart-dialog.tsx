@@ -78,21 +78,14 @@ function timeframeToSeconds(tf: string): number {
   }
 }
 
-// Build the UTC unix timestamp for a given HH:MM time (interpreted as UTC)
-// on the same UTC calendar day as `referenceDateStr`.
-// We use UTC date + UTC time because all backend timestamps (Dukascopy, trade
-// entry/exit) are in UTC, and the user configures times in UTC as well.
+// Build the UTC unix timestamp for a given HH:MM local time on the same
+// calendar day as `referenceDateStr` (an ISO date-time or date string).
+// Must use local time so that toChartTime() — which adds the local timezone
+// offset — places the range box at the correct position on the chart axis.
 function buildLocalTimestamp(referenceDateStr: string, timeHHMM: string): number {
   const refDate = new Date(referenceDateStr);
-  const [hh, mm] = timeHHMM.split(":").map(Number);
-  return Date.UTC(
-    refDate.getUTCFullYear(),
-    refDate.getUTCMonth(),
-    refDate.getUTCDate(),
-    hh,
-    mm,
-    0
-  ) / 1000;
+  const localDate = refDate.toLocaleDateString("en-CA");
+  return new Date(`${localDate}T${timeHHMM}:00`).getTime() / 1000;
 }
 
 export function TradeChartDialog({
@@ -286,7 +279,9 @@ export function TradeChartDialog({
       const rangeStartUtc = buildLocalTimestamp(dateRef, rangeStart);
       const rangeEndUtc   = buildLocalTimestamp(dateRef, rangeEnd);
       const rStart = toChartTime(rangeStartUtc);
-      const rEnd   = toChartTime(rangeEndUtc);
+      // Extend rEnd by one bar so the box visually covers the last candle in the range
+      // (lightweight-charts places the right edge at the *start* of the last bar).
+      const rEnd   = toChartTime(rangeEndUtc + timeframeToSeconds(timeframe));
 
       // For trades: use known range_high / range_low; for skipped: derive from candles
       let rHigh = 0;
