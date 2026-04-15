@@ -1260,6 +1260,26 @@ async def _backtest_orchestrate_inner(
     for d_str in result.expired_order_dates:
         skipped_days.append(SkippedDay(date=d_str, reason="TRIGGER_EXPIRED"))
 
+    # Gap-fill: any trading weekday that has market data but is not yet accounted
+    # for (no trade, no skipped-day entry) gets listed as TRIGGER_EXPIRED so every
+    # Monday–Friday appears in the Trade List.
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    _tz_local = _ZoneInfo(instrument["timezone"])
+    _traded_local_dates = {
+        str(pd.Timestamp(t.entry_time).tz_convert(_tz_local).date())
+        for t in result.trades
+    }
+    _accounted_dates = _traded_local_dates | {sd.date for sd in skipped_days}
+    d = date_from
+    while d <= date_to:
+        d_str = str(d)
+        if (d.weekday() in trading_days_set
+                and d_str not in news_dates_set
+                and d in present_dates
+                and d_str not in _accounted_dates):
+            skipped_days.append(SkippedDay(date=d_str, reason="TRIGGER_EXPIRED"))
+        d += timedelta(days=1)
+
     # ── 7. Calculate analytics ────────────────────────────────────────────────
     try:
         analytics_result = calculate_analytics(result)
