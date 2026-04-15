@@ -78,12 +78,21 @@ function timeframeToSeconds(tf: string): number {
   }
 }
 
-// Build the UTC unix timestamp for a given HH:MM local time on the same
-// calendar day as `referenceDateStr` (an ISO date-time or date string).
+// Build the UTC unix timestamp for a given HH:MM time (interpreted as UTC)
+// on the same UTC calendar day as `referenceDateStr`.
+// We use UTC date + UTC time because all backend timestamps (Dukascopy, trade
+// entry/exit) are in UTC, and the user configures times in UTC as well.
 function buildLocalTimestamp(referenceDateStr: string, timeHHMM: string): number {
   const refDate = new Date(referenceDateStr);
-  const localDate = refDate.toLocaleDateString("en-CA");
-  return new Date(`${localDate}T${timeHHMM}:00`).getTime() / 1000;
+  const [hh, mm] = timeHHMM.split(":").map(Number);
+  return Date.UTC(
+    refDate.getUTCFullYear(),
+    refDate.getUTCMonth(),
+    refDate.getUTCDate(),
+    hh,
+    mm,
+    0
+  ) / 1000;
 }
 
 export function TradeChartDialog({
