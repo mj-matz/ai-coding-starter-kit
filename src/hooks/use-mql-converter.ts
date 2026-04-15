@@ -260,7 +260,8 @@ export function useMqlConverter(): UseMqlConverterReturn {
             ...(params.sizingMode === "fixed_lot"
               ? { fixed_lot: params.fixedLot }
               : { risk_percent: params.riskPercent }),
-            commission: params.commission,
+            // PROJ-29: per-lot commission
+            commission_per_lot: params.commission,
             slippage_pips: params.slippage,
             timezone: instrument.timezone,
           },
@@ -342,7 +343,8 @@ export function useMqlConverter(): UseMqlConverterReturn {
           ...(params.sizingMode === "fixed_lot"
             ? { fixed_lot: params.fixedLot }
             : { risk_percent: params.riskPercent }),
-          commission: params.commission,
+          // PROJ-29: per-lot commission
+          commission_per_lot: params.commission,
           slippage_pips: params.slippage,
           timezone: instrument.timezone,
         },

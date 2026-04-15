@@ -41,6 +41,7 @@ import {
 
 import { DynamicParamForm, buildDefaultParams } from "@/components/backtest/dynamic-param-form";
 import { AssetCombobox } from "@/components/backtest/asset-combobox";
+import { Mt5DataStatusBadge } from "@/components/shared/mt5-data-status-badge";
 
 import {
   backtestFormSchema,
@@ -50,6 +51,7 @@ import {
   type BacktestFormValues,
 } from "@/lib/backtest-types";
 import { useStrategies } from "@/hooks/use-strategies";
+import { useMt5Data } from "@/hooks/use-mt5-data";
 import { cn } from "@/lib/utils";
 
 interface ConfigurationPanelProps {
@@ -76,6 +78,7 @@ export function ConfigurationPanel({
   preloadConfig,
 }: ConfigurationPanelProps) {
   const { strategies, isLoading: strategiesLoading } = useStrategies();
+  const { findDataset } = useMt5Data();
   const [engineAdvancedOpen, setEngineAdvancedOpen] = useState(false);
 
   const form = useForm<BacktestFormValues>({
@@ -86,6 +89,23 @@ export function ConfigurationPanel({
   const sizingMode = form.watch("sizingMode");
   const selectedStrategyId = form.watch("strategy");
   const selectedStrategy = strategies.find((s) => s.id === selectedStrategyId);
+
+  // PROJ-34: Block submit when MT5 Mode is on and data doesn't cover the requested range
+  const mt5Mode = form.watch("mt5Mode");
+  const mt5Symbol = form.watch("symbol");
+  const mt5Timeframe = form.watch("timeframe");
+  const mt5StartDate = form.watch("startDate");
+  const mt5EndDate = form.watch("endDate");
+  const mt5Dataset = mt5Mode ? findDataset(mt5Symbol, mt5Timeframe) : undefined;
+  const isMt5RangeBlocked = (() => {
+    if (!mt5Mode || !mt5Dataset || !mt5StartDate || !mt5EndDate) return false;
+    const dataStart = new Date(mt5Dataset.start_date).getTime();
+    const dataEnd = new Date(mt5Dataset.end_date).getTime();
+    const reqStart = new Date(mt5StartDate).getTime();
+    const reqEnd = new Date(mt5EndDate).getTime();
+    if (Number.isNaN(reqStart) || Number.isNaN(reqEnd)) return false;
+    return dataStart > reqStart || dataEnd < reqEnd;
+  })();
 
   // Restore config: preloadConfig (from URL) takes priority over localStorage
   useEffect(() => {
@@ -510,6 +530,18 @@ export function ConfigurationPanel({
                   )}
                 />
               )}
+
+              {/* PROJ-34: MT5 data source indicator (only when MT5 mode is active) */}
+              {form.watch("mt5Mode") && (
+                <Mt5DataStatusBadge
+                  mt5ModeEnabled
+                  asset={form.watch("symbol")}
+                  timeframe={form.watch("timeframe")}
+                  startDate={form.watch("startDate")}
+                  endDate={form.watch("endDate")}
+                  dataset={findDataset(form.watch("symbol"), form.watch("timeframe"))}
+                />
+              )}
             </CollapsibleContent>
           </Collapsible>
 
@@ -658,7 +690,7 @@ export function ConfigurationPanel({
 
           <Button
             type="submit"
-            disabled={isRunning}
+            disabled={isRunning || isMt5RangeBlocked}
             className="w-full bg-blue-600 text-white hover:bg-blue-700 shadow-md disabled:opacity-50"
             aria-label="Run backtest"
           >

@@ -13,6 +13,7 @@ import {
   ChevronUp,
   SlidersHorizontal,
   FileCode,
+  Settings,
 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
@@ -50,6 +51,7 @@ const navigationItems = [
   { title: "Strategies", href: "/strategies", icon: Zap },
   { title: "MQL Converter", href: "/mql-converter", icon: FileCode },
   { title: "Journal", href: "/journal", icon: BookOpen },
+  { title: "Settings", href: "/settings", icon: Settings },
 ];
 
 export function AppSidebar({ userEmail, userRole }: AppSidebarProps) {

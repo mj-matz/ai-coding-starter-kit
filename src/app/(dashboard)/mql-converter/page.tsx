@@ -12,6 +12,11 @@ import type { MqlInputValues } from "@/components/mql-converter/mql-input-panel"
 import { ConversionProgress } from "@/components/mql-converter/conversion-progress";
 import { ConversionWarnings } from "@/components/mql-converter/conversion-warnings";
 import { CodeReviewPanel } from "@/components/mql-converter/code-review-panel";
+import { Mt5DataBanner } from "@/components/mql-converter/mt5-data-banner";
+import { Mt5UploadDialog } from "@/components/settings/mt5-upload-dialog";
+import { useMt5Data } from "@/hooks/use-mt5-data";
+import type { Mt5Timeframe, Mt5UploadRequest } from "@/lib/mt5-data-types";
+import { MT5_TIMEFRAME_VALUES } from "@/lib/mt5-data-types";
 import {
   ParametersPanel,
   areParametersValid,
@@ -46,6 +51,31 @@ export default function MqlConverterPage() {
   } = useMqlConverter();
 
   const { toast } = useToast();
+
+  // PROJ-34: MT5 data state
+  const { findDataset, upload: uploadMt5Data } = useMt5Data();
+  const [currentAsset, setCurrentAsset] = useState<string>("");
+  const [currentTimeframe, setCurrentTimeframe] = useState<string>("");
+  const [mt5UploadOpen, setMt5UploadOpen] = useState(false);
+
+  const mt5Dataset = currentAsset && currentTimeframe
+    ? findDataset(currentAsset, currentTimeframe)
+    : undefined;
+  const mt5SupportsTimeframe = MT5_TIMEFRAME_VALUES.includes(currentTimeframe);
+  const showMt5Banner = !!currentAsset && mt5SupportsTimeframe && !mt5Dataset;
+
+  async function handleMt5Upload(req: Mt5UploadRequest) {
+    const res = await uploadMt5Data(req);
+    toast({
+      title: "MT5 data uploaded",
+      description: `${res.dataset.candle_count.toLocaleString()} candles stored for ${res.dataset.asset} ${res.dataset.timeframe.toUpperCase()}.`,
+    });
+    return res;
+  }
+
+  function existsForAsset(asset: string, timeframe: Mt5Timeframe): boolean {
+    return !!findDataset(asset, timeframe);
+  }
 
   const [activeTab, setActiveTab] = useState("converter");
   const [lastInputValues, setLastInputValues] = useState<MqlInputValues | null>(null);
@@ -285,11 +315,24 @@ export default function MqlConverterPage() {
                 isRunning={isRunning}
                 initialMqlCode={preloadMqlCode}
                 initialMqlVersion={preloadMqlVersion}
+                onAssetTimeframeChange={(asset, timeframe) => {
+                  setCurrentAsset(asset);
+                  setCurrentTimeframe(timeframe);
+                }}
               />
             </div>
 
             {/* Right Column: Results */}
             <div className="min-w-0 space-y-6">
+              {/* PROJ-34: MT5 data banner — hidden when MT5 data is available */}
+              {showMt5Banner && (
+                <Mt5DataBanner
+                  asset={currentAsset}
+                  timeframe={currentTimeframe}
+                  onUploadClick={() => setMt5UploadOpen(true)}
+                />
+              )}
+
               {/* Progress */}
               {isRunning && (
                 <ConversionProgress status={status} onCancel={cancel} />
@@ -383,6 +426,18 @@ export default function MqlConverterPage() {
             </div>
           </div>
         </TabsContent>
+
+        {/* PROJ-34: Inline MT5 upload dialog (reused from Settings page) */}
+        <Mt5UploadDialog
+          open={mt5UploadOpen}
+          onOpenChange={setMt5UploadOpen}
+          existsForAsset={existsForAsset}
+          onUpload={handleMt5Upload}
+          initialAsset={currentAsset}
+          initialTimeframe={
+            (mt5SupportsTimeframe ? (currentTimeframe as Mt5Timeframe) : undefined)
+          }
+        />
 
         {/* ── Tab: My Conversions ──────────────────────────────────────────── */}
         <TabsContent value="saves" className="mt-6">

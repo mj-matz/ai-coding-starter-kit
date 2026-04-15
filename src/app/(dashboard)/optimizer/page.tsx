@@ -4,8 +4,11 @@ import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Play, RotateCcw, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { useMt5Data } from "@/hooks/use-mt5-data";
+import { Mt5DataStatusBadge } from "@/components/shared/mt5-data-status-badge";
 
 import { useOptimizer } from "@/hooks/use-optimizer";
 import { ConfigInheritancePanel } from "@/components/optimizer/config-inheritance-panel";
@@ -44,6 +47,8 @@ export default function OptimizerPage() {
     loadRun,
   } = useOptimizer();
 
+  const { findDataset } = useMt5Data();
+
   // Tab state (controlled so we can switch programmatically)
   const [activeTab, setActiveTab] = useState<"optimizer" | "history">("optimizer");
 
@@ -53,6 +58,24 @@ export default function OptimizerPage() {
   const [parameterRanges, setParameterRanges] = useState<Record<string, ParameterRange>>({});
   const [warningAcknowledged, setWarningAcknowledged] = useState(false);
   const [duplicateRun, setDuplicateRun] = useState<OptimizationRun | null>(null);
+
+  // PROJ-34: Independent MT5 Mode toggle.
+  // undefined = not yet overridden → falls back to inherited backtestConfig.mt5Mode.
+  // Once the user flips the switch, the explicit boolean takes over.
+  const [mt5ModeOverride, setMt5ModeOverride] = useState<boolean | undefined>(undefined);
+  const effectiveMt5Mode = mt5ModeOverride ?? backtestConfig?.mt5Mode ?? false;
+  const mt5Dataset = effectiveMt5Mode && backtestConfig
+    ? findDataset(backtestConfig.symbol, backtestConfig.timeframe)
+    : undefined;
+  const isMt5RangeBlocked = (() => {
+    if (!effectiveMt5Mode || !mt5Dataset || !backtestConfig) return false;
+    const dataStart = new Date(mt5Dataset.start_date).getTime();
+    const dataEnd = new Date(mt5Dataset.end_date).getTime();
+    const reqStart = new Date(backtestConfig.startDate).getTime();
+    const reqEnd = new Date(backtestConfig.endDate).getTime();
+    if (Number.isNaN(reqStart) || Number.isNaN(reqEnd)) return false;
+    return dataStart > reqStart || dataEnd < reqEnd;
+  })();
 
   // When viewing a historical run, store it so we can show its config
   const [loadedHistoricalRun, setLoadedHistoricalRun] = useState<OptimizationRun | null>(null);
@@ -75,7 +98,8 @@ export default function OptimizerPage() {
     !!targetMetric &&
     combinationCount > 0 &&
     !exceedsMax &&
-    !needsWarning;
+    !needsWarning &&
+    !isMt5RangeBlocked;
 
   const parameterKeys = Object.keys(parameterRanges);
 
@@ -112,7 +136,7 @@ export default function OptimizerPage() {
     }
 
     setDuplicateRun(null);
-    await startOptimization({ parameterGroup, targetMetric, parameterRanges });
+    await startOptimization({ parameterGroup, targetMetric, parameterRanges, mt5ModeOverride: effectiveMt5Mode });
   }
 
   function handleReset() {
@@ -123,6 +147,7 @@ export default function OptimizerPage() {
     setWarningAcknowledged(false);
     setDuplicateRun(null);
     setLoadedHistoricalRun(null);
+    setMt5ModeOverride(undefined);
   }
 
   const handleLoadRun = useCallback(
@@ -217,6 +242,7 @@ export default function OptimizerPage() {
                   })
                 : undefined
             }
+            mt5ModeOverride={effectiveMt5Mode}
           />
 
           {!backtestConfig && (
@@ -258,6 +284,29 @@ export default function OptimizerPage() {
           {/* Config form — only when not running/done */}
           {!isRunning && !isDone && (
             <div className="space-y-6">
+              {/* PROJ-34: MT5 Mode toggle */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between rounded-md border border-white/10 bg-black/20 px-4 py-3">
+                  <span className="text-sm text-gray-300">MT5 Mode</span>
+                  <Switch
+                    checked={effectiveMt5Mode}
+                    onCheckedChange={setMt5ModeOverride}
+                    disabled={!backtestConfig}
+                    aria-label="Enable MT5 Mode"
+                  />
+                </div>
+                {effectiveMt5Mode && backtestConfig && (
+                  <Mt5DataStatusBadge
+                    mt5ModeEnabled
+                    asset={backtestConfig.symbol}
+                    timeframe={backtestConfig.timeframe}
+                    startDate={backtestConfig.startDate}
+                    endDate={backtestConfig.endDate}
+                    dataset={mt5Dataset}
+                  />
+                )}
+              </div>
+
               {/* Parameter Group */}
               <ParameterGroupSelector
                 value={parameterGroup}

@@ -45,6 +45,8 @@ export interface StartOptimizerParams {
   parameterGroup: ParameterGroup;
   targetMetric: TargetMetric;
   parameterRanges: Record<string, ParameterRange>;
+  /** PROJ-34: Override mt5Mode from the inherited backtest config. */
+  mt5ModeOverride?: boolean;
 }
 
 const POLL_INTERVAL_MS = 2000;
@@ -161,7 +163,7 @@ export function useOptimizer(): UseOptimizerReturn {
   // ── Start optimization ────────────────────────────────────────────────
 
   const startOptimization = useCallback(
-    async ({ parameterGroup, targetMetric, parameterRanges }: StartOptimizerParams) => {
+    async ({ parameterGroup, targetMetric, parameterRanges, mt5ModeOverride }: StartOptimizerParams) => {
       if (!backtestConfig) {
         setError("No backtest configuration found. Please configure it in the Backtest tab first.");
         return;
@@ -176,13 +178,14 @@ export function useOptimizer(): UseOptimizerReturn {
 
       try {
         // PROJ-29: translate camelCase form fields to snake_case API fields for Python
+        // PROJ-34: mt5ModeOverride allows the optimizer to set MT5 Mode independently of the backtest config
         const { commissionPerLot, mt5Mode, spreadPips, ...restConfig } =
           backtestConfig;
         const body = {
           ...restConfig,
           commission_per_lot: commissionPerLot,
           price_type: "bid",
-          mt5_mode: mt5Mode,
+          mt5_mode: mt5ModeOverride !== undefined ? mt5ModeOverride : mt5Mode,
           spread_pips: spreadPips,
           parameter_group: parameterGroup,
           target_metric: targetMetric,

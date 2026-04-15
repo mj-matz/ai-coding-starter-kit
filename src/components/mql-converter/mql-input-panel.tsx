@@ -78,6 +78,8 @@ interface MqlInputPanelProps {
   isRunning: boolean;
   initialMqlCode?: string;
   initialMqlVersion?: MqlVersion;
+  /** PROJ-34: notify parent about asset/timeframe changes so it can show MT5 data status. */
+  onAssetTimeframeChange?: (asset: string, timeframe: string) => void;
 }
 
 export function MqlInputPanel({
@@ -85,6 +87,7 @@ export function MqlInputPanel({
   isRunning,
   initialMqlCode = "",
   initialMqlVersion = "auto",
+  onAssetTimeframeChange,
 }: MqlInputPanelProps) {
   const [mqlCode, setMqlCode] = useState(initialMqlCode);
   const [mqlVersion, setMqlVersion] = useState<MqlVersion>(initialMqlVersion);
@@ -114,6 +117,11 @@ export function MqlInputPanel({
   useEffect(() => {
     setMqlVersion(initialMqlVersion);
   }, [initialMqlVersion]);
+
+  // PROJ-34: Notify parent of asset/timeframe changes so it can render the MT5 status banner
+  useEffect(() => {
+    onAssetTimeframeChange?.(symbol, timeframe);
+  }, [symbol, timeframe, onAssetTimeframeChange]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
