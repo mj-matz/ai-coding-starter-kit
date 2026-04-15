@@ -226,6 +226,10 @@ async def _download_candle_raw(
         backoff: Optional[float] = None
 
         async with semaphore:
+            # Re-check after acquiring slot: a prior task may have tripped the breaker
+            if abort_event and abort_event.is_set():
+                raise RuntimeError("Circuit breaker triggered — Dukascopy returning 503")
+
             try:
                 resp = await client.get(url, timeout=20)
             except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
@@ -438,6 +442,10 @@ async def _download_hour_async(
         backoff: Optional[float] = None
 
         async with semaphore:  # slot acquired only for the HTTP request
+            # Re-check after acquiring slot: a prior task may have tripped the breaker
+            if abort_event and abort_event.is_set():
+                return None
+
             try:
                 resp = await client.get(url, timeout=20)
             except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
