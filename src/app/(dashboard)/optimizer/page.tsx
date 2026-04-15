@@ -52,11 +52,9 @@ export default function OptimizerPage() {
   // Tab state (controlled so we can switch programmatically)
   const [activeTab, setActiveTab] = useState<"optimizer" | "history">("optimizer");
 
-  // PROJ-34: Independent MT5 Mode toggle (defaults to backtest config, can be overridden)
-  const [mt5Mode, setMt5Mode] = useState(false);
-  useEffect(() => {
-    if (backtestConfig) setMt5Mode(backtestConfig.mt5Mode ?? false);
-  }, [backtestConfig]);
+  // PROJ-34: Independent MT5 Mode toggle (null = follow backtest config, true/false = user override)
+  const [mt5ModeOverride, setMt5ModeOverride] = useState<boolean | null>(null);
+  const mt5Mode = mt5ModeOverride !== null ? mt5ModeOverride : (backtestConfig?.mt5Mode ?? false);
 
   // PROJ-34: Block start when MT5 mode is on but data doesn't cover the backtest range
   const mt5Dataset = mt5Mode && backtestConfig
@@ -149,7 +147,7 @@ export default function OptimizerPage() {
     setWarningAcknowledged(false);
     setDuplicateRun(null);
     setLoadedHistoricalRun(null);
-    setMt5Mode(backtestConfig?.mt5Mode ?? false);
+    setMt5ModeOverride(null);
   }
 
   const handleLoadRun = useCallback(
@@ -264,7 +262,7 @@ export default function OptimizerPage() {
                 <Label className="cursor-pointer text-gray-300">MT5 Mode</Label>
                 <Switch
                   checked={mt5Mode}
-                  onCheckedChange={setMt5Mode}
+                  onCheckedChange={setMt5ModeOverride}
                   aria-label="Enable MT5 Mode for optimizer"
                 />
               </div>
