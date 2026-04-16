@@ -68,6 +68,7 @@ export function useOptimizer(): UseOptimizerReturn {
 
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cancelledRef = useRef(false);
+  const savedJobRef = useRef<string | null>(null); // tracks which jobId has already been saved
 
   // ── Load config from localStorage ─────────────────────────────────────
 
@@ -93,6 +94,8 @@ export function useOptimizer(): UseOptimizerReturn {
   const saveResults = useCallback(
     async (runId: string, rows: OptimizerResultRow[], finalStatus: "completed" | "cancelled") => {
       if (rows.length === 0) return;
+      if (savedJobRef.current === runId) return; // already saved — prevents double-save from concurrent polls
+      savedJobRef.current = runId;
       try {
         await fetch(`/api/optimizer/runs/${runId}/save`, {
           method: "POST",
@@ -170,6 +173,7 @@ export function useOptimizer(): UseOptimizerReturn {
       }
 
       cancelledRef.current = false;
+      savedJobRef.current = null;
       setStatus("running");
       setError(null);
       setProgress(0);
@@ -308,9 +312,14 @@ export function useOptimizer(): UseOptimizerReturn {
       const response = await fetch(`/api/optimizer/runs/${id}`);
       if (!response.ok) return null;
       const data = await response.json();
-      const results: OptimizerResultRow[] = data.results ?? [];
       const run: OptimizationRun = data.run;
-      // Set results into state so they can be displayed
+      // Deduplicate by params_hash in case of double-saves from prior race conditions
+      const seen = new Set<string>();
+      const results: OptimizerResultRow[] = (data.results ?? []).filter((r: OptimizerResultRow) => {
+        if (seen.has(r.params_hash)) return false;
+        seen.add(r.params_hash);
+        return true;
+      });
       setResults(results);
       setStatus("completed");
       setJobId(id);
