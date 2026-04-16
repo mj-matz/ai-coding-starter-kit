@@ -79,7 +79,7 @@ export interface Mt5CheckResponse {
 
 export interface CsvParseResult {
   candles: Mt5Candle[];
-  detected_delimiter: ";" | ",";
+  detected_delimiter: ";" | "," | "\t";
   detected_date_format: string;
   has_tick_volume: boolean;
   has_volume: boolean;
@@ -237,9 +237,11 @@ export function parseMt5Csv(raw: string): CsvParseResult {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function detectDelimiter(headerLine: string): ";" | "," {
+function detectDelimiter(headerLine: string): ";" | "," | "\t" {
   const semi = (headerLine.match(/;/g) ?? []).length;
   const comma = (headerLine.match(/,/g) ?? []).length;
+  const tab = (headerLine.match(/\t/g) ?? []).length;
+  if (tab > semi && tab > comma) return "\t";
   return semi >= comma ? ";" : ",";
 }
 

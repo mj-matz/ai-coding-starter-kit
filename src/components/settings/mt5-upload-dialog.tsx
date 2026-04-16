@@ -303,7 +303,7 @@ export function Mt5UploadDialog({
                     {" - "}
                     format: {parseResult.detected_date_format}
                     {", "}
-                    delimiter: {parseResult.detected_delimiter === ";" ? "semicolon" : "comma"}
+                    delimiter: {parseResult.detected_delimiter === ";" ? "semicolon" : parseResult.detected_delimiter === "\t" ? "tab" : "comma"}
                   </p>
                 </div>
               </div>
