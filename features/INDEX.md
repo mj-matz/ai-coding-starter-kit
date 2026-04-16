@@ -48,7 +48,8 @@
 | PROJ-32 | MQL Converter – Editable Strategy Parameters | Deployed | [PROJ-32-mql-converter-editable-parameters.md](PROJ-32-mql-converter-editable-parameters.md) | 2026-04-09 |
 | PROJ-33 | MQL Converter – MT5 EA Export | Planned | [PROJ-33-mql-converter-mt5-export.md](PROJ-33-mql-converter-mt5-export.md) | 2026-04-09 |
 | PROJ-34 | MT5 Broker Data Import | Deployed | [PROJ-34-mt5-broker-data-import.md](PROJ-34-mt5-broker-data-import.md) | 2026-04-14 |
+| PROJ-35 | Optimizer – Extended Target Metrics & Hard Constraint Filter | Planned | [PROJ-35-optimizer-extended-metrics.md](PROJ-35-optimizer-extended-metrics.md) | 2026-04-17 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-35
+## Next Available ID: PROJ-36

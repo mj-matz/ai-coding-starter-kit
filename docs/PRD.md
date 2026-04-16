@@ -38,6 +38,10 @@ A personal web-based backtesting platform for systematic trading strategies. The
 | P1 | Backtest Realism – Bid-Price Data & First-Breakout Direction | Planned |
 | P1 | Engine – Continuous Trailing Stop & Partial Close | Planned |
 | P1 | Extended Backtest Metrics & CRV Display (MT5-Parität) | Planned |
+| P1 | MQL Converter – Editable Strategy Parameters | Planned |
+| P1 | MQL Converter – MT5 EA Export | Planned |
+| P1 | MT5 Broker Data Import | Planned |
+| P1 | Optimizer – Extended Target Metrics & Hard Constraint Filter | Planned |
 
 ## Success Metrics
 - Backtesting engine produces identical results on repeated runs (deterministic)
