@@ -46,17 +46,32 @@ def _run_async(coro):
     asyncio.run() fails with 'This event loop is already running' when called
     from within a FastAPI async route handler. In that case, we spawn a dedicated
     thread with its own event loop instead.
+
+    Also handles an edge case where asyncio.get_running_loop() reports no loop
+    but asyncio.run() still raises RuntimeError (observed on Railway/uvicorn
+    when the sync handler is called indirectly from an async context).
     """
     try:
         asyncio.get_running_loop()
-        # Already inside a running event loop (e.g. FastAPI async handler).
-        # asyncio.run() would raise RuntimeError — delegate to a fresh thread.
+        in_loop = True
+    except RuntimeError:
+        in_loop = False
+
+    if in_loop:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(asyncio.run, coro).result()
-    except RuntimeError:
-        # No running event loop — safe to call asyncio.run() directly.
+
+    try:
         return asyncio.run(coro)
+    except RuntimeError as exc:
+        if "cannot be called from a running event loop" in str(exc):
+            # get_running_loop() said no loop but asyncio.run() disagrees.
+            # Delegate to a fresh thread which always has a clean event loop.
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, coro).result()
+        raise
 
 # ── Symbol mapping ────────────────────────────────────────────────────────────
 
@@ -668,6 +683,16 @@ def fetch_dukascopy(
         frames = _run_async(_fetch_all_candles(duka_symbol, days, point, hour_from, hour_to, symbol, price_type=price_type))
         logger.info("Candle-API: %d day-frames for %s", len(frames), symbol)
     except Exception as exc:
+        exc_str = str(exc)
+        # Circuit breaker fired = Dukascopy is returning HTTP 503 for this symbol.
+        # The tick endpoint uses the same infrastructure, so a tick fallback would
+        # also 503 — or succeed but be far too slow for multi-month ranges → 504.
+        # Fail fast with a user-friendly message instead of burning more time.
+        if "Circuit breaker" in exc_str or "circuit breaker" in exc_str:
+            raise ValueError(
+                f"Dukascopy is temporarily unavailable for {symbol} — "
+                f"too many HTTP 503 responses. Please try again in a few minutes."
+            ) from exc
         logger.warning(
             "Candle-API failed for %s — falling back to tick endpoint: %s", symbol, exc
         )
