@@ -25,7 +25,7 @@
 | PROJ-11 | Engine Performance Optimization (NumPy + Breakout) | Deployed | [PROJ-11-engine-performance-optimization.md](PROJ-11-engine-performance-optimization.md) | 2026-03-20 |
 | PROJ-12 | GAP Fill Toggle | Deployed | [PROJ-12-gap-fill-toggle.md](PROJ-12-gap-fill-toggle.md) | 2026-03-20 |
 | PROJ-13 | Dukascopy Download Reliability (Retry + Adaptive Concurrency) | Failed | [PROJ-13-dukascopy-download-reliability.md](PROJ-13-dukascopy-download-reliability.md) | 2026-03-21 |
-| PROJ-14 | Cache Warming (Background Prefetch) | Planned | [PROJ-14-cache-warming.md](PROJ-14-cache-warming.md) | 2026-03-21 |
+| PROJ-14 | Cache Warming (Background Prefetch) | In Progress | [PROJ-14-cache-warming.md](PROJ-14-cache-warming.md) | 2026-03-21 |
 | PROJ-15 | Intra-Bar Accuracy (Entry-Bar SL/TP + 1-Second Hybrid) | Deployed | [PROJ-15-intra-bar-accuracy.md](PROJ-15-intra-bar-accuracy.md) | 2026-03-22 |
 | PROJ-16 | Configurable Entry Offset (Pip Distance to Range) | Planned | [PROJ-16-configurable-entry-offset.md](PROJ-16-configurable-entry-offset.md) | 2026-03-22 |
 | PROJ-17 | Chart Screenshot Share | Deployed | [PROJ-17-chart-screenshot-share.md](PROJ-17-chart-screenshot-share.md) | 2026-03-22 |
@@ -48,7 +48,7 @@
 | PROJ-32 | MQL Converter – Editable Strategy Parameters | Deployed | [PROJ-32-mql-converter-editable-parameters.md](PROJ-32-mql-converter-editable-parameters.md) | 2026-04-09 |
 | PROJ-33 | MQL Converter – MT5 EA Export | Planned | [PROJ-33-mql-converter-mt5-export.md](PROJ-33-mql-converter-mt5-export.md) | 2026-04-09 |
 | PROJ-34 | MT5 Broker Data Import | Deployed | [PROJ-34-mt5-broker-data-import.md](PROJ-34-mt5-broker-data-import.md) | 2026-04-14 |
-| PROJ-35 | Optimizer – Extended Target Metrics & Hard Constraint Filter | Planned | [PROJ-35-optimizer-extended-metrics.md](PROJ-35-optimizer-extended-metrics.md) | 2026-04-17 |
+| PROJ-35 | Optimizer – Extended Target Metrics & Hard Constraint Filter | In Review | [PROJ-35-optimizer-extended-metrics.md](PROJ-35-optimizer-extended-metrics.md) | 2026-04-17 |
 
 <!-- Add features above this line -->
 

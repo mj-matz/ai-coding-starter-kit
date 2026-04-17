@@ -51,7 +51,82 @@ Auch nach PROJ-13 dauert ein Cache-Miss-Download mehrere Sekunden. Der Nutzer ko
 ---
 
 ## Tech Design (Solution Architect)
-_To be added by /architecture_
+
+### What this feature does
+When a user selects a **symbol + date range** in the Backtest configuration, the app silently pre-downloads market data in the background. By the time the user finishes setting SL, TP, and other parameters and clicks "Run Backtest", the data is already cached — eliminating the download wait.
+
+### Component Structure
+
+```
+Configuration Panel (existing: configuration-panel.tsx)
++-- Symbol Selector (existing)
++-- Date Range Inputs (existing)
++-- [NEW] Prefetch Status Indicator
+|       "Loading data…" / "Data ready" / (hidden on cache hit)
++-- Strategy Parameters (existing — user fills these while prefetch runs)
++-- Run Backtest Button (existing)
+```
+
+### Data Flow
+
+```
+User selects symbol + dates
+        ↓
+[Frontend] useEffect fires (debounced ~500ms)
+        ↓
+[Frontend] Cancels previous AbortController, starts new one
+        ↓
+POST /api/prefetch  (Next.js — authenticated, rate-limited)
+        ↓
+POST /prefetch  (Python FastAPI — Railway)
+        ↓
+  Cache hit? → Return immediately (no download)
+  Cache miss? → Download from Dukascopy → Save to cache → Return
+        ↓
+[Frontend] Updates status indicator: "Data ready" (or silent on error)
+```
+
+When the user clicks "Run Backtest":
+- Prefetch **still in flight** → backtest waits; no duplicate download (cache is already being populated)
+- Prefetch **done** → instant cache hit, backtest starts immediately
+- Prefetch **failed silently** → normal backtest flow, no user-visible difference
+
+### Data Model
+
+No new database tables. The existing file-based cache (`python/services/cache_service.py`) is reused as-is.
+
+```
+Prefetch Request:
+- symbol       (e.g. "EURUSD")
+- start_date   (e.g. "2024-01-01")
+- end_date     (e.g. "2024-12-31")
+- source       (e.g. "dukascopy")
+
+Prefetch Response:
+- status: "cached" | "downloaded" | "error"
+(errors are swallowed silently by the frontend)
+```
+
+### New Pieces to Build
+
+| Piece | Location | What it does |
+|---|---|---|
+| `POST /api/prefetch` | Next.js API route (new) | Auth check + rate limit, proxies to Python |
+| `POST /prefetch` | Python FastAPI (new endpoint) | Triggers cache-check/download, returns fast |
+| `usePrefetch` hook | `src/hooks/use-prefetch.ts` (new) | Manages AbortController, fires on symbol+date change, exposes status |
+| Prefetch status indicator | `src/components/backtest/configuration-panel.tsx` (modified) | Small inline text showing loading/ready state |
+
+### Tech Decisions
+
+- **Reuse existing `/fetch` stack in Python** — cache logic, Dukascopy download, and error handling already exist; `/prefetch` is a thin wrapper with no duplication.
+- **AbortController on the frontend** — cancels stale requests when the user rapidly changes symbol or dates, preventing unnecessary downloads.
+- **Dedicated `usePrefetch` hook** — keeps the configuration panel clean; the hook owns AbortController lifecycle, debounce, and status state.
+- **Inline text indicator, not Toast/Modal** — subtle and non-blocking; doesn't interrupt the configuration flow.
+- **Same rate limit as backtest** — prefetch consumes the same downstream resources; shared limit prevents prefetch from exhausting quota before the actual backtest runs.
+
+### Dependencies
+
+No new npm packages — uses native `AbortController` and existing auth/fetch patterns.
 
 ## QA Test Results
 _To be added by /qa_
