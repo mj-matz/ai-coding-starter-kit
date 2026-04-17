@@ -194,25 +194,52 @@ export function Mt5UploadDialog({
 
   // ── Upload ────────────────────────────────────────────────────────────────
 
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null);
+
   const handleUpload = async () => {
     if (!parseResult || !asset) return;
 
     setStep("uploading");
     setUploadError(null);
+    setUploadProgress(null);
+
+    const CHUNK_SIZE = 10_000;
+    const candles = parseResult.candles;
+    const totalChunks = Math.ceil(candles.length / CHUNK_SIZE);
+    const hasExisting = existsForAsset(asset, timeframe);
+
+    let lastResponse: Mt5UploadResponse | null = null;
 
     try {
-      const response = await onUpload({
-        asset,
-        timeframe,
-        candles: parseResult.candles,
-        conflict_resolution: existsForAsset(asset, timeframe) ? conflictResolution : undefined,
-      });
-      setUploadedDataset(response);
+      for (let i = 0; i < totalChunks; i++) {
+        setUploadProgress({ current: i + 1, total: totalChunks });
+        const chunk = candles.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+
+        // First chunk: use user-selected conflict resolution (if dataset exists)
+        // Subsequent chunks: always merge into the dataset created by the first chunk
+        const conflict_resolution =
+          i === 0
+            ? hasExisting
+              ? conflictResolution
+              : undefined
+            : "merge";
+
+        lastResponse = await onUpload({
+          asset,
+          timeframe,
+          candles: chunk,
+          conflict_resolution,
+        });
+      }
+
+      setUploadedDataset(lastResponse!);
       setStep("done");
-      onUploadSuccess?.(response);
+      onUploadSuccess?.(lastResponse!);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Upload failed.");
       setStep("preview");
+    } finally {
+      setUploadProgress(null);
     }
   };
 
@@ -458,7 +485,11 @@ export function Mt5UploadDialog({
           {step === "uploading" && (
             <div className="flex items-center justify-center gap-3 py-10 text-slate-300">
               <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
-              <span className="text-sm">Uploading candles to Supabase...</span>
+              <span className="text-sm">
+                {uploadProgress && uploadProgress.total > 1
+                  ? `Uploading chunk ${uploadProgress.current} / ${uploadProgress.total}...`
+                  : "Uploading candles to Supabase..."}
+              </span>
             </div>
           )}
 
