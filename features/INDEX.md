@@ -39,7 +39,7 @@
 | PROJ-24 | Trade List & Results UI Enhancements | Deployed | [PROJ-24-trade-list-results-ui-enhancements.md](PROJ-24-trade-list-results-ui-enhancements.md) | 2026-03-25 |
 | PROJ-25 | Export Backtest Results (Excel / CSV) | Deployed | [PROJ-25-export-backtest-results.md](PROJ-25-export-backtest-results.md) | 2026-03-26 |
 
-| PROJ-26 | Strategy Export to MT5 EA | In Progress | [PROJ-26-strategy-export-mt5-ea.md](PROJ-26-strategy-export-mt5-ea.md) | 2026-03-31 |
+| PROJ-26 | Strategy Export to MT5 EA | Deployed | [PROJ-26-strategy-export-mt5-ea.md](PROJ-26-strategy-export-mt5-ea.md) | 2026-03-31 |
 | PROJ-27 | Persistent Market Data Store (Monthly Chunks) | Planned | [PROJ-27-persistent-market-data-store.md](PROJ-27-persistent-market-data-store.md) | 2026-03-31 |
 | PROJ-28 | User-Defined Strategies (MQL → Strategy Library) | Planned | [PROJ-28-user-defined-strategies.md](PROJ-28-user-defined-strategies.md) | 2026-04-01 |
 | PROJ-29 | Backtest Realism – Bid-Price Data & First-Breakout Direction | Deployed | [PROJ-29-backtest-realism-bid-data-breakout-direction.md](PROJ-29-backtest-realism-bid-data-breakout-direction.md) | 2026-04-02 |

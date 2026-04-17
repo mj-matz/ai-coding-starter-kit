@@ -193,7 +193,7 @@ function BacktestPageInner() {
               <FileDown className="mr-2 h-4 w-4" />
               Export CSV
             </Button>
-            {SUPPORTED_STRATEGIES.includes(strategy) && (
+            {SUPPORTED_STRATEGIES.includes(lastConfig?.strategy ?? "") && (
               <Button
                 variant="outline"
                 size="sm"
