@@ -26,7 +26,7 @@ const UploadRequestSchema = z.object({
     .max(32)
     .transform((v) => v.toUpperCase()),
   timeframe: z.enum(MT5_TIMEFRAME_VALUES),
-  candles: z.array(Mt5CandleSchema).min(10).max(500_000),
+  candles: z.array(Mt5CandleSchema).min(1).max(500_000),
   conflict_resolution: z.enum(["merge", "replace"]).optional(),
 });
 
