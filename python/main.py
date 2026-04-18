@@ -1074,6 +1074,7 @@ class BacktestOrchestrationRequest(BaseModel):
     # PROJ-29
     price_type: Literal["bid", "mid"] = "bid"
     mt5_mode: bool = False
+    already_past_rejection: bool = False
     spread_pips: float = Field(default=0.0, ge=0)
 
 
