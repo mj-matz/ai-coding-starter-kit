@@ -168,25 +168,39 @@ def _load_mt5_data(
             ),
         )
 
-    # Fetch candles for the requested window.
-    candles_resp = (
-        client.table("mt5_candles")
-        .select("ts, open, high, low, close")
-        .eq("dataset_id", ds["id"])
-        .gte("ts", date_from.isoformat())
-        .lte("ts", date_to.isoformat() + "T23:59:59Z")
-        .order("ts")
-        .limit(500_000)
-        .execute()
-    )
+    # Fetch candles in pages — Supabase silently caps responses at the project's
+    # max-rows setting regardless of the ?limit= parameter, so we paginate.
+    PAGE_SIZE = 10_000
+    ts_from = date_from.isoformat()
+    ts_to = date_to.isoformat() + "T23:59:59Z"
+    all_candles: list[dict] = []
+    offset = 0
 
-    if not candles_resp.data:
+    while True:
+        resp = (
+            client.table("mt5_candles")
+            .select("ts, open, high, low, close")
+            .eq("dataset_id", ds["id"])
+            .gte("ts", ts_from)
+            .lte("ts", ts_to)
+            .order("ts")
+            .range(offset, offset + PAGE_SIZE - 1)
+            .execute()
+        )
+        if not resp.data:
+            break
+        all_candles.extend(resp.data)
+        if len(resp.data) < PAGE_SIZE:
+            break
+        offset += PAGE_SIZE
+
+    if not all_candles:
         raise HTTPException(
             status_code=404,
             detail=f"No MT5 candles found for {symbol} between {date_from} and {date_to}.",
         )
 
-    df = pd.DataFrame(candles_resp.data)
+    df = pd.DataFrame(all_candles)
     df.rename(columns={"ts": "datetime"}, inplace=True)
     df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
     return df
