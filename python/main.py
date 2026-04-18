@@ -122,6 +122,76 @@ def _validate_date_range(date_from: date, date_to: date) -> None:
         raise HTTPException(status_code=400, detail="Date range cannot exceed 5 years")
 
 
+# ── PROJ-34: MT5 broker data loader ─────────────────────────────────────────
+
+def _load_mt5_data(
+    symbol: str,
+    timeframe: str,
+    date_from: date,
+    date_to: date,
+) -> pd.DataFrame:
+    """Load candles from mt5_candles for (symbol, timeframe) in [date_from, date_to].
+
+    Raises HTTPException 404 if no dataset exists for the symbol+timeframe.
+    Raises HTTPException 400 if the dataset does not fully cover the requested range.
+    """
+    from services.cache_service import _get_supabase_client
+
+    client = _get_supabase_client()
+
+    # Resolve dataset and check coverage.
+    ds_resp = (
+        client.table("mt5_datasets")
+        .select("id, start_date, end_date")
+        .eq("asset", symbol.upper())
+        .eq("timeframe", timeframe)
+        .limit(1)
+        .execute()
+    )
+    if not ds_resp.data:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No MT5 data uploaded for {symbol} / {timeframe}. "
+                   "Upload data on the Settings page or disable MT5 Mode.",
+        )
+
+    ds = ds_resp.data[0]
+    ds_start = date.fromisoformat(ds["start_date"])
+    ds_end = date.fromisoformat(ds["end_date"])
+
+    if date_from < ds_start or date_to > ds_end:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"MT5 data for {symbol} only covers {ds_start} – {ds_end}. "
+                f"Adjust the date range or upload additional data."
+            ),
+        )
+
+    # Fetch candles for the requested window.
+    candles_resp = (
+        client.table("mt5_candles")
+        .select("ts, open, high, low, close")
+        .eq("dataset_id", ds["id"])
+        .gte("ts", date_from.isoformat())
+        .lte("ts", date_to.isoformat() + "T23:59:59Z")
+        .order("ts")
+        .limit(500_000)
+        .execute()
+    )
+
+    if not candles_resp.data:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No MT5 candles found for {symbol} between {date_from} and {date_to}.",
+        )
+
+    df = pd.DataFrame(candles_resp.data)
+    df.rename(columns={"ts": "datetime"}, inplace=True)
+    df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+    return df
+
+
 # ── PROJ-27: chunked Dukascopy loader ───────────────────────────────────────
 
 def _load_dukascopy_chunked(
@@ -1189,7 +1259,8 @@ async def _backtest_orchestrate_inner(
         raise HTTPException(status_code=400, detail=f"Invalid date: {e}")
 
     _validate_date_range(date_from, date_to)
-    _validate_timeframe("dukascopy", request.timeframe)
+    if not request.mt5_mode:
+        _validate_timeframe("dukascopy", request.timeframe)
 
     # ── 4. Fetch / load cached data ───────────────────────────────────────────
     # For breakout strategies: derive UTC hour range from time fields (BUG-14 / BUG-27).
@@ -1214,6 +1285,20 @@ async def _backtest_orchestrate_inner(
     if _preloaded is not None:
         df = _preloaded.copy()
         logger.debug(f"Optimizer: using pre-loaded data for {symbol} (skipping fetch)")
+    elif request.mt5_mode:
+        # PROJ-34: MT5 broker data — query mt5_candles instead of Dukascopy.
+        try:
+            df = _load_mt5_data(
+                symbol=symbol,
+                timeframe=request.timeframe,
+                date_from=date_from,
+                date_to=date_to,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"MT5 data load error for {symbol}: {e}", exc_info=True)
+            raise HTTPException(status_code=502, detail="Failed to load MT5 data.")
     else:
         # PROJ-27: chunked monthly cache. Chunks are stored full-day so they
         # are reusable across all hour windows; the hour filter is applied
