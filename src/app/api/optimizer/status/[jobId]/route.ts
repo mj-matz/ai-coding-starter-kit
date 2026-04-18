@@ -82,13 +82,18 @@ export async function GET(request: NextRequest) {
         if (runData) {
           const metric = runData.target_metric as string;
           const metricKey = metric === "win_rate" ? "win_rate" : metric;
+          const MINIMIZE_METRICS = new Set(["max_drawdown_pct"]);
+          const isMinimize = MINIMIZE_METRICS.has(metric);
           const validResults = data.results.filter(
             (r: Record<string, unknown>) => r[metricKey] != null && r.error == null
           );
           if (validResults.length > 0) {
             validResults.sort(
-              (a: Record<string, unknown>, b: Record<string, unknown>) =>
-                ((b[metricKey] as number) ?? 0) - ((a[metricKey] as number) ?? 0)
+              (a: Record<string, unknown>, b: Record<string, unknown>) => {
+                const aVal = (a[metricKey] as number) ?? 0;
+                const bVal = (b[metricKey] as number) ?? 0;
+                return isMinimize ? aVal - bVal : bVal - aVal;
+              }
             );
             updatePayload.best_result = validResults[0];
           }

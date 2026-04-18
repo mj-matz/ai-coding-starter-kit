@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { TARGET_METRIC_DIRECTION } from "@/lib/optimizer-types";
 
 // ── Zod schema for result rows ──────────────────────────────────────────────
 
@@ -12,6 +13,8 @@ const ResultRowSchema = z.object({
   win_rate: z.number().nullable().optional(),
   total_trades: z.number().int().min(0).default(0),
   net_profit: z.number().nullable().optional(),
+  max_drawdown_pct: z.number().nullable().optional(),
+  recovery_factor: z.number().nullable().optional(),
   error: z.string().nullable().optional(),
 });
 
@@ -95,6 +98,8 @@ export async function POST(request: NextRequest) {
     win_rate: r.win_rate ?? null,
     total_trades: r.total_trades,
     net_profit: r.net_profit ?? null,
+    max_drawdown_pct: r.max_drawdown_pct ?? null,
+    recovery_factor: r.recovery_factor ?? null,
     error: r.error ?? null,
   }));
 
@@ -110,17 +115,18 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Find the best result for quick display in history
+  // Find the best result for quick display in history (direction-aware)
   const targetMetric = run.target_metric as string;
   const validResults = results.filter(
     (r) => r[targetMetric as keyof typeof r] != null && r.error == null
   );
   let bestResult = null;
   if (validResults.length > 0) {
+    const isMinimize = TARGET_METRIC_DIRECTION[targetMetric as keyof typeof TARGET_METRIC_DIRECTION] === "minimize";
     validResults.sort((a, b) => {
       const aVal = (a[targetMetric as keyof typeof a] as number) ?? 0;
       const bVal = (b[targetMetric as keyof typeof b] as number) ?? 0;
-      return bVal - aVal;
+      return isMinimize ? aVal - bVal : bVal - aVal;
     });
     bestResult = validResults[0];
   }

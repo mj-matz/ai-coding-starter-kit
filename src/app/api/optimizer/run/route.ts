@@ -45,8 +45,15 @@ const OptimizerRunSchema = z.object({
 
   // Optimizer-specific
   parameter_group: z.enum(["crv", "time_exit", "trigger_deadline", "range_window", "trailing_stop"]),
-  target_metric: z.enum(["profit_factor", "sharpe_ratio", "win_rate", "net_profit"]),
+  target_metric: z.enum(["profit_factor", "sharpe_ratio", "win_rate", "net_profit", "max_drawdown_pct", "recovery_factor"]),
   parameter_ranges: z.record(z.string(), ParameterRangeSchema),
+
+  // PROJ-35: Optional hard constraint (stored in config JSON, not sent to Python)
+  hard_constraint: z.object({
+    metric: z.enum(["profit_factor", "sharpe_ratio", "win_rate", "net_profit", "max_drawdown_pct", "recovery_factor"]),
+    threshold: z.number(),
+    direction: z.enum([">=", "<="]),
+  }).optional().nullable(),
 });
 
 // ── POST /api/optimizer/run ──────────────────────────────────────────────────
@@ -117,7 +124,8 @@ export async function POST(request: NextRequest) {
       headers["Authorization"] = `Bearer ${session.access_token}`;
     }
 
-    const { strategyParams, ...engineParams } = parsed.data;
+    // Exclude hard_constraint from the FastAPI payload (it's client-side only)
+    const { strategyParams, hard_constraint: _hc, ...engineParams } = parsed.data;
     const fastapiBody = { ...engineParams, ...strategyParams };
 
     const response = await fetch(`${FASTAPI_URL}/optimize/start`, {

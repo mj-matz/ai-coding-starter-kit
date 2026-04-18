@@ -9,6 +9,7 @@ import type {
   OptimizerStatusResponse,
   OptimizerStartResponse,
   OptimizationRun,
+  HardConstraint,
 } from "@/lib/optimizer-types";
 import { loadConfigFromStorage, type BacktestFormValues } from "@/lib/backtest-types";
 
@@ -47,6 +48,8 @@ export interface StartOptimizerParams {
   parameterRanges: Record<string, ParameterRange>;
   /** PROJ-34: Override mt5Mode from the inherited backtest config. */
   mt5ModeOverride?: boolean;
+  /** PROJ-35: Optional hard constraint saved alongside the config. */
+  hardConstraint?: HardConstraint | null;
 }
 
 const POLL_INTERVAL_MS = 2000;
@@ -166,7 +169,7 @@ export function useOptimizer(): UseOptimizerReturn {
   // ── Start optimization ────────────────────────────────────────────────
 
   const startOptimization = useCallback(
-    async ({ parameterGroup, targetMetric, parameterRanges, mt5ModeOverride }: StartOptimizerParams) => {
+    async ({ parameterGroup, targetMetric, parameterRanges, mt5ModeOverride, hardConstraint }: StartOptimizerParams) => {
       if (!backtestConfig) {
         setError("No backtest configuration found. Please configure it in the Backtest tab first.");
         return;
@@ -194,6 +197,8 @@ export function useOptimizer(): UseOptimizerReturn {
           parameter_group: parameterGroup,
           target_metric: targetMetric,
           parameter_ranges: parameterRanges,
+          // PROJ-35: hard constraint is stored in the config JSON (client-side only, not sent to Python)
+          ...(hardConstraint ? { hard_constraint: hardConstraint } : {}),
         };
 
         const response = await fetch("/api/optimizer/run", {

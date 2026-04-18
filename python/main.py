@@ -1788,6 +1788,8 @@ class OptimizerResultRow:
     win_rate: float | None = None
     total_trades: int = 0
     net_profit: float | None = None
+    max_drawdown_pct: float | None = None
+    recovery_factor: float | None = None
     error: str | None = None
 
 
@@ -1987,7 +1989,7 @@ async def _preload_optimizer_data(
 async def _run_single_backtest(request: BacktestOrchestrationRequest, user_id: str) -> dict:
     """
     Run a single backtest using the orchestration logic and return summary metrics.
-    Returns a dict with keys: profit_factor, sharpe_ratio, win_rate, total_trades, net_profit, error.
+    Returns a dict with keys: profit_factor, sharpe_ratio, win_rate, total_trades, net_profit, max_drawdown_pct, recovery_factor, error.
     """
     try:
         result = await _backtest_orchestrate_inner(request, user_id)
@@ -1998,6 +2000,8 @@ async def _run_single_backtest(request: BacktestOrchestrationRequest, user_id: s
             "win_rate": m.win_rate_pct,
             "total_trades": m.total_trades,
             "net_profit": round(m.final_balance - request.initialCapital, 2),
+            "max_drawdown_pct": m.max_drawdown_pct,
+            "recovery_factor": m.recovery_factor,
             "error": None,
         }
     except HTTPException as e:
@@ -2007,6 +2011,8 @@ async def _run_single_backtest(request: BacktestOrchestrationRequest, user_id: s
             "win_rate": None,
             "total_trades": 0,
             "net_profit": None,
+            "max_drawdown_pct": None,
+            "recovery_factor": None,
             "error": e.detail if isinstance(e.detail, str) else str(e.detail),
         }
     except Exception as e:
@@ -2016,6 +2022,8 @@ async def _run_single_backtest(request: BacktestOrchestrationRequest, user_id: s
             "win_rate": None,
             "total_trades": 0,
             "net_profit": None,
+            "max_drawdown_pct": None,
+            "recovery_factor": None,
             "error": str(e),
         }
 
@@ -2055,6 +2063,8 @@ async def _optimizer_worker(
                 win_rate=result["win_rate"],
                 total_trades=result["total_trades"],
                 net_profit=result["net_profit"],
+                max_drawdown_pct=result["max_drawdown_pct"],
+                recovery_factor=result["recovery_factor"],
                 error=result["error"],
             )
             job.results.append(row)
@@ -2116,7 +2126,7 @@ class OptimizerStartRequest(BaseModel):
     )
     target_metric: str = Field(
         ...,
-        pattern=r"^(profit_factor|sharpe_ratio|win_rate|net_profit)$",
+        pattern=r"^(profit_factor|sharpe_ratio|win_rate|net_profit|max_drawdown_pct|recovery_factor)$",
     )
     parameter_ranges: dict  # e.g. { "sl": { "min": 10, "max": 50, "step": 5 } }
 
@@ -2134,6 +2144,8 @@ class OptimizerResultOut(BaseModel):
     win_rate: Optional[float] = None
     total_trades: int = 0
     net_profit: Optional[float] = None
+    max_drawdown_pct: Optional[float] = None
+    recovery_factor: Optional[float] = None
     error: Optional[str] = None
 
 

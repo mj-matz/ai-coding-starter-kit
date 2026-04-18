@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Play, RotateCcw, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,13 +15,14 @@ import { ConfigInheritancePanel } from "@/components/optimizer/config-inheritanc
 import { ParameterGroupSelector } from "@/components/optimizer/parameter-group-selector";
 import { ParameterRangeForm } from "@/components/optimizer/parameter-range-form";
 import { MetricSelector } from "@/components/optimizer/metric-selector";
+import { HardConstraintSection } from "@/components/optimizer/hard-constraint-section";
 import { CombinationCounter } from "@/components/optimizer/combination-counter";
 import { ProgressSection } from "@/components/optimizer/progress-section";
 import { HeatmapChart } from "@/components/optimizer/heatmap-chart";
 import { ResultsTable } from "@/components/optimizer/results-table";
 import { HistorySection } from "@/components/optimizer/history-section";
 
-import type { ParameterGroup, TargetMetric, ParameterRange, OptimizationRun } from "@/lib/optimizer-types";
+import type { ParameterGroup, TargetMetric, ParameterRange, OptimizationRun, HardConstraint } from "@/lib/optimizer-types";
 import { calculateCombinations, OPTIMIZER_MAX_COMBINATIONS, OPTIMIZER_WARN_COMBINATIONS } from "@/lib/optimizer-types";
 
 export default function OptimizerPage() {
@@ -30,6 +31,7 @@ export default function OptimizerPage() {
 
   const {
     status,
+    jobId,
     progress,
     total,
     results,
@@ -58,6 +60,7 @@ export default function OptimizerPage() {
   const [parameterRanges, setParameterRanges] = useState<Record<string, ParameterRange>>({});
   const [warningAcknowledged, setWarningAcknowledged] = useState(false);
   const [duplicateRun, setDuplicateRun] = useState<OptimizationRun | null>(null);
+  const [hardConstraint, setHardConstraint] = useState<HardConstraint | null>(null);
 
   // PROJ-34: Independent MT5 Mode toggle.
   // undefined = not yet overridden → falls back to inherited backtestConfig.mt5Mode.
@@ -79,6 +82,24 @@ export default function OptimizerPage() {
 
   // When viewing a historical run, store it so we can show its config
   const [loadedHistoricalRun, setLoadedHistoricalRun] = useState<OptimizationRun | null>(null);
+
+  // Tracks when we're restoring a constraint from history so the auto-save effect doesn't re-patch it
+  const restoringConstraintRef = useRef(false);
+
+  // Auto-save post-hoc constraint changes to Supabase so history reloads see the latest value
+  const activeRunId = loadedHistoricalRun?.id ?? (status === "completed" ? jobId : null);
+  useEffect(() => {
+    if (restoringConstraintRef.current) {
+      restoringConstraintRef.current = false;
+      return;
+    }
+    if (!activeRunId) return;
+    fetch(`/api/optimizer/runs/${activeRunId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hard_constraint: hardConstraint }),
+    }).catch(() => {});
+  }, [hardConstraint, activeRunId]);
 
   // Fetch history on mount so duplicate detection works without opening history tab
   useEffect(() => {
@@ -136,7 +157,7 @@ export default function OptimizerPage() {
     }
 
     setDuplicateRun(null);
-    await startOptimization({ parameterGroup, targetMetric, parameterRanges, mt5ModeOverride: effectiveMt5Mode });
+    await startOptimization({ parameterGroup, targetMetric, parameterRanges, mt5ModeOverride: effectiveMt5Mode, hardConstraint });
   }
 
   function handleReset() {
@@ -146,6 +167,7 @@ export default function OptimizerPage() {
     setParameterRanges({});
     setWarningAcknowledged(false);
     setDuplicateRun(null);
+    setHardConstraint(null);
     setLoadedHistoricalRun(null);
     setMt5ModeOverride(undefined);
   }
@@ -159,6 +181,10 @@ export default function OptimizerPage() {
         setTargetMetric(run.target_metric);
         setParameterRanges(run.parameter_ranges);
         setLoadedHistoricalRun(run);
+        // Restore hard constraint from saved config — flag so the auto-save effect skips this change
+        restoringConstraintRef.current = true;
+        const savedConstraint = (run.config as Record<string, unknown>)?.hard_constraint as HardConstraint | undefined;
+        setHardConstraint(savedConstraint ?? null);
         setActiveTab("optimizer");
         toast({
           title: "Run loaded",
@@ -331,6 +357,13 @@ export default function OptimizerPage() {
                 disabled={!backtestConfig}
               />
 
+              {/* Hard Constraint Filter */}
+              <HardConstraintSection
+                value={hardConstraint}
+                onChange={setHardConstraint}
+                disabled={!backtestConfig}
+              />
+
               {/* Combination Counter */}
               {parameterGroup && combinationCount > 0 && (
                 <CombinationCounter
@@ -408,6 +441,12 @@ export default function OptimizerPage() {
                 )}
               </div>
 
+              {/* Hard Constraint (post-hoc) */}
+              <HardConstraintSection
+                value={hardConstraint}
+                onChange={setHardConstraint}
+              />
+
               {/* Heatmap */}
               {parameterKeys.length > 0 && (
                 <HeatmapChart
@@ -427,6 +466,7 @@ export default function OptimizerPage() {
                     ? (loadedHistoricalRun.config as import("@/lib/backtest-types").BacktestFormValues)
                     : backtestConfig
                 }
+                hardConstraint={hardConstraint}
                 onApplyParams={() => {
                   toast({
                     title: "Parameters applied",

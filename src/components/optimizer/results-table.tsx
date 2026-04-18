@@ -1,15 +1,26 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { ChevronUp, ChevronDown, Trophy, ArrowUpRight } from "lucide-react";
+import { ChevronUp, ChevronDown, Trophy, ArrowUpRight, AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { OptimizerResultRow, TargetMetric } from "@/lib/optimizer-types";
-import { TARGET_METRIC_LABELS } from "@/lib/optimizer-types";
+import type { OptimizerResultRow, TargetMetric, HardConstraint } from "@/lib/optimizer-types";
+import {
+  TARGET_METRIC_LABELS,
+  TARGET_METRIC_DIRECTION,
+  isConstraintViolated,
+} from "@/lib/optimizer-types";
 import type { BacktestFormValues } from "@/lib/backtest-types";
 import { saveConfigToStorage } from "@/lib/backtest-types";
 
-type SortKey = "profit_factor" | "sharpe_ratio" | "win_rate" | "net_profit" | "total_trades";
+type SortKey =
+  | "profit_factor"
+  | "sharpe_ratio"
+  | "win_rate"
+  | "net_profit"
+  | "total_trades"
+  | "max_drawdown_pct"
+  | "recovery_factor";
 type SortDir = "asc" | "desc";
 
 // Parameter keys that are stored as minutes but should display as HH:MM
@@ -39,16 +50,28 @@ function formatParamValue(key: string, value: number): string {
   return TIME_PARAM_KEYS.has(key) ? minutesToTime(value) : String(value);
 }
 
+/** All sortable metric columns in the table */
+const TABLE_COLUMNS: { key: SortKey; label: string }[] = [
+  { key: "profit_factor", label: "PF" },
+  { key: "sharpe_ratio", label: "Sharpe" },
+  { key: "win_rate", label: "Win%" },
+  { key: "net_profit", label: "Net P&L" },
+  { key: "max_drawdown_pct", label: "Max DD%" },
+  { key: "recovery_factor", label: "Rec. F." },
+  { key: "total_trades", label: "Trades" },
+];
+
 interface ResultsTableProps {
   results: OptimizerResultRow[];
   targetMetric: TargetMetric;
   parameterKeys: string[];
   backtestConfig: BacktestFormValues | null;
   onApplyParams?: () => void;
+  hardConstraint?: HardConstraint | null;
 }
 
-function fmt(value: number | null, decimals = 2): string {
-  if (value == null) return "N/A";
+function fmt(value: number | null | undefined, decimals = 2): string {
+  if (value == null) return "\u2014";
   return value.toFixed(decimals);
 }
 
@@ -58,21 +81,52 @@ export function ResultsTable({
   parameterKeys,
   backtestConfig,
   onApplyParams,
+  hardConstraint = null,
 }: ResultsTableProps) {
+  const direction = TARGET_METRIC_DIRECTION[targetMetric];
+  const defaultSortDir: SortDir = direction === "minimize" ? "asc" : "desc";
+
   const [sortKey, setSortKey] = useState<SortKey>(targetMetric as SortKey);
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [sortDir, setSortDir] = useState<SortDir>(defaultSortDir);
   const [selectedRow, setSelectedRow] = useState<string | null>(null);
+  const [prevTargetMetric, setPrevTargetMetric] = useState(targetMetric);
+
+  // Re-sync sort when target metric changes (React derived-state-during-render pattern)
+  if (prevTargetMetric !== targetMetric) {
+    setPrevTargetMetric(targetMetric);
+    setSortKey(targetMetric as SortKey);
+    setSortDir(TARGET_METRIC_DIRECTION[targetMetric] === "minimize" ? "asc" : "desc");
+  }
 
   const orderedParamKeys = sortedParamKeys(parameterKeys);
 
-  // Find best result (highest value of target metric among valid rows)
+  // Find best result (direction-aware, constraint-aware)
   const bestResult = useMemo(() => {
-    const valid = results.filter((r) => r.error == null && r[targetMetric] != null);
+    const valid = results.filter(
+      (r) =>
+        r.error == null &&
+        r[targetMetric] != null &&
+        !isConstraintViolated(r, hardConstraint)
+    );
     if (valid.length === 0) return null;
+
+    if (direction === "minimize") {
+      return valid.reduce((best, curr) =>
+        (curr[targetMetric] ?? Infinity) < (best[targetMetric] ?? Infinity) ? curr : best
+      );
+    }
     return valid.reduce((best, curr) =>
       (curr[targetMetric] ?? -Infinity) > (best[targetMetric] ?? -Infinity) ? curr : best
     );
-  }, [results, targetMetric]);
+  }, [results, targetMetric, direction, hardConstraint]);
+
+  // True only when constraint is active AND at least one valid (non-error) row exists but all are excluded
+  const allExcluded = useMemo(() => {
+    if (!hardConstraint) return false;
+    const validRows = results.filter((r) => r.error == null);
+    if (validRows.length === 0) return false;
+    return validRows.every((r) => isConstraintViolated(r, hardConstraint));
+  }, [results, hardConstraint]);
 
   const sorted = useMemo(() => {
     const copy = [...results];
@@ -89,7 +143,9 @@ export function ResultsTable({
       setSortDir((d) => (d === "desc" ? "asc" : "desc"));
     } else {
       setSortKey(key);
-      setSortDir("desc");
+      // Default sort direction based on metric direction
+      const metricDir = TARGET_METRIC_DIRECTION[key as TargetMetric];
+      setSortDir(metricDir === "minimize" ? "asc" : "desc");
     }
   }
 
@@ -129,8 +185,19 @@ export function ResultsTable({
 
   return (
     <div className="space-y-4">
+      {/* All excluded by constraint warning */}
+      {allExcluded && hardConstraint && (
+        <div className="flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+          <p className="text-sm text-amber-300">
+            No combinations meet the constraint ({TARGET_METRIC_LABELS[hardConstraint.metric]}{" "}
+            {hardConstraint.direction} {hardConstraint.threshold})
+          </p>
+        </div>
+      )}
+
       {/* Best result banner */}
-      {bestResult && (
+      {bestResult && !allExcluded && (
         <div className="flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3">
           <div className="flex items-center gap-3">
             <Trophy className="h-4 w-4 text-emerald-400" />
@@ -141,6 +208,11 @@ export function ResultsTable({
               </p>
               <p className="text-xs text-emerald-400/70">
                 {TARGET_METRIC_LABELS[targetMetric]}: {fmt(bestResult[targetMetric])}
+                {hardConstraint && (
+                  <span className="ml-2 text-emerald-400/50">
+                    (constraint: {TARGET_METRIC_LABELS[hardConstraint.metric]} {hardConstraint.direction} {hardConstraint.threshold})
+                  </span>
+                )}
               </p>
             </div>
           </div>
@@ -165,34 +237,25 @@ export function ResultsTable({
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-400">
                 Parameter
               </th>
-              {(["profit_factor", "sharpe_ratio", "win_rate", "net_profit", "total_trades"] as SortKey[]).map(
-                (col) => (
-                  <th key={col} className="px-3 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() => toggleSort(col)}
-                      className="inline-flex items-center gap-1 text-xs font-medium text-gray-400 hover:text-white"
-                    >
-                      {col === "total_trades"
-                        ? "Trades"
-                        : col === "profit_factor"
-                          ? "PF"
-                          : col === "sharpe_ratio"
-                            ? "Sharpe"
-                            : col === "win_rate"
-                              ? "Win%"
-                              : "Net P&L"}
-                      <SortIcon column={col} />
-                    </button>
-                  </th>
-                )
-              )}
+              {TABLE_COLUMNS.map((col) => (
+                <th key={col.key} className="px-3 py-3 text-right">
+                  <button
+                    type="button"
+                    onClick={() => toggleSort(col.key)}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-gray-400 hover:text-white"
+                  >
+                    {col.label}
+                    <SortIcon column={col.key} />
+                  </button>
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {sorted.map((row) => {
               const isBest = row.params_hash === bestResult?.params_hash;
               const isSelected = row.params_hash === selectedRow;
+              const isViolated = isConstraintViolated(row, hardConstraint);
 
               return (
                 <tr
@@ -206,6 +269,7 @@ export function ResultsTable({
                     "cursor-pointer border-b border-white/5 transition-colors",
                     isBest ? "bg-emerald-500/10 hover:bg-emerald-500/15" : "hover:bg-white/5",
                     isSelected ? "ring-1 ring-inset ring-blue-500/50" : "",
+                    isViolated ? "opacity-40" : "",
                   ].join(" ")}
                 >
                   <td className="px-4 py-2.5">
@@ -228,6 +292,11 @@ export function ResultsTable({
                           Error
                         </Badge>
                       )}
+                      {isViolated && !row.error && (
+                        <Badge variant="secondary" className="bg-amber-600/20 text-amber-300 border-amber-500/30 text-xs">
+                          Excluded
+                        </Badge>
+                      )}
                     </div>
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-gray-300">
@@ -237,10 +306,16 @@ export function ResultsTable({
                     {fmt(row.sharpe_ratio)}
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-gray-300">
-                    {row.win_rate != null ? `${fmt(row.win_rate, 1)}%` : "N/A"}
+                    {row.win_rate != null ? `${fmt(row.win_rate, 1)}%` : "\u2014"}
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-gray-300">
                     {fmt(row.net_profit)}
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-300">
+                    {fmt(row.max_drawdown_pct, 2)}
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-300">
+                    {fmt(row.recovery_factor, 2)}
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-gray-300">
                     {row.total_trades}
@@ -258,8 +333,13 @@ export function ResultsTable({
           <h4 className="mb-2 text-sm font-medium text-gray-300">
             Detail:{" "}
             {orderedParamKeys.map((k) => `${k}=${formatParamValue(k, selectedResult.params[k])}`).join(", ")}
+            {isConstraintViolated(selectedResult, hardConstraint) && (
+              <Badge variant="secondary" className="ml-2 bg-amber-600/20 text-amber-300 border-amber-500/30 text-xs">
+                Excluded by constraint
+              </Badge>
+            )}
           </h4>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3 lg:grid-cols-7">
             <div>
               <p className="text-xs text-gray-500">Profit Factor</p>
               <p className="text-sm font-medium text-white">{fmt(selectedResult.profit_factor)}</p>
@@ -271,12 +351,20 @@ export function ResultsTable({
             <div>
               <p className="text-xs text-gray-500">Win Rate</p>
               <p className="text-sm font-medium text-white">
-                {selectedResult.win_rate != null ? `${fmt(selectedResult.win_rate, 1)}%` : "N/A"}
+                {selectedResult.win_rate != null ? `${fmt(selectedResult.win_rate, 1)}%` : "\u2014"}
               </p>
             </div>
             <div>
               <p className="text-xs text-gray-500">Net Profit</p>
               <p className="text-sm font-medium text-white">{fmt(selectedResult.net_profit)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500">Max Drawdown %</p>
+              <p className="text-sm font-medium text-white">{fmt(selectedResult.max_drawdown_pct, 2)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500">Recovery Factor</p>
+              <p className="text-sm font-medium text-white">{fmt(selectedResult.recovery_factor, 2)}</p>
             </div>
             <div>
               <p className="text-xs text-gray-500">Trades</p>

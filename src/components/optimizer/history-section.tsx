@@ -4,8 +4,8 @@ import { useEffect } from "react";
 import { History, Trash2, Eye, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import type { OptimizationRun, TargetMetric } from "@/lib/optimizer-types";
-import { PARAMETER_GROUP_LABELS, TARGET_METRIC_LABELS } from "@/lib/optimizer-types";
+import type { OptimizationRun, TargetMetric, HardConstraint } from "@/lib/optimizer-types";
+import { PARAMETER_GROUP_LABELS, TARGET_METRIC_LABELS, TARGET_METRIC_DIRECTION } from "@/lib/optimizer-types";
 
 interface HistorySectionProps {
   runs: OptimizationRun[];
@@ -26,15 +26,22 @@ function fmtDate(iso: string) {
 }
 
 function bestResultLabel(run: OptimizationRun): string {
-  if (!run.best_result) return "—";
+  if (!run.best_result) return "\u2014";
   const metric = run.target_metric as TargetMetric;
   const val = run.best_result[metric];
-  if (val == null) return "—";
+  if (val == null) return "\u2014";
   const label = TARGET_METRIC_LABELS[metric];
+  const dir = TARGET_METRIC_DIRECTION[metric];
+  const dirIcon = dir === "minimize" ? "\u2193" : "\u2191"; // ↓ or ↑
   const params = Object.entries(run.best_result.params)
     .map(([k, v]) => `${k}=${v}`)
     .join(", ");
-  return `${label}: ${typeof val === "number" ? val.toFixed(2) : val} (${params})`;
+  const config = run.config as Record<string, unknown>;
+  const constraint = config?.hard_constraint as HardConstraint | undefined;
+  const constraintLabel = constraint
+    ? ` [${TARGET_METRIC_LABELS[constraint.metric]} ${constraint.direction} ${constraint.threshold}]`
+    : "";
+  return `${label} ${dirIcon}: ${typeof val === "number" ? val.toFixed(2) : val} (${params})${constraintLabel}`;
 }
 
 function StatusBadge({ status }: { status: OptimizationRun["status"] }) {

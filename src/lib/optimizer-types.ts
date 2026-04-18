@@ -27,6 +27,8 @@ export const TARGET_METRICS = [
   "sharpe_ratio",
   "win_rate",
   "net_profit",
+  "max_drawdown_pct",
+  "recovery_factor",
 ] as const;
 
 export type TargetMetric = (typeof TARGET_METRICS)[number];
@@ -36,7 +38,51 @@ export const TARGET_METRIC_LABELS: Record<TargetMetric, string> = {
   sharpe_ratio: "Sharpe Ratio",
   win_rate: "Win Rate",
   net_profit: "Net Profit",
+  max_drawdown_pct: "Max Drawdown %",
+  recovery_factor: "Recovery Factor",
 };
+
+/**
+ * Defines the optimization direction for each metric.
+ * "maximize" = higher is better; "minimize" = lower is better.
+ */
+export const TARGET_METRIC_DIRECTION: Record<TargetMetric, "maximize" | "minimize"> = {
+  profit_factor: "maximize",
+  sharpe_ratio: "maximize",
+  win_rate: "maximize",
+  net_profit: "maximize",
+  max_drawdown_pct: "minimize",
+  recovery_factor: "maximize",
+};
+
+// ── Hard Constraint ────────────────────────────────────────────────────────
+
+export type ConstraintMetric = TargetMetric;
+
+export interface HardConstraint {
+  metric: ConstraintMetric;
+  threshold: number;
+  direction: ">=" | "<=";
+}
+
+/**
+ * Returns true if the given result row violates the hard constraint.
+ * Used by results table, best-result banner, and history view.
+ */
+export function isConstraintViolated(
+  row: OptimizerResultRow,
+  constraint: HardConstraint | null
+): boolean {
+  if (!constraint) return false;
+  const value = row[constraint.metric];
+  if (value == null) {
+    // recovery_factor null means no drawdown occurred → theoretically infinite → best case (passes any constraint)
+    // all other null metrics are treated as worst case → excluded
+    return constraint.metric !== "recovery_factor";
+  }
+  if (constraint.direction === ">=") return value < constraint.threshold;
+  return value > constraint.threshold;
+}
 
 // ── Parameter Range ─────────────────────────────────────────────────────────
 
@@ -56,6 +102,8 @@ export interface OptimizerResultRow {
   win_rate: number | null;
   total_trades: number;
   net_profit: number | null;
+  max_drawdown_pct?: number | null;
+  recovery_factor?: number | null;
   error: string | null;
 }
 

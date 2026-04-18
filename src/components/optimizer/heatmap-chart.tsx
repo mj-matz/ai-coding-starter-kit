@@ -45,6 +45,10 @@ function getMetricValue(row: OptimizerResultRow, metric: TargetMetric): number |
       return row.win_rate;
     case "net_profit":
       return row.net_profit;
+    case "max_drawdown_pct":
+      return row.max_drawdown_pct ?? null;
+    case "recovery_factor":
+      return row.recovery_factor ?? null;
   }
 }
 
