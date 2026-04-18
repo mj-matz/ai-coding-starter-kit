@@ -40,7 +40,7 @@
 | PROJ-25 | Export Backtest Results (Excel / CSV) | Deployed | [PROJ-25-export-backtest-results.md](PROJ-25-export-backtest-results.md) | 2026-03-26 |
 
 | PROJ-26 | Strategy Export to MT5 EA | Deployed | [PROJ-26-strategy-export-mt5-ea.md](PROJ-26-strategy-export-mt5-ea.md) | 2026-03-31 |
-| PROJ-27 | Persistent Market Data Store (Monthly Chunks) | In Review | [PROJ-27-persistent-market-data-store.md](PROJ-27-persistent-market-data-store.md) | 2026-03-31 |
+| PROJ-27 | Persistent Market Data Store (Monthly Chunks) | Deployed | [PROJ-27-persistent-market-data-store.md](PROJ-27-persistent-market-data-store.md) | 2026-03-31 |
 | PROJ-28 | User-Defined Strategies (MQL → Strategy Library) | Planned | [PROJ-28-user-defined-strategies.md](PROJ-28-user-defined-strategies.md) | 2026-04-01 |
 | PROJ-29 | Backtest Realism – Bid-Price Data & First-Breakout Direction | Deployed | [PROJ-29-backtest-realism-bid-data-breakout-direction.md](PROJ-29-backtest-realism-bid-data-breakout-direction.md) | 2026-04-02 |
 | PROJ-30 | Engine – Continuous Trailing Stop & Partial Close | Deployed | [PROJ-30-engine-continuous-trailing-stop-partial-close.md](PROJ-30-engine-continuous-trailing-stop-partial-close.md) | 2026-04-05 |

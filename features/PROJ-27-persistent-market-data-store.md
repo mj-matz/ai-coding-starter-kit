@@ -1,6 +1,6 @@
 # PROJ-27: Persistent Market Data Store (Monthly Chunks)
 
-## Status: In Progress
+## Status: Deployed
 **Created:** 2026-03-31
 **Last Updated:** 2026-04-18
 
@@ -192,13 +192,13 @@ No new npm packages needed. No new Python packages needed (Parquet/Pandas alread
 | 3 | Only missing months downloaded | ✅ PASS | `needs_fetch` logic in `fetch_missing_and_load()` |
 | 4 | Monthly chunks merged into one DataFrame | ✅ PASS | Concat + dedup in `fetch_missing_and_load()`; sorted by `datetime` |
 | 5 | Supabase `data_cache` row per chunk (year, month, file_path, row_count, file_size_bytes) | ✅ PASS | `save_chunk()` upserts via `uniq_data_cache_chunk` index |
-| 6 | Old single-file behaviour replaced, no double cache layer | ⚠️ PARTIAL | Normal path uses chunks; `force_refresh=True` for Dukascopy falls through to legacy `save_to_cache()` — see Bug 1 |
+| 6 | Old single-file behaviour replaced, no double cache layer | ✅ PASS | `force_refresh=True` now routes through `_load_dukascopy_chunked()` (fixed in 25e19ec) |
 | 7 | Graceful fallback when Parquet missing (server reset) | ✅ PASS | Stale rows deleted in `find_missing_months()`; month re-downloaded |
 | 8 | No measurable merge performance penalty | ✅ PASS | Parquet concat is O(n files); sort + dedup applied once |
 | 9 | Settings page shows cached assets with date range and size | ✅ PASS | `CacheManagementTable` renders symbol, source, timeframe, date range, months count, size |
 | 10 | Manual chunk delete from UI | ✅ PASS | `deleteGroup` iterates chunks, calls `DELETE /api/data/cache` per chunk; confirmation dialog present |
 
-**Result: 9 PASS, 1 PARTIAL**
+**Result: 10 / 10 PASS** *(re-tested after fix commit 25e19ec)*
 
 ---
 
@@ -216,60 +216,16 @@ No new npm packages needed. No new Python packages needed (Parquet/Pandas alread
 
 ---
 
-### Bugs Found
+### Bugs Found & Fixed
 
-#### Bug 1 — Medium: `force_refresh=True` for Dukascopy bypasses chunk logic
+All bugs found in initial QA were fixed in commit `25e19ec`.
 
-**File:** [python/main.py:233](python/main.py#L233)
-
-```python
-if source == "dukascopy" and not request.force_refresh:
-    # chunk path
-# falls through to legacy save_to_cache() when force_refresh=True
-```
-
-**Impact:** A force-refreshed Dukascopy fetch saves data as a legacy monolithic file instead of updating the relevant chunk rows. On the next normal (non-force-refresh) backtest, existing chunk rows are still present and may serve the old (pre-force-refresh) data until individual chunk rows expire naturally. Mixed cache state (chunk rows + monolithic row for the same asset).
-
-**Steps to reproduce:**
-1. Run a backtest for XAUUSD 2024 → chunk rows created
-2. Trigger fetch with `force_refresh=true` for XAUUSD 2024
-3. Run normal backtest for XAUUSD 2024 → reads from old chunk files, not the force-refreshed data
-
----
-
-#### Bug 2 — Medium: Partial group delete leaves cache in inconsistent state
-
-**File:** [src/hooks/use-data-cache.ts:69-78](src/hooks/use-data-cache.ts#L69-L78)
-
-```typescript
-for (const chunk of group.chunks) {
-    const res = await fetch("/api/data/cache", { method: "DELETE", ... });
-    if (!res.ok) return false;  // already deleted earlier chunks!
-}
-```
-
-**Impact:** If any single chunk DELETE fails mid-loop, previously deleted chunks are gone but the rest remain. The UI shows a generic "Delete failed" toast with no indication of partial deletion. Cache table may show a group with fewer chunks than expected after a failed delete.
-
-**Steps to reproduce:**
-1. Cache 3+ months for an asset
-2. Click delete, simulate network failure after first chunk succeeds
-3. Cache table shows inconsistent state
-
----
-
-#### Bug 3 — Low: `list_present_months` imported but never used in `main.py`
-
-**File:** [python/main.py:42](python/main.py#L42)
-
-Unused import. No runtime impact; minor code hygiene issue.
-
----
-
-#### Bug 4 — Low: Double Supabase delete on cache entry
-
-**File:** [src/app/api/data/cache/route.ts:108-132](src/app/api/data/cache/route.ts#L108-L132)
-
-FastAPI's `DELETE /cache/{id}` already removes both the Parquet file AND the Supabase row inside `delete_cache_entry()`. The Next.js route then also calls `supabase.from("data_cache").delete().eq("id", id)`. The second delete is a no-op (row already gone) but if FastAPI is unreachable the DB row is still deleted, leaving the Parquet file orphaned on the Railway server.
+| # | Severity | Bug | Fix |
+|---|----------|-----|-----|
+| 1 | Medium | `force_refresh=True` bypassed chunk logic, wrote legacy monolithic file | Dukascopy path now always routes through `_load_dukascopy_chunked()` |
+| 2 | Medium | Partial group delete short-circuited on first failure, leaving inconsistent cache state | `deleteGroup` no longer returns early; all chunks attempted, `refresh()` called regardless |
+| 3 | Low | `list_present_months` unused import in `main.py` | Import removed |
+| 4 | Low | Double Supabase delete — Next.js route also deleted DB row after FastAPI already did | Supabase delete now only runs when FastAPI is unavailable (`else` branch) |
 
 ---
 
@@ -299,14 +255,17 @@ FastAPI's `DELETE /cache/{id}` already removes both the Parquet file AND the Sup
 
 | | Count |
 |---|---|
-| Acceptance Criteria PASS | 9 / 10 |
+| Acceptance Criteria PASS | 10 / 10 |
 | Edge Cases PASS | 7 / 7 |
 | Critical bugs | 0 |
 | High bugs | 0 |
-| Medium bugs | 2 |
-| Low bugs | 2 |
+| Medium bugs | 0 (fixed) |
+| Low bugs | 0 (fixed) |
 
-**Production-ready: YES** — No Critical or High bugs. The two Medium bugs are edge cases (force_refresh is rarely used; partial delete failure is unlikely with a stable connection). Recommend fixing in a follow-up before heavy production use.
+**Production-ready: YES** — All acceptance criteria pass, all bugs fixed.
 
 ## Deployment
-_To be added by /deploy_
+**Date:** 2026-04-19
+**Commits:** `24f7670` (frontend + migration), `83a190a` (timezone fix), `922aea5` (chore)
+**Platform:** Vercel (frontend) + Railway (Python backend)
+**Migration applied:** `20260418_data_cache_chunks.sql` — `year`, `month`, `is_complete` columns on `data_cache`
