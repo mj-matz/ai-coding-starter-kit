@@ -57,7 +57,125 @@ PROJ-27 löst dies durch **monatliche Chunks**: Ein Request für Jan–Dez lädt
 ---
 
 ## Tech Design (Solution Architect)
-_To be added by /architecture_
+
+### Overview
+
+This feature is primarily a **Python backend refactor** with a small Supabase schema change and a UI update on the Settings page. The user experience does not change — backtests simply become faster when data was previously fetched.
+
+---
+
+### Component Structure
+
+```
+Settings Page (/settings)
++-- Cache Management Section  [UPDATED]
+    +-- Asset Cache Table
+    |   +-- Asset row (e.g. XAUUSD / 1m)
+    |   |   +-- Available months indicator (e.g. "Jan 2025 – Dec 2025")
+    |   |   +-- Total size label
+    |   |   +-- Delete all chunks button
+    |   +-- Asset row (e.g. EURUSD / 1m)
+    |       +-- ...
+    +-- Empty state (no cache yet)
+```
+
+The existing Settings page already hosts the MT5 data table — the cache section lives alongside it. No new pages are needed.
+
+---
+
+### Data Model
+
+**Supabase: `data_cache` table** (updated)
+
+Each row represents one monthly chunk for one asset/timeframe combination:
+
+```
+data_cache:
+- id            (UUID, primary key)
+- symbol        (text)       e.g. "XAUUSD"
+- source        (text)       e.g. "dukascopy"
+- timeframe     (text)       e.g. "1m"
+- year          (int)        NEW — e.g. 2025
+- month         (int)        NEW — e.g. 3 (March)
+- file_path     (text)       e.g. "parquet/dukascopy/XAUUSD/1m/2025-03.parquet"
+- row_count     (int)        0 = known-empty month
+- file_size_bytes (int)
+- date_from     (timestamp)  kept for backwards compatibility
+- date_to       (timestamp)  kept for backwards compatibility
+- is_complete   (bool)       NEW — false for the current calendar month
+- created_at    (timestamp)
+```
+
+**File system on Railway (Python server):**
+```
+DATA_DIR/
+  parquet/
+    dukascopy/
+      XAUUSD/
+        1m/
+          2025-01.parquet
+          2025-02.parquet
+          2025-03.parquet
+          ...
+```
+
+---
+
+### Backend Changes (Python / FastAPI)
+
+Three logical building blocks:
+
+**1. Chunk Lookup** — Before any download, query Supabase to find which months in the requested range already have a valid, complete chunk. Only missing months are passed to the downloader.
+
+**2. Download & Store** — The existing Dukascopy download logic runs per missing month, saves each result as a separate Parquet file, and writes one `data_cache` row per month.
+
+**3. Merge & Return** — Monthly Parquet files are loaded and concatenated into a single DataFrame for the backtest engine. This replaces the current single-file load — performance impact is negligible (Parquet reads are fast even for 12 files).
+
+**Graceful fallback:** If a Supabase row points to a missing file (server reset), that month is re-downloaded transparently.
+
+**Current month handling:** Chunks for the current calendar month are stored with `is_complete = false`. Any request touching the current month will re-download it to pick up new trading days.
+
+**Concurrency protection:** A lightweight file-level lock (or idempotent write) ensures two simultaneous backtest requests for the same asset don't download the same month twice.
+
+**Backwards compatibility:** Existing monolithic cache entries (old format, no `year`/`month`) remain readable via the `date_from`/`date_to` columns. New fetches use the chunk path; old entries are gradually replaced as those assets are re-requested.
+
+---
+
+### API Changes (Next.js → FastAPI)
+
+| Endpoint | Change |
+|---|---|
+| `DELETE /api/data/cache` | Unchanged — still deletes a single entry by ID |
+| `GET /api/data/cache` | **New** — returns cache entries grouped by asset+timeframe with month list and total size |
+
+The grouped GET endpoint powers the Settings UI. The existing DELETE endpoint works at the chunk level — deleting all months for an asset means calling it once per chunk.
+
+---
+
+### Tech Decisions
+
+| Decision | Reason |
+|---|---|
+| Monthly granularity (not weekly/daily) | Matches how Dukascopy data is structured; simple to reason about; manageable number of files |
+| One Supabase row per chunk | Enables precise "which months exist?" lookup without reading the filesystem |
+| Keep `date_from`/`date_to` columns | Zero-downtime backwards compatibility with existing cache entries |
+| `is_complete` flag for current month | Prevents stale partial-month data without special-casing the download logic |
+| No migration of old files | Old monolithic files stay valid until the asset is re-requested; no risky bulk migration needed |
+
+---
+
+### Dependencies
+
+No new npm packages needed. No new Python packages needed (Parquet/Pandas already in use).
+
+---
+
+### Migration Path
+
+1. Add `year`, `month`, `is_complete` columns to `data_cache` (nullable for old rows)
+2. Deploy new Python logic — old rows still work via `date_from`/`date_to` fallback
+3. New backtest requests populate chunk rows going forward
+4. Old monolithic entries are soft-replaced over time (no forced migration)
 
 ## QA Test Results
 _To be added by /qa_
