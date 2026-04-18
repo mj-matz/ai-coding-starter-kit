@@ -6,15 +6,18 @@ import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useMt5Data } from "@/hooks/use-mt5-data";
+import { useDataCache, type CacheGroup } from "@/hooks/use-data-cache";
 
 import { Mt5DataTable } from "@/components/settings/mt5-data-table";
 import { Mt5UploadDialog } from "@/components/settings/mt5-upload-dialog";
+import { CacheManagementTable } from "@/components/settings/cache-management-table";
 
 import type { Mt5Timeframe, Mt5UploadRequest } from "@/lib/mt5-data-types";
 
 export default function SettingsPage() {
   const { toast } = useToast();
   const { datasets, isLoading, error, upload, deleteDataset, findDataset } = useMt5Data();
+  const { groups, isLoading: cacheLoading, error: cacheError, deleteGroup } = useDataCache();
 
   const [uploadOpen, setUploadOpen] = useState(false);
 
@@ -44,6 +47,23 @@ export default function SettingsPage() {
     return ok;
   }
 
+  async function handleCacheDelete(group: CacheGroup) {
+    const ok = await deleteGroup(group);
+    if (ok) {
+      toast({
+        title: "Cache deleted",
+        description: `All chunks for ${group.symbol} ${group.timeframe.toUpperCase()} have been removed.`,
+      });
+    } else {
+      toast({
+        title: "Delete failed",
+        description: "Could not delete all cache chunks. Please try again.",
+        variant: "destructive",
+      });
+    }
+    return ok;
+  }
+
   const existsForAsset = (asset: string, timeframe: Mt5Timeframe): boolean => {
     return !!findDataset(asset, timeframe);
   };
@@ -57,6 +77,22 @@ export default function SettingsPage() {
           Manage application settings and imported broker data.
         </p>
       </div>
+
+      {/* Section: Cache Management */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Cache Management</h2>
+          <p className="mt-1 text-sm text-gray-400">
+            Dukascopy data cached as monthly chunks on the server. Delete an asset to force a fresh download on the next backtest.
+          </p>
+        </div>
+        <CacheManagementTable
+          groups={groups}
+          isLoading={cacheLoading}
+          error={cacheError}
+          onDelete={handleCacheDelete}
+        />
+      </section>
 
       {/* Section: Market Data (MT5) */}
       <section className="space-y-4">
