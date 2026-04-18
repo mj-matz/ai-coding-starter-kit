@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { format, parseISO } from "date-fns";
 import { ArrowUpDown, ChevronLeft, ChevronRight, EyeOff, Eye } from "lucide-react";
 
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/table";
 import { TradeChartDialog } from "@/components/backtest/trade-chart-dialog";
 import type { TradeRecord, SkippedDay } from "@/lib/backtest-types";
+import { createClient } from "@/lib/supabase/client";
 
 interface TradeListTableProps {
   trades: TradeRecord[];
@@ -28,6 +29,8 @@ interface TradeListTableProps {
   rangeEnd: string;
   triggerDeadline?: string;
   newsDates?: string[];
+  /** IANA timezone of the instrument. If omitted it is fetched from Supabase by symbol. */
+  instrumentTimezone?: string;
 }
 
 type SortField = "entry_time" | "pnl_pips" | "duration_minutes";
@@ -93,7 +96,7 @@ const REASON_LABELS: Record<string, string> = {
   TRIGGER_EXPIRED: "Trigger Deadline/Range",
 };
 
-export function TradeListTable({ trades, skippedDays = [], cacheId, symbol, timeframe, rangeStart, rangeEnd, triggerDeadline, newsDates }: TradeListTableProps) {
+export function TradeListTable({ trades, skippedDays = [], cacheId, symbol, timeframe, rangeStart, rangeEnd, triggerDeadline, newsDates, instrumentTimezone: instrumentTimezoneProp }: TradeListTableProps) {
   const newsDatesSet = useMemo(() => new Set(newsDates ?? []), [newsDates]);
   const [sortField, setSortField] = useState<SortField>("entry_time");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -102,6 +105,23 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, symbol, time
   const [selectedTrade, setSelectedTrade] = useState<TradeRecord | null>(null);
   const [selectedSkipped, setSelectedSkipped] = useState<SkippedDay | null>(null);
   const [chartOpen, setChartOpen] = useState(false);
+  const [fetchedTimezone, setFetchedTimezone] = useState<string | undefined>(undefined);
+
+  // Fetch instrument timezone from Supabase if not provided via props
+  useEffect(() => {
+    if (instrumentTimezoneProp || !symbol) return;
+    const supabase = createClient();
+    supabase
+      .from("instruments")
+      .select("timezone")
+      .eq("symbol", symbol)
+      .single()
+      .then(({ data }) => {
+        if (data?.timezone) setFetchedTimezone(data.timezone);
+      });
+  }, [symbol, instrumentTimezoneProp]);
+
+  const instrumentTimezone = instrumentTimezoneProp ?? fetchedTimezone;
 
   const sortedTrades = useMemo(() => {
     return [...trades].sort((a, b) => {
@@ -457,6 +477,7 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, symbol, time
         rangeStart={rangeStart}
         rangeEnd={rangeEnd}
         triggerDeadline={triggerDeadline}
+        instrumentTimezone={instrumentTimezone}
       />
     </div>
   );

@@ -37,9 +37,12 @@ interface TradeChartDialogProps {
   /** Symbol used when cacheId is unavailable (e.g. History view) */
   symbol?: string;
   timeframe: string;
-  rangeStart: string;   // HH:MM (local time)
-  rangeEnd: string;     // HH:MM (local time)
-  triggerDeadline?: string; // HH:MM (local time) — for skipped days
+  rangeStart: string;   // HH:MM (in instrument timezone)
+  rangeEnd: string;     // HH:MM (in instrument timezone)
+  triggerDeadline?: string; // HH:MM (in instrument timezone) — for skipped days
+  /** IANA timezone of the instrument (e.g. "Europe/London"). Used to correctly
+   *  position the range box: times are interpreted in this TZ, not browser local. */
+  instrumentTimezone?: string;
 }
 
 // Cache key: number for trades, string date for skipped days
@@ -78,14 +81,37 @@ function timeframeToSeconds(tf: string): number {
   }
 }
 
-// Build the UTC unix timestamp for a given HH:MM local time on the same
-// calendar day as `referenceDateStr` (an ISO date-time or date string).
-// Must use local time so that toChartTime() — which adds the local timezone
-// offset — places the range box at the correct position on the chart axis.
-function buildLocalTimestamp(referenceDateStr: string, timeHHMM: string): number {
+// Build the UTC unix timestamp for a given HH:MM on the same calendar day as
+// `referenceDateStr`. When `tz` is provided the time is interpreted in that
+// IANA timezone (e.g. "Europe/London"); otherwise browser local time is used.
+// toChartTime() then shifts the UTC result by the browser offset so that the
+// range box appears at the correct position on the chart's local-time axis.
+function buildTimestampInTz(referenceDateStr: string, timeHHMM: string, tz?: string): number {
   const refDate = new Date(referenceDateStr);
-  const localDate = refDate.toLocaleDateString("en-CA");
-  return new Date(`${localDate}T${timeHHMM}:00`).getTime() / 1000;
+
+  if (!tz) {
+    // Fallback: interpret as browser local time (legacy behaviour)
+    const localDate = refDate.toLocaleDateString("en-CA");
+    return new Date(`${localDate}T${timeHHMM}:00`).getTime() / 1000;
+  }
+
+  // Get the calendar date in the target timezone
+  const dateInTz = refDate.toLocaleDateString("en-CA", { timeZone: tz });
+
+  // Treat timeHHMM as UTC to get a reference point, then correct for the
+  // actual UTC offset of `tz` at that moment using the Intl offset trick.
+  const naiveDate = new Date(`${dateInTz}T${timeHHMM}:00Z`);
+  // "sv" locale produces "YYYY-MM-DD HH:MM:SS" — what `tz` would show at naiveDate
+  const naiveInTz = naiveDate.toLocaleString("sv", { timeZone: tz });
+  const [tzDatePart, tzTimePart] = naiveInTz.split(" ");
+  const naiveLocal = new Date(`${tzDatePart}T${tzTimePart}Z`);
+  const offsetMs = naiveDate.getTime() - naiveLocal.getTime();
+  return (naiveDate.getTime() + offsetMs) / 1000;
+}
+
+// Convenience wrapper using browser local time (for non-range window calculations)
+function buildLocalTimestamp(referenceDateStr: string, timeHHMM: string): number {
+  return buildTimestampInTz(referenceDateStr, timeHHMM, undefined);
 }
 
 export function TradeChartDialog({
@@ -99,6 +125,7 @@ export function TradeChartDialog({
   rangeStart,
   rangeEnd,
   triggerDeadline,
+  instrumentTimezone,
 }: TradeChartDialogProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -151,13 +178,13 @@ export function TradeChartDialog({
       timeParams.set("exit_time", endOfDayIso);
       if (rangeStart) {
         const rangeStartIso = new Date(
-          buildLocalTimestamp(trade.entry_time, rangeStart) * 1000
+          buildTimestampInTz(trade.entry_time, rangeStart, instrumentTimezone) * 1000
         ).toISOString();
         timeParams.set("range_start_time", rangeStartIso);
       }
     } else if (skippedDay != null) {
       const entryIso = new Date(
-        buildLocalTimestamp(skippedDay.date, rangeStart) * 1000
+        buildTimestampInTz(skippedDay.date, rangeStart, instrumentTimezone) * 1000
       ).toISOString();
       const exitIso = new Date(
         buildLocalTimestamp(skippedDay.date, "23:59") * 1000
@@ -276,8 +303,8 @@ export function TradeChartDialog({
 
     // ── Range box (light blue) — only if rangeStart and rangeEnd are set ─────
     if (rangeStart && rangeEnd) {
-      const rangeStartUtc = buildLocalTimestamp(dateRef, rangeStart);
-      const rangeEndUtc   = buildLocalTimestamp(dateRef, rangeEnd);
+      const rangeStartUtc = buildTimestampInTz(dateRef, rangeStart, instrumentTimezone);
+      const rangeEndUtc   = buildTimestampInTz(dateRef, rangeEnd, instrumentTimezone);
       const rStart = toChartTime(rangeStartUtc);
       const rEnd   = toChartTime(rangeEndUtc);
 
@@ -407,7 +434,7 @@ export function TradeChartDialog({
       );
     } else if (skippedDay != null && triggerDeadline) {
       // ── Skipped day chart: arrow + thin vertical line at trigger deadline ─
-      const deadlineUtc = buildLocalTimestamp(skippedDay.date, triggerDeadline);
+      const deadlineUtc = buildTimestampInTz(skippedDay.date, triggerDeadline, instrumentTimezone);
       const deadlineChartTime = toChartTime(deadlineUtc);
 
       // Arrow marker at deadline candle
@@ -472,7 +499,7 @@ export function TradeChartDialog({
     const barSec = timeframeToSeconds(timeframe);
     if (trade != null) {
       // Trade chart: show from rangeStart (range box visible) to exit+30 bars
-      const rsUtc = rangeStart ? buildLocalTimestamp(trade.entry_time, rangeStart) : Math.floor(new Date(trade.entry_time).getTime() / 1000);
+      const rsUtc = rangeStart ? buildTimestampInTz(trade.entry_time, rangeStart, instrumentTimezone) : Math.floor(new Date(trade.entry_time).getTime() / 1000);
       const xUtc  = Math.floor(new Date(trade.exit_time).getTime() / 1000);
       chart.timeScale().setVisibleRange({
         from: toChartTime(rsUtc - 10 * barSec),
@@ -480,8 +507,8 @@ export function TradeChartDialog({
       });
     } else if (skippedDay != null && rangeStart && triggerDeadline) {
       // Skipped-day chart: rangeStart−10 bars → deadline+30 bars on open
-      const rsUtc = buildLocalTimestamp(skippedDay.date, rangeStart);
-      const dlUtc = buildLocalTimestamp(skippedDay.date, triggerDeadline);
+      const rsUtc = buildTimestampInTz(skippedDay.date, rangeStart, instrumentTimezone);
+      const dlUtc = buildTimestampInTz(skippedDay.date, triggerDeadline, instrumentTimezone);
       chart.timeScale().setVisibleRange({
         from: toChartTime(rsUtc - 10 * barSec),
         to:   toChartTime(dlUtc + 30 * barSec),
