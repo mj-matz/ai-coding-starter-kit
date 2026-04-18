@@ -85,6 +85,13 @@ export default function OptimizerPage() {
 
   // Tracks when we're restoring a constraint from history so the auto-save effect doesn't re-patch it
   const restoringConstraintRef = useRef(false);
+  const duplicateWarningRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (duplicateRun && duplicateWarningRef.current) {
+      duplicateWarningRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [duplicateRun]);
 
   // Auto-save post-hoc constraint changes to Supabase so history reloads see the latest value
   const activeRunId = loadedHistoricalRun?.id ?? (status === "completed" ? jobId : null);
@@ -375,7 +382,7 @@ export default function OptimizerPage() {
 
               {/* Duplicate run warning */}
               {duplicateRun && (
-                <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+                <div ref={duplicateWarningRef} className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
                   <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
                   <div className="flex-1">
                     <p className="text-sm font-medium text-amber-300">This configuration has already been optimized</p>

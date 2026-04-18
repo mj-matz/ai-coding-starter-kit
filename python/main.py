@@ -2261,6 +2261,8 @@ async def optimizer_status(
             win_rate=r.win_rate,
             total_trades=r.total_trades,
             net_profit=r.net_profit,
+            max_drawdown_pct=r.max_drawdown_pct,
+            recovery_factor=r.recovery_factor,
             error=r.error,
         )
         for r in job.results
