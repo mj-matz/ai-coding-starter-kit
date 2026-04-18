@@ -168,31 +168,34 @@ def _load_mt5_data(
             ),
         )
 
-    # Fetch candles in pages — Supabase silently caps responses at the project's
-    # max-rows setting regardless of the ?limit= parameter, so we paginate.
-    PAGE_SIZE = 10_000
-    ts_from = date_from.isoformat()
+    # Fetch candles using timestamp-cursor pagination. Supabase silently caps
+    # responses at the project's max-rows setting (typically 1000), so we
+    # cannot rely on "< PAGE_SIZE" as a termination signal — we always loop
+    # until the response is empty.
+    PAGE_SIZE = 1_000
+    ts_cursor = date_from.isoformat()
     ts_to = date_to.isoformat() + "T23:59:59Z"
     all_candles: list[dict] = []
-    offset = 0
+    first_page = True
 
     while True:
-        resp = (
+        q = (
             client.table("mt5_candles")
             .select("ts, open, high, low, close")
             .eq("dataset_id", ds["id"])
-            .gte("ts", ts_from)
             .lte("ts", ts_to)
             .order("ts")
-            .range(offset, offset + PAGE_SIZE - 1)
-            .execute()
+            .limit(PAGE_SIZE)
         )
+        # First page: inclusive lower bound; subsequent pages: exclusive to skip last row
+        q = q.gte("ts", ts_cursor) if first_page else q.gt("ts", ts_cursor)
+        first_page = False
+
+        resp = q.execute()
         if not resp.data:
             break
         all_candles.extend(resp.data)
-        if len(resp.data) < PAGE_SIZE:
-            break
-        offset += PAGE_SIZE
+        ts_cursor = resp.data[-1]["ts"]
 
     if not all_candles:
         raise HTTPException(
