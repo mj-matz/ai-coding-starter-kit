@@ -34,6 +34,7 @@ const BacktestRequestSchema = z
     // PROJ-29: Backtest Realism – BID data & MT5 execution mode (snake_case for Python)
     price_type: z.enum(["bid", "mid"]).default("bid"),
     mt5_mode: z.boolean().default(false),
+    already_past_rejection: z.boolean().default(false),
     spread_pips: z.number().min(0).default(0),
   })
   .refine((data) => new Date(data.endDate) > new Date(data.startDate), {

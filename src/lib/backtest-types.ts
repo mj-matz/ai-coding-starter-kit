@@ -35,6 +35,7 @@ export const backtestFormSchema = z
 
     // PROJ-29: Backtest Realism – MT5 execution mode (price_type is always "bid")
     mt5Mode: z.boolean().default(false),
+    alreadyPastRejection: z.boolean().default(true),
     spreadPips: z.coerce.number().min(0, "Spread must be >= 0").default(0),
 
     // Capital & sizing
@@ -93,6 +94,7 @@ export const defaultFormValues: BacktestFormValues = {
   fixedLot: undefined,
   // PROJ-29: MT5 mode opt-in (price_type is always "bid")
   mt5Mode: false,
+  alreadyPastRejection: true,
   spreadPips: 0,
 };
 

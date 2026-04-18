@@ -83,12 +83,13 @@ export function useBacktest(): UseBacktestReturn {
         setNewsDates(fetchedNewsDates);
 
         // PROJ-29: translate camelCase form fields to snake_case API fields for Python
-        const { commissionPerLot, mt5Mode, spreadPips, ...restConfig } = config;
+        const { commissionPerLot, mt5Mode, alreadyPastRejection, spreadPips, ...restConfig } = config;
         const requestBody = {
           ...restConfig,
           commission_per_lot: commissionPerLot,
           price_type: "bid",
           mt5_mode: mt5Mode,
+          already_past_rejection: mt5Mode ? alreadyPastRejection : false,
           spread_pips: spreadPips,
           ...(!config.tradeNewsDays && fetchedNewsDates.length > 0
             ? { newsDates: fetchedNewsDates }

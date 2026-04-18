@@ -186,7 +186,8 @@ class BreakoutStrategy(BaseStrategy):
             )
 
     def generate_signals(
-        self, df: pd.DataFrame, params: BreakoutParams, mt5_mode: bool = False
+        self, df: pd.DataFrame, params: BreakoutParams, mt5_mode: bool = False,
+        already_past_rejection: bool = False,
     ) -> tuple[pd.DataFrame, list[SkippedDay], list[str]]:
         """
         Generate breakout signals from OHLCV data.
@@ -242,7 +243,8 @@ class BreakoutStrategy(BaseStrategy):
         if not is_overnight:
             return self._generate_signals_intraday(
                 df, params, tz, local_times, dates, unique_dates, signals, skipped_days,
-                mt5_mode=mt5_mode, rejected_order_dates=rejected_order_dates,
+                mt5_mode=mt5_mode, already_past_rejection=already_past_rejection,
+                rejected_order_dates=rejected_order_dates,
             )
 
         # ── Overnight path (iterative — unchanged) ─────────────────────────
@@ -296,11 +298,11 @@ class BreakoutStrategy(BaseStrategy):
                     skipped_days.append(SkippedDay(date=str(day), reason="DEADLINE_MISSED"))
                     continue
 
-            # PROJ-29: Already-Past Rejection (only when mt5_mode=True)
+            # PROJ-29: Already-Past Rejection
             range_close = float(df.loc[range_indices[-1], "close"])
             direction_override = self._apply_already_past_rejection(
                 params.direction_filter, range_close, range_high, range_low,
-                mt5_mode, rejected_order_dates, str(day),
+                already_past_rejection, rejected_order_dates, str(day),
             )
             if direction_override is None:
                 continue  # both sides rejected — skip day
@@ -322,6 +324,7 @@ class BreakoutStrategy(BaseStrategy):
         signals: pd.DataFrame,
         skipped_days: list,
         mt5_mode: bool = False,
+        already_past_rejection: bool = False,
         rejected_order_dates: Optional[list] = None,
     ) -> tuple[pd.DataFrame, list, list]:
         """Vectorised signal generation for normal (intraday) ranges."""
@@ -434,10 +437,10 @@ class BreakoutStrategy(BaseStrategy):
                     skipped_days.append(SkippedDay(date=str(day), reason="DEADLINE_MISSED"))
                     continue
 
-            # PROJ-29: Already-Past Rejection (only when mt5_mode=True)
+            # PROJ-29: Already-Past Rejection
             direction_override = self._apply_already_past_rejection(
                 params.direction_filter, range_close, range_high, range_low,
-                mt5_mode, rejected_order_dates, str(day),
+                already_past_rejection, rejected_order_dates, str(day),
             )
             if direction_override is None:
                 continue  # both sides rejected — skip day
@@ -457,11 +460,11 @@ class BreakoutStrategy(BaseStrategy):
         range_close: float,
         range_high: float,
         range_low: float,
-        mt5_mode: bool,
+        already_past_rejection: bool,
         rejected_order_dates: list,
         day_str: str,
     ) -> Optional[str]:
-        """PROJ-29: Apply Already-Past Rejection logic (mt5_mode only).
+        """PROJ-29: Apply Already-Past Rejection logic.
 
         When the close of the last range bar has already passed a breakout level,
         MT5 brokers reject the stop order for that direction.
@@ -469,7 +472,7 @@ class BreakoutStrategy(BaseStrategy):
         Returns the effective direction_filter after rejection, or None if both
         sides are rejected (caller should skip the day entirely).
         """
-        if not mt5_mode:
+        if not already_past_rejection:
             return direction_filter  # no-op
 
         reject_long = (

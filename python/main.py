@@ -545,6 +545,7 @@ class BacktestConfigRequest(BaseModel):
     # PROJ-29
     price_type: Literal["bid", "mid"] = "bid"
     mt5_mode: bool = False
+    already_past_rejection: bool = False
     spread_pips: float = Field(default=0.0, ge=0)
 
     @field_validator("timezone")
@@ -1313,7 +1314,9 @@ async def _backtest_orchestrate_inner(
         strategy = BreakoutStrategy()
         try:
             signals_df, skipped_days, _rejected_dates = strategy.generate_signals(
-                df, breakout_params, mt5_mode=request.mt5_mode
+                df, breakout_params,
+                mt5_mode=request.mt5_mode,
+                already_past_rejection=request.already_past_rejection,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -2270,6 +2273,7 @@ class OptimizerStartRequest(BaseModel):
     # PROJ-29
     price_type: Literal["bid", "mid"] = "bid"
     mt5_mode: bool = False
+    already_past_rejection: bool = False
     spread_pips: float = Field(default=0.0, ge=0)
 
     # Optimizer-specific fields

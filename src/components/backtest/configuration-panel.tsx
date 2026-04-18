@@ -506,7 +506,7 @@ export function ConfigurationPanel({
                           </FormLabel>
                         </TooltipTrigger>
                         <TooltipContent side="top" align="start" className="max-w-72">
-                          Already-Past Rejection + Bid/Ask execution logic as in the MT5 Strategy Tester. Automatically forces BID price data.
+                          Bid/Ask execution logic as in the MT5 Strategy Tester. Automatically forces BID price data. Use the options below to configure additional MT5 behaviors.
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
@@ -520,6 +520,40 @@ export function ConfigurationPanel({
                   </FormItem>
                 )}
               />
+
+              {/* Already-Past Rejection checkbox — only when MT5 mode is active */}
+              {form.watch("mt5Mode") && (
+                <FormField
+                  control={form.control}
+                  name="alreadyPastRejection"
+                  render={({ field }) => (
+                    <FormItem>
+                      <div className="flex items-center gap-2">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            className="border-white/20 data-[state=checked]:bg-white data-[state=checked]:text-black"
+                          />
+                        </FormControl>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <FormLabel className="cursor-help text-gray-300 underline decoration-dotted underline-offset-2">
+                                Already-Past Rejection
+                              </FormLabel>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" align="start" className="max-w-72">
+                              Skip stop-orders where the range close has already passed the breakout level — replicates MT5 broker rejection behavior.
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
 
               {/* PROJ-29: Spread (Pips) — only when MT5 mode is active */}
               {form.watch("mt5Mode") && (
