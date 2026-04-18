@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Loader2, Play, ChevronDown, ChevronRight, HelpCircle } from "lucide-react";
+import { Loader2, Play, ChevronDown, ChevronRight, HelpCircle, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -77,7 +77,7 @@ export function ConfigurationPanel({
   isRunning,
   preloadConfig,
 }: ConfigurationPanelProps) {
-  const { strategies, isLoading: strategiesLoading } = useStrategies();
+  const { strategies, isLoading: strategiesLoading, error: strategiesError, retry: retryStrategies } = useStrategies();
   const { findDataset } = useMt5Data();
   const [engineAdvancedOpen, setEngineAdvancedOpen] = useState(false);
 
@@ -195,6 +195,19 @@ export function ConfigurationPanel({
                         </TooltipProvider>
                       )}
                     </div>
+                    {strategiesError ? (
+                      <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+                        <span className="flex-1">Failed to load strategies</span>
+                        <button
+                          type="button"
+                          onClick={retryStrategies}
+                          className="flex items-center gap-1 text-xs text-red-300 hover:text-red-100 transition-colors"
+                        >
+                          <RefreshCw className="h-3 w-3" />
+                          Retry
+                        </button>
+                      </div>
+                    ) : (
                     <Select
                       onValueChange={handleStrategyChange}
                       value={field.value}
@@ -227,6 +240,7 @@ export function ConfigurationPanel({
                         ))}
                       </SelectContent>
                     </Select>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}
