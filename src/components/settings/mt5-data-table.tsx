@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Database, Loader2, Trash2 } from "lucide-react";
+import { Database, Loader2, Search, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -29,6 +29,7 @@ import {
   formatMt5DateTime,
   type Mt5Dataset,
 } from "@/lib/mt5-data-types";
+import { Mt5GapsDialog } from "@/components/settings/mt5-gaps-dialog";
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
@@ -49,6 +50,7 @@ export function Mt5DataTable({
 }: Mt5DataTableProps) {
   const [pendingDelete, setPendingDelete] = useState<Mt5Dataset | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [inspectDataset, setInspectDataset] = useState<Mt5Dataset | null>(null);
 
   async function handleConfirmDelete() {
     if (!pendingDelete) return;
@@ -131,21 +133,37 @@ export function Mt5DataTable({
                   {formatMt5DateTime(ds.uploaded_at)}
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0 text-slate-400 hover:bg-red-500/10 hover:text-red-300"
-                    onClick={() => setPendingDelete(ds)}
-                    aria-label={`Delete dataset for ${ds.asset} ${ds.timeframe}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <div className="flex items-center justify-end gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                      onClick={() => setInspectDataset(ds)}
+                      aria-label={`Inspect coverage for ${ds.asset} ${ds.timeframe}`}
+                    >
+                      <Search className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-slate-400 hover:bg-red-500/10 hover:text-red-300"
+                      onClick={() => setPendingDelete(ds)}
+                      aria-label={`Delete dataset for ${ds.asset} ${ds.timeframe}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </div>
+
+      <Mt5GapsDialog
+        dataset={inspectDataset}
+        onClose={() => setInspectDataset(null)}
+      />
 
       <AlertDialog
         open={!!pendingDelete}
