@@ -16,7 +16,14 @@
       "Bash(kill:*)",
       "Bash(npx shadcn@latest add:*)",
       "Bash(ls:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(npx next:*)",
+      "Bash(python -c ':*)",
+      "Bash(grep -l \"ENABLE ROW LEVEL SECURITY\\\\|ROW LEVEL SECURITY\\\\|ALTER TABLE.*ENABLE\" supabase/migrations/*.sql)",
+      "Bash(grep -h \"CREATE TABLE\\\\|ENABLE ROW LEVEL SECURITY\\\\|ALTER TABLE.*ENABLE\" supabase/migrations/*.sql)",
+      "Read(//d/Projekte/**)",
+      "Bash(cmd /c \"dir D:\\\\Projekte\\\\trading\")",
+      "Bash(cmd /c \"dir D:\\\\Projekte\")"
     ]
   }
 }

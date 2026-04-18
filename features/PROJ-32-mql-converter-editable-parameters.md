@@ -1,8 +1,8 @@
 # PROJ-32: MQL Converter – Editable Strategy Parameters
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-04-09
-**Last Updated:** 2026-04-13
+**Last Updated:** 2026-04-14
 
 ## Dependencies
 - Requires: PROJ-22 (MQL Converter) — extends the existing converter page and conversion workflow
