@@ -34,7 +34,14 @@ from models import FetchRequest, FetchResponse, ErrorResponse, SkippedDayOut
 from fetchers.dukascopy_fetcher import fetch_dukascopy
 from fetchers.yfinance_fetcher import fetch_yfinance, VALID_INTERVALS as YFINANCE_INTERVALS
 from services.auth import verify_jwt
-from services.cache_service import find_cached_entry, load_cached_data, save_to_cache, delete_cache_entry
+from services.cache_service import (
+    delete_cache_entry,
+    fetch_missing_and_load,
+    find_cached_entry,
+    list_chunks_grouped,
+    load_cached_data,
+    save_to_cache,
+)
 from services.resampler import resample_ohlcv, TIMEFRAME_TO_RULE
 from engine import run_backtest
 from engine.models import BacktestConfig, InstrumentConfig
@@ -115,6 +122,71 @@ def _validate_date_range(date_from: date, date_to: date) -> None:
         raise HTTPException(status_code=400, detail="Date range cannot exceed 5 years")
 
 
+# ── PROJ-27: chunked Dukascopy loader ───────────────────────────────────────
+
+def _load_dukascopy_chunked(
+    symbol: str,
+    timeframe: str,
+    date_from: date,
+    date_to: date,
+    user_id: str,
+    force_refresh: bool = False,
+) -> tuple[pd.DataFrame, list[dict], list]:
+    """Load `symbol` for `[date_from, date_to]` using monthly chunks.
+
+    Missing months are downloaded full-day (h00–h23) so chunks are reusable
+    across different hour windows. The merged DataFrame is trimmed to the
+    requested date range before returning.
+
+    When `force_refresh=True` all months are re-downloaded and chunk rows
+    overwritten — this replaces the legacy monolithic force-refresh path.
+
+    Returns (merged_df, used_rows, fetched_months).
+    """
+
+    def _fetch_one_month(ym) -> pd.DataFrame:
+        # Fetch the entire calendar month, then clip to [date_from, date_to]
+        # so a partial first/last month is not over-fetched.
+        m_from = max(ym.first_day(), date_from)
+        m_to = min(ym.last_day(), date_to)
+        if m_from > m_to:
+            return pd.DataFrame()
+        logger.info(
+            f"PROJ-27: downloading chunk {symbol}/{timeframe}/{ym.label()} "
+            f"({m_from} → {m_to}, full day)"
+        )
+        base_df = fetch_dukascopy(symbol, m_from, m_to, hour_from=0, hour_to=23)
+        if base_df.empty:
+            return pd.DataFrame()
+        if base_df.attrs.get("partial"):
+            # Partial download — bubble a TimeoutError so the caller can return
+            # 504 without poisoning the cache with incomplete data.
+            raise TimeoutError(
+                f"Dukascopy fetch for {symbol} {ym.label()} timed out — partial data."
+            )
+        return base_df if timeframe == "1m" else resample_ohlcv(base_df, timeframe)
+
+    df, used_rows, fetched = fetch_missing_and_load(
+        symbol=symbol,
+        source="dukascopy",
+        timeframe=timeframe,
+        date_from=date_from,
+        date_to=date_to,
+        created_by=user_id,
+        fetch_month_fn=_fetch_one_month,
+        force_refresh=force_refresh,
+    )
+
+    # Trim merged DataFrame to the exact requested range (chunks may extend
+    # one day past `date_to` because monthly chunks include the whole month).
+    if "datetime" in df.columns and not df.empty:
+        dt_col = pd.to_datetime(df["datetime"], utc=True)
+        mask = (dt_col.dt.date >= date_from) & (dt_col.dt.date <= date_to)
+        df = df.loc[mask].reset_index(drop=True)
+
+    return df, used_rows, fetched
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
@@ -159,7 +231,79 @@ async def fetch_data(
     h_from = request.hour_from if request.hour_from is not None else 0
     h_to = request.hour_to if request.hour_to is not None else 23
 
-    # Check cache (unless force_refresh)
+    # PROJ-27: chunked monthly cache for Dukascopy (always full-day chunks).
+    # Hour filtering is applied after merge so chunks are reusable across
+    # different hour windows. force_refresh re-downloads all months and
+    # overwrites chunk rows instead of falling back to the legacy monolithic path.
+    if source == "dukascopy":
+        try:
+            df, used_rows, fetched = _load_dukascopy_chunked(
+                symbol=symbol,
+                timeframe=timeframe,
+                date_from=date_from,
+                date_to=date_to,
+                user_id=user_id,
+                force_refresh=request.force_refresh,
+            )
+        except TimeoutError as e:
+            raise HTTPException(status_code=504, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Chunked fetch error: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to fetch data from {source}: {str(e)}",
+            )
+
+        if df.empty:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No data available for {symbol} from {source} between {date_from} and {date_to}",
+            )
+
+        # Apply hour filter for the response (chunks are stored full-day).
+        if "datetime" in df.columns and (h_from > 0 or h_to < 23):
+            dt_col = pd.to_datetime(df["datetime"], utc=True)
+            df = df.loc[(dt_col.dt.hour >= h_from) & (dt_col.dt.hour <= h_to)].reset_index(drop=True)
+
+        was_full_cache_hit = len(fetched) == 0
+        warnings: list[str] = []
+        actual_date_from: date | None = None
+        actual_date_to: date | None = None
+        if "datetime" in df.columns and not df.empty:
+            dt_col = pd.to_datetime(df["datetime"], utc=True)
+            actual_date_from = dt_col.min().date()
+            actual_date_to = dt_col.max().date()
+            if actual_date_from > date_from or actual_date_to < date_to:
+                warnings.append(
+                    f"Data available from {actual_date_from} to {actual_date_to}, "
+                    f"requested {date_from} to {date_to}"
+                )
+
+        # Pick a representative chunk for the legacy file_path / cache_id fields.
+        rep = next((r for r in used_rows if r.get("file_path")), None)
+        return FetchResponse(
+            symbol=symbol,
+            source=source,
+            timeframe=timeframe,
+            date_from=date_from,
+            date_to=date_to,
+            row_count=len(df),
+            file_path=rep["file_path"] if rep else "",
+            file_size_bytes=sum(int(r.get("file_size_bytes") or 0) for r in used_rows),
+            cache_id=rep["id"] if rep else None,
+            cached=was_full_cache_hit,
+            columns=list(df.columns),
+            preview=df.head(5).to_dict(orient="records"),
+            actual_date_from=actual_date_from,
+            actual_date_to=actual_date_to,
+            warnings=warnings,
+        )
+
+    # ── yfinance / force_refresh path: legacy single-file cache ──────────────
     if not request.force_refresh:
         cached = find_cached_entry(symbol, source, timeframe, date_from, date_to, h_from, h_to)
         if cached:
@@ -338,6 +482,25 @@ async def delete_cache(
         raise HTTPException(status_code=404, detail=f"Cache entry {cache_id} not found")
 
     return {"success": True, "deleted_id": cache_id}
+
+
+@app.get("/cache/grouped")
+async def get_cache_grouped(token: dict = Depends(verify_jwt)):
+    """Return data_cache entries grouped by (symbol, source, timeframe).
+
+    Powers the Settings cache-management UI. Admin-only.
+    """
+    is_admin = token.get("app_metadata", {}).get("is_admin") is True
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        groups = list_chunks_grouped()
+    except Exception as e:
+        logger.error(f"Cache list error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list cache: {str(e)}")
+
+    return {"groups": groups}
 
 
 # ── Backtest rate limiter (in-memory, per user, sliding 1-minute window) ────
@@ -1051,46 +1214,36 @@ async def _backtest_orchestrate_inner(
         df = _preloaded.copy()
         logger.debug(f"Optimizer: using pre-loaded data for {symbol} (skipping fetch)")
     else:
-        cached = find_cached_entry(symbol, "dukascopy", request.timeframe, date_from, date_to, hour_from, hour_to)
-        if cached:
-            try:
-                df = load_cached_data(cached["file_path"])
-                resolved_cache_id = cached["id"]
-            except Exception as e:
-                logger.warning(f"Cache load failed for {symbol}, re-fetching: {e}")
-                df = None
+        # PROJ-27: chunked monthly cache. Chunks are stored full-day so they
+        # are reusable across all hour windows; the hour filter is applied
+        # below (section 4c).
+        try:
+            df, used_rows, _fetched = _load_dukascopy_chunked(
+                symbol=symbol,
+                timeframe=request.timeframe,
+                date_from=date_from,
+                date_to=date_to,
+                user_id=user_id,
+            )
+        except TimeoutError as e:
+            raise HTTPException(status_code=504, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Fetch error for {symbol}: {e}", exc_info=True)
+            raise HTTPException(status_code=502, detail="Failed to fetch data.")
 
-        if df is None:
-            try:
-                # On cache miss: download only the required hours to save time (BUG-27).
-                base_df = fetch_dukascopy(symbol, date_from, date_to, hour_from=hour_from, hour_to=hour_to)
-                df = resample_ohlcv(base_df, request.timeframe) if request.timeframe != "1m" else base_df
-            except TimeoutError as e:
-                raise HTTPException(status_code=504, detail=str(e))
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
-            except Exception as e:
-                logger.error(f"Fetch error for {symbol}: {e}", exc_info=True)
-                raise HTTPException(
-                    status_code=502,
-                    detail="Failed to fetch data.",
-                )
+        if df is None or df.empty:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No data available for {symbol} between {date_from} and {date_to}",
+            )
 
-            if df.empty:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No data available for {symbol} between {date_from} and {date_to}",
-                )
-
-            if not base_df.attrs.get("partial"):
-                try:
-                    cache_entry = save_to_cache(df, symbol, "dukascopy", request.timeframe, date_from, date_to, user_id, hour_from, hour_to)
-                    if cache_entry:
-                        resolved_cache_id = cache_entry["id"]
-                except Exception as e:
-                    logger.warning(f"Cache save failed (non-fatal): {e}")
-        else:
-            logger.info("Skipping cache write for %s — partial fetch (timeout)", symbol)
+        rep = next((r for r in used_rows if r.get("file_path")), None)
+        if rep:
+            resolved_cache_id = rep["id"]
 
     # Normalize to DatetimeIndex
     if "datetime" in df.columns:
