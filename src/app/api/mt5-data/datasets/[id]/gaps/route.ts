@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getMarketHolidays } from "@/lib/market-holidays";
 
 export interface Mt5GapsResponse {
   dataset_id: string;
@@ -33,7 +34,7 @@ export async function GET(
 
   const { data: dataset, error: dsError } = await supabase
     .from("mt5_datasets")
-    .select("id, start_date, end_date")
+    .select("id, asset, start_date, end_date")
     .eq("id", id)
     .eq("user_id", user.id)
     .single();
@@ -56,6 +57,12 @@ export async function GET(
     candlesPerDay[row.trade_date as string] = Number(row.candle_count);
   }
 
+  // Collect all years in the dataset range for holiday lookup
+  const startYear = new Date(dataset.start_date + "T00:00:00Z").getUTCFullYear();
+  const endYear = new Date(dataset.end_date + "T00:00:00Z").getUTCFullYear();
+  const years = Array.from({ length: endYear - startYear + 1 }, (_, i) => startYear + i);
+  const holidays = getMarketHolidays(dataset.asset, years);
+
   const missingDates: string[] = [];
   let expectedDays = 0;
 
@@ -64,9 +71,9 @@ export async function GET(
 
   while (cursor <= end) {
     const dow = cursor.getUTCDay();
-    if (dow !== 0 && dow !== 6) {
+    const dateStr = cursor.toISOString().slice(0, 10);
+    if (dow !== 0 && dow !== 6 && !holidays.has(dateStr)) {
       expectedDays++;
-      const dateStr = cursor.toISOString().slice(0, 10);
       if (!candlesPerDay[dateStr]) {
         missingDates.push(dateStr);
       }
