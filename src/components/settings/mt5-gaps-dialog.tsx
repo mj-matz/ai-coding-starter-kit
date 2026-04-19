@@ -70,7 +70,9 @@ export function Mt5GapsDialog({ dataset, onClose }: Mt5GapsDialogProps) {
 
   useEffect(() => {
     if (!dataset) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setData(null);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError(null);
       return;
     }

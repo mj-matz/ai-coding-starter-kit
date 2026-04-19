@@ -416,11 +416,17 @@ export default function MqlConverterPage() {
                 />
               )}
 
-              {/* Save Section */}
+              {/* Save & Export Section */}
               {backtestResult && convertResult && !isRunning && (
                 <SaveConversionSection
                   onSave={handleSave}
                   defaultName={`${lastInputValues?.symbol ?? "Conversion"} ${new Date().toLocaleDateString()}`}
+                  originalMqlCode={lastInputValues?.mqlCode}
+                  parameters={hasParameters ? strategyParameters : undefined}
+                  parameterValues={hasParameters ? parameterValues : undefined}
+                  symbol={lastInputValues?.symbol}
+                  dateFrom={lastInputValues?.startDate}
+                  dateTo={lastInputValues?.endDate}
                 />
               )}
             </div>
