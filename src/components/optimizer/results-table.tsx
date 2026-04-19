@@ -158,17 +158,26 @@ export function ResultsTable({
     );
   }
 
-  function handleApplyBest() {
-    if (!bestResult || !backtestConfig) return;
+  function applyParamsToConfig(params: Record<string, number>) {
+    if (!backtestConfig) return;
     const updatedStrategyParams: Record<string, unknown> = {
       ...((backtestConfig.strategyParams as Record<string, unknown>) ?? {}),
     };
-    for (const [key, val] of Object.entries(bestResult.params)) {
-      // Time params are stored as minutes in optimizer but as HH:MM in backtest config
+    for (const [key, val] of Object.entries(params)) {
       updatedStrategyParams[key] = TIME_PARAM_KEYS.has(key) ? minutesToTime(val) : val;
     }
     saveConfigToStorage({ ...backtestConfig, strategyParams: updatedStrategyParams });
     onApplyParams?.();
+  }
+
+  function handleApplyBest() {
+    if (!bestResult) return;
+    applyParamsToConfig(bestResult.params);
+  }
+
+  function handleApplySelected() {
+    if (!selectedResult) return;
+    applyParamsToConfig(selectedResult.params);
   }
 
   const selectedResult = selectedRow
@@ -330,15 +339,27 @@ export function ResultsTable({
       {/* Detail panel */}
       {selectedResult && (
         <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-4">
-          <h4 className="mb-2 text-sm font-medium text-gray-300">
-            Detail:{" "}
-            {orderedParamKeys.map((k) => `${k}=${formatParamValue(k, selectedResult.params[k])}`).join(", ")}
-            {isConstraintViolated(selectedResult, hardConstraint) && (
-              <Badge variant="secondary" className="ml-2 bg-amber-600/20 text-amber-300 border-amber-500/30 text-xs">
-                Excluded by constraint
-              </Badge>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h4 className="text-sm font-medium text-gray-300">
+              Detail:{" "}
+              {orderedParamKeys.map((k) => `${k}=${formatParamValue(k, selectedResult.params[k])}`).join(", ")}
+              {isConstraintViolated(selectedResult, hardConstraint) && (
+                <Badge variant="secondary" className="ml-2 bg-amber-600/20 text-amber-300 border-amber-500/30 text-xs">
+                  Excluded by constraint
+                </Badge>
+              )}
+            </h4>
+            {backtestConfig && (
+              <Button
+                size="sm"
+                onClick={handleApplySelected}
+                className="shrink-0 bg-blue-600 text-white hover:bg-blue-500"
+              >
+                <ArrowUpRight className="mr-1 h-3.5 w-3.5" />
+                Apply Params
+              </Button>
             )}
-          </h4>
+          </div>
           <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3 lg:grid-cols-7">
             <div>
               <p className="text-xs text-gray-500">Profit Factor</p>
