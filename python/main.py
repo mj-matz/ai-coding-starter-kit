@@ -2203,36 +2203,25 @@ async def _preload_optimizer_data(
         logger.warning(f"Optimizer pre-load: invalid date in request: {e}")
         return None
 
-    # Use full-day range so the cached file covers every possible
-    # rangeStart / timeExit combination that the optimizer will test.
-    hour_from, hour_to = 0, 23
-
     df = None
-    cached = find_cached_entry(symbol, "dukascopy", request.timeframe, date_from, date_to, hour_from, hour_to)
-    if cached:
-        try:
-            df = load_cached_data(cached["file_path"])
-            logger.info(f"Optimizer pre-load: cache hit for {symbol} {date_from}–{date_to} (full day)")
-        except Exception as e:
-            logger.warning(f"Optimizer pre-load: cache load failed for {symbol}: {e}")
-            df = None
-
-    if df is None:
-        try:
-            logger.info(f"Optimizer pre-load: downloading {symbol} {date_from}–{date_to} (full day, h00-h23)")
-            base_df = fetch_dukascopy(symbol, date_from, date_to, hour_from=hour_from, hour_to=hour_to)
-            df = resample_ohlcv(base_df, request.timeframe) if request.timeframe != "1m" else base_df
-            if not base_df.attrs.get("partial"):
-                try:
-                    save_to_cache(df, symbol, "dukascopy", request.timeframe, date_from, date_to, user_id, hour_from, hour_to)
-                except Exception as e:
-                    logger.warning(f"Optimizer pre-load: cache save failed (non-fatal): {e}")
-        except Exception as e:
-            logger.warning(f"Optimizer pre-load: data fetch failed for {symbol}: {e}")
+    try:
+        logger.info(f"Optimizer pre-load: loading {symbol} {date_from}–{date_to} via chunked cache")
+        df, _used, _fetched = _load_dukascopy_chunked(
+            symbol=symbol,
+            timeframe=request.timeframe,
+            date_from=date_from,
+            date_to=date_to,
+            user_id=user_id,
+        )
+        if df is None or df.empty:
+            logger.warning(f"Optimizer pre-load: no data returned for {symbol}")
             return None
-
-    if df is None or (hasattr(df, 'empty') and df.empty):
-        logger.warning(f"Optimizer pre-load: no data returned for {symbol}")
+        logger.info(f"Optimizer pre-load: {len(df)} rows loaded for {symbol} ({date_from}–{date_to})")
+    except TimeoutError as e:
+        logger.warning(f"Optimizer pre-load: timeout for {symbol}: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"Optimizer pre-load: data fetch failed for {symbol}: {e}")
         return None
 
     # Normalize once here so backtest_orchestrate can skip re-normalization
@@ -2241,7 +2230,6 @@ async def _preload_optimizer_data(
     df.index = pd.to_datetime(df.index, utc=True)
     df.columns = [c.lower() for c in df.columns]
 
-    logger.info(f"Optimizer pre-load: {len(df)} rows loaded for {symbol} ({date_from}–{date_to})")
     return df
 
 
