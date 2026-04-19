@@ -15,7 +15,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const isAdmin = user.app_metadata?.is_admin === true;
+  const isAdmin = user.app_metadata?.is_admin === true || user.app_metadata?.role === "admin";
   if (!isAdmin) {
     return NextResponse.json(
       { error: "Forbidden: admin access required" },
@@ -68,8 +68,8 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Admin check: verify is_admin in app_metadata (not user_metadata — client-writable)
-  const isAdmin = user.app_metadata?.is_admin === true;
+  // Admin check: verify is_admin or role=admin in app_metadata (not user_metadata — client-writable)
+  const isAdmin = user.app_metadata?.is_admin === true || user.app_metadata?.role === "admin";
   if (!isAdmin) {
     return NextResponse.json(
       { error: "Forbidden: admin access required" },
