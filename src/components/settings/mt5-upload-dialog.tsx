@@ -137,7 +137,7 @@ export function Mt5UploadDialog({
       const text = await selected.text();
       // Parse with UTC for initial validation and row-count display.
       // The actual timezone conversion is applied when the user clicks Continue.
-      const parsed = parseMt5Csv(text, "UTC");
+      const parsed = await parseMt5Csv(text, "UTC");
       setRawFileText(text);
       setParseResult(parsed);
       setStep("configure");
@@ -177,17 +177,24 @@ export function Mt5UploadDialog({
 
   // ── Navigation ────────────────────────────────────────────────────────────
 
-  const handleGoToPreview = () => {
+  const handleGoToPreview = async () => {
     if (!rawFileText || !asset) return;
 
-    // Re-parse with the selected broker timezone to apply correct UTC conversion.
-    const finalParsed = parseMt5Csv(rawFileText, brokerTimezone);
-    setParseResult(finalParsed);
+    setIsParsing(true);
+    try {
+      // Re-parse with the selected broker timezone to apply correct UTC conversion.
+      const finalParsed = await parseMt5Csv(rawFileText, brokerTimezone);
+      setParseResult(finalParsed);
 
-    if (existsForAsset(asset, timeframe)) {
-      setStep("conflict");
-    } else {
-      setStep("preview");
+      if (existsForAsset(asset, timeframe)) {
+        setStep("conflict");
+      } else {
+        setStep("preview");
+      }
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : "Could not parse file.");
+    } finally {
+      setIsParsing(false);
     }
   };
 
@@ -597,8 +604,8 @@ export function Mt5UploadDialog({
                 </Button>
                 <Button
                   type="button"
-                  disabled={!canProceedToPreview}
-                  onClick={handleGoToPreview}
+                  disabled={!canProceedToPreview || isParsing}
+                  onClick={() => void handleGoToPreview()}
                   className="bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40"
                 >
                   Continue

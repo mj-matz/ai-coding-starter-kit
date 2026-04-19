@@ -135,7 +135,7 @@ export class CsvParseError extends Error {
  *   Candle timestamps in the CSV are in broker-local time; this parameter is used to
  *   convert them to UTC before storing.  Defaults to "UTC" (no conversion).
  */
-export function parseMt5Csv(raw: string, brokerTimezone = "UTC"): CsvParseResult {
+export async function parseMt5Csv(raw: string, brokerTimezone = "UTC"): Promise<CsvParseResult> {
   const trimmed = raw.replace(/^\uFEFF/, "").trim();
   if (!trimmed) {
     throw new CsvParseError(
@@ -187,6 +187,9 @@ export function parseMt5Csv(raw: string, brokerTimezone = "UTC"): CsvParseResult
   let detectedDateFormat = "";
 
   for (let i = 1; i < lines.length; i++) {
+    // Yield to the browser every 10K rows to keep the UI responsive
+    if (i % 10_000 === 0) await new Promise<void>((r) => setTimeout(r, 0));
+
     const cells = splitCsvLine(lines[i], delimiter);
     if (cells.length < 5) continue;
 
@@ -263,6 +266,22 @@ export function parseMt5Csv(raw: string, brokerTimezone = "UTC"): CsvParseResult
 
 // ── Timezone conversion helper ───────────────────────────────────────────────
 
+// One formatter per timezone — creating Intl.DateTimeFormat is expensive; reuse it.
+const _tzFmtCache = new Map<string, Intl.DateTimeFormat>();
+function getTzFormatter(timezone: string): Intl.DateTimeFormat {
+  let fmt = _tzFmtCache.get(timezone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      hourCycle: "h23",
+    });
+    _tzFmtCache.set(timezone, fmt);
+  }
+  return fmt;
+}
+
 /**
  * Convert a naive local datetime (as parsed from an MT5 CSV) to a UTC ISO string,
  * accounting for DST via the Intl API.  Works by finding how far the given IANA
@@ -283,12 +302,7 @@ function naiveLocalToUtcIso(
   const approxUtcMs = Date.UTC(year, month - 1, day, hour, minute, second);
 
   // Ask the Intl API what local time the target timezone shows for that ms value.
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-    hourCycle: "h23",
-  });
+  const fmt = getTzFormatter(timezone);
   const parts = Object.fromEntries(
     fmt.formatToParts(new Date(approxUtcMs)).map((p) => [p.type, p.value]),
   );
