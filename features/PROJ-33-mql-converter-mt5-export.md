@@ -1,6 +1,6 @@
 # PROJ-33: MQL Converter – MT5 EA Export
 
-## Status: Planned
+## Status: In Progress
 **Created:** 2026-04-09
 **Last Updated:** 2026-04-09
 
@@ -69,7 +69,49 @@ Nach einer Konvertierung und optionaler Parameter-Optimierung soll der Nutzer de
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /architecture_
+
+### Component Structure
+```
+MQL Converter Page (existing)
++-- [existing panels: MQL Input, Code Review, Parameters]
++-- Export / Action Bar (existing: SaveConversionSection)
+    +-- "Export as MT5 EA" Button  ← NEW
+        [disabled: no backtest result OR no original MQL code in session]
+        [enabled: after successful backtest run]
+```
+
+### Data Flow
+```
+User clicks "Export as MT5 EA"
+  → Frontend collects: original_mql_code, parameters[], symbol, date_from, date_to, conversion_name
+  → POST /api/mql-converter/export-mt5  ← NEW
+  → Server: verify session → regex-replace input/extern defaults → prepend comment block
+  → Response: binary .mq5 file
+  → Browser auto-downloads: {conversion_name}_{symbol}_{YYYY-MM-DD}.mq5
+```
+
+### Data Model
+Request body: `original_mql_code`, `parameters[]` (mql_input_name + current_value + type), `symbol`, `date_from`, `date_to`, `conversion_name?`
+Response: Binary `.mq5` file — no DB record created.
+Frontend session state: `originalMqlCode` (kept when user pastes/loads MQL), `currentParameters` (already in parameters-panel), `hasBacktestResult` (gates button).
+
+### Tech Decisions
+| Decision | Choice | Why |
+|----------|--------|-----|
+| File generation | Server (API route) | Auth check required |
+| MQL code transport | Request body, not DB | Supports unsaved conversions |
+| Regex | Server-side TypeScript | Deterministic, < 100 ms, no extra library |
+| Download trigger | fetch → Blob → programmatic `<a>` click | Standard browser download pattern |
+| Auth | Supabase session check | Consistent with all other routes |
+
+### Files Changed / Added
+| File | Change |
+|------|--------|
+| `src/components/mql-converter/save-conversion-section.tsx` | Add Export button with disabled-state logic |
+| `src/app/api/mql-converter/export-mt5/route.ts` | NEW — POST handler: regex substitution + file response |
+
+### Dependencies
+No new packages — uses native TypeScript string/regex + existing Supabase auth helper.
 
 ## QA Test Results
 _To be added by /qa_
