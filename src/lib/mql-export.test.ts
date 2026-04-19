@@ -46,9 +46,13 @@ function replaceInputDefaults(
       `((?:input|extern)\\s+\\w+\\s+${varName}\\s*=\\s*)([^;]+)(;)`
     );
 
-    if (regex.test(code)) {
+    const match = regex.exec(code);
+    if (match) {
+      const oldValue = match[2].trim();
       code = code.replace(regex, `$1${formattedValue}$3`);
-      replaced.push(param.mql_input_name);
+      if (oldValue !== formattedValue) {
+        replaced.push(param.mql_input_name);
+      }
     } else {
       notFound.push(param.mql_input_name);
     }
@@ -135,6 +139,16 @@ describe("replaceInputDefaults", () => {
     ]);
     // Only first occurrence replaced (no /g flag)
     expect(result).toBe(`input int Var = 99;\ninput int Var = 20;`);
+  });
+
+  it("does NOT add to replaced when value equals the original default", () => {
+    const code = `input int StopLoss = 50;`;
+    const { replaced, notFound } = replaceInputDefaults(code, [
+      { mql_input_name: "StopLoss", current_value: 50, type: "integer" },
+    ]);
+    // Value is unchanged — should not appear in replaced
+    expect(replaced).toHaveLength(0);
+    expect(notFound).toHaveLength(0);
   });
 
   it("handles empty parameter list gracefully", () => {
