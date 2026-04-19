@@ -43,6 +43,8 @@ interface TradeChartDialogProps {
   /** IANA timezone of the instrument (e.g. "Europe/London"). Used to correctly
    *  position the range box: times are interpreted in this TZ, not browser local. */
   instrumentTimezone?: string;
+  /** When true and no cacheId, fetch candles from MT5 data instead of Dukascopy */
+  mt5Mode?: boolean;
 }
 
 // Cache key: number for trades, string date for skipped days
@@ -126,6 +128,7 @@ export function TradeChartDialog({
   rangeEnd,
   triggerDeadline,
   instrumentTimezone,
+  mt5Mode,
 }: TradeChartDialogProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -196,11 +199,14 @@ export function TradeChartDialog({
       }
     }
 
-    // Choose endpoint: cache_id path (live backtest) or symbol path (history)
+    // Choose endpoint: cache_id (live backtest), MT5 history, or Dukascopy history
     let fetchUrl: string;
     if (cacheId != null) {
       timeParams.set("cache_id", cacheId);
       fetchUrl = `/api/backtest/candles?${timeParams}`;
+    } else if (mt5Mode) {
+      timeParams.set("symbol", symbol!);
+      fetchUrl = `/api/backtest/candles/mt5?${timeParams}`;
     } else {
       timeParams.set("symbol", symbol!);
       fetchUrl = `/api/backtest/candles/by-symbol?${timeParams}`;
@@ -222,7 +228,7 @@ export function TradeChartDialog({
       });
 
     return () => controller.abort();
-  }, [open, trade, skippedDay, cacheId, symbol, canFetch, timeframe, cacheKey, candleCache?.key, rangeStart]);
+  }, [open, trade, skippedDay, cacheId, symbol, canFetch, timeframe, cacheKey, candleCache?.key, rangeStart, mt5Mode]);
 
   // Render chart once candles are available
   useEffect(() => {

@@ -169,6 +169,7 @@ function RunDetailView({ run, onBack }: RunDetailViewProps) {
   const rangeStart = (config?.rangeStart as string) ?? "02:00";
   const rangeEnd = (config?.rangeEnd as string) ?? "06:00";
   const triggerDeadline = (config?.triggerDeadline as string) ?? "12:00";
+  const mt5Mode = (config?.mt5Mode as boolean) ?? false;
   const initialCapital = (config?.initialCapital as number) ?? 10000;
   const sp = (config?.strategyParams ?? {}) as Record<string, unknown>;
   const tp = typeof sp.takeProfit === "number" ? sp.takeProfit : null;
@@ -237,6 +238,7 @@ function RunDetailView({ run, onBack }: RunDetailViewProps) {
             rangeStart={rangeStart}
             rangeEnd={rangeEnd}
             triggerDeadline={triggerDeadline}
+            mt5Mode={mt5Mode}
           />
         </TabsContent>
       </Tabs>

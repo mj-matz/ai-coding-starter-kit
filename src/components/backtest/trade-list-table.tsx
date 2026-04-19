@@ -31,6 +31,8 @@ interface TradeListTableProps {
   newsDates?: string[];
   /** IANA timezone of the instrument. If omitted it is fetched from Supabase by symbol. */
   instrumentTimezone?: string;
+  /** When true, fetch chart candles from MT5 data instead of Dukascopy */
+  mt5Mode?: boolean;
 }
 
 type SortField = "entry_time" | "pnl_pips" | "duration_minutes";
@@ -96,7 +98,7 @@ const REASON_LABELS: Record<string, string> = {
   TRIGGER_EXPIRED: "Trigger Deadline/Range",
 };
 
-export function TradeListTable({ trades, skippedDays = [], cacheId, symbol, timeframe, rangeStart, rangeEnd, triggerDeadline, newsDates, instrumentTimezone: instrumentTimezoneProp }: TradeListTableProps) {
+export function TradeListTable({ trades, skippedDays = [], cacheId, symbol, timeframe, rangeStart, rangeEnd, triggerDeadline, newsDates, instrumentTimezone: instrumentTimezoneProp, mt5Mode }: TradeListTableProps) {
   const newsDatesSet = useMemo(() => new Set(newsDates ?? []), [newsDates]);
   const [sortField, setSortField] = useState<SortField>("entry_time");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -478,6 +480,7 @@ export function TradeListTable({ trades, skippedDays = [], cacheId, symbol, time
         rangeEnd={rangeEnd}
         triggerDeadline={triggerDeadline}
         instrumentTimezone={instrumentTimezone}
+        mt5Mode={mt5Mode}
       />
     </div>
   );
