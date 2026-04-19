@@ -112,9 +112,8 @@ Backtest Page — Configuration Panel (existing, minimal change)
 
 Settings Page (existing, admin section extended)
 +-- [Admin only] User Strategies tab  ← NEW
-    +-- All users' strategies table
+    +-- All users' strategies table (read-only)
         +-- Columns: name, owner (user_id), param count, created date
-        +-- [Delete] per row (admin moderation)
 ```
 
 ### Data Model
@@ -133,8 +132,7 @@ Each saved strategy stores:
 
 **RLS policies:**
 - SELECT: owner (`user_id = auth.uid()`) OR admin (`app_metadata.is_admin = true` or `app_metadata.role = 'admin'`)
-- INSERT / UPDATE / DELETE: owner only (`user_id = auth.uid()`)
-- Admin DELETE (e.g. moderation): handled via service role key in the admin API route, consistent with existing admin patterns
+- INSERT / UPDATE / DELETE: owner only (`user_id = auth.uid()`) — admin has no write access
 
 **50-strategy cap** enforced at the API level (not database constraint).
 
@@ -179,7 +177,7 @@ User selects custom strategy + fills params + clicks Run
 | `POST /api/user-strategies` | NEW — save strategy; enforces name uniqueness + 50-cap |
 | `GET /api/user-strategies` | NEW — list user strategies (metadata only, no python_code); admin gets ALL users' strategies with owner info |
 | `PATCH /api/user-strategies/[id]` | NEW — rename / update description (owner only) |
-| `DELETE /api/user-strategies/[id]` | NEW — delete; owner OR admin allowed |
+| `DELETE /api/user-strategies/[id]` | NEW — delete; owner only |
 | `GET /api/strategies` | EXTENDED — merge Supabase user strategies into built-in list |
 | `POST /api/backtest/run` | EXTENDED — resolve python_code for "user_" prefixed strategy IDs |
 
