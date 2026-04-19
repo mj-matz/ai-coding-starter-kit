@@ -46,7 +46,7 @@
 | PROJ-30 | Engine – Continuous Trailing Stop & Partial Close | Deployed | [PROJ-30-engine-continuous-trailing-stop-partial-close.md](PROJ-30-engine-continuous-trailing-stop-partial-close.md) | 2026-04-05 |
 | PROJ-31 | Extended Backtest Metrics & CRV Display (MT5-Parität) | Deployed | [PROJ-31-extended-backtest-metrics-crv.md](PROJ-31-extended-backtest-metrics-crv.md) | 2026-04-07 |
 | PROJ-32 | MQL Converter – Editable Strategy Parameters | Deployed | [PROJ-32-mql-converter-editable-parameters.md](PROJ-32-mql-converter-editable-parameters.md) | 2026-04-09 |
-| PROJ-33 | MQL Converter – MT5 EA Export | In Review | [PROJ-33-mql-converter-mt5-export.md](PROJ-33-mql-converter-mt5-export.md) | 2026-04-09 |
+| PROJ-33 | MQL Converter – MT5 EA Export | Deployed | [PROJ-33-mql-converter-mt5-export.md](PROJ-33-mql-converter-mt5-export.md) | 2026-04-09 |
 | PROJ-34 | MT5 Broker Data Import | Deployed | [PROJ-34-mt5-broker-data-import.md](PROJ-34-mt5-broker-data-import.md) | 2026-04-14 |
 | PROJ-35 | Optimizer – Extended Target Metrics & Hard Constraint Filter | Deployed | [PROJ-35-optimizer-extended-metrics.md](PROJ-35-optimizer-extended-metrics.md) | 2026-04-17 |
 

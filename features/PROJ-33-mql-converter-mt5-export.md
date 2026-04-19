@@ -1,6 +1,6 @@
 # PROJ-33: MQL Converter – MT5 EA Export
 
-## Status: In Progress
+## Status: Deployed
 **Created:** 2026-04-09
 **Last Updated:** 2026-04-09
 
@@ -223,4 +223,14 @@ No new packages — uses native TypeScript string/regex + existing Supabase auth
 - **Recommendation:** Deploy. Fix BUG-1 and BUG-2 in the next sprint (both are cosmetic/UX only).
 
 ## Deployment
-_To be added by /deploy_
+
+**Deployed:** 2026-04-19
+**Triggered by:** `git push origin main` → Vercel auto-deploy
+
+### Changes Deployed
+- `src/app/api/mql-converter/export-mt5/route.ts` — NEW: POST handler for MT5 EA export
+- `src/components/mql-converter/save-conversion-section.tsx` — Export button + toast on failure
+- `src/app/(dashboard)/mql-converter/page.tsx` — Props wired to SaveConversionSection
+
+### No new environment variables required
+Feature uses only existing Supabase auth + pure TypeScript regex. No external services.
