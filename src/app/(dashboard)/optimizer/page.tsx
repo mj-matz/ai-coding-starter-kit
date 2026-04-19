@@ -6,6 +6,7 @@ import { Play, RotateCcw, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useMt5Data } from "@/hooks/use-mt5-data";
 import { Mt5DataStatusBadge } from "@/components/shared/mt5-data-status-badge";
@@ -85,13 +86,6 @@ export default function OptimizerPage() {
 
   // Tracks when we're restoring a constraint from history so the auto-save effect doesn't re-patch it
   const restoringConstraintRef = useRef(false);
-  const duplicateWarningRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (duplicateRun && duplicateWarningRef.current) {
-      duplicateWarningRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }, [duplicateRun]);
 
   // Auto-save post-hoc constraint changes to Supabase so history reloads see the latest value
   const activeRunId = loadedHistoricalRun?.id ?? (status === "completed" ? jobId : null);
@@ -137,33 +131,24 @@ export default function OptimizerPage() {
     setParameterRanges({});
   }
 
-  async function handleStart(forceStart = false) {
+  async function handleStart() {
     if (!parameterGroup || !targetMetric || !backtestConfig) return;
 
-    if (!forceStart) {
-      const rangesKey = JSON.stringify(Object.fromEntries(Object.entries(parameterRanges).sort()));
-      const duplicate = runs.find(
-        (r) =>
-          r.asset === backtestConfig.symbol &&
-          r.date_from === backtestConfig.startDate &&
-          r.date_to === backtestConfig.endDate &&
-          r.strategy === backtestConfig.strategy &&
-          r.parameter_group === parameterGroup &&
-          r.target_metric === targetMetric &&
-          JSON.stringify(Object.fromEntries(Object.entries(r.parameter_ranges).sort())) === rangesKey
-      );
-      if (duplicate) {
-        setDuplicateRun(duplicate);
-        toast({
-          title: "Already optimized",
-          description: "This exact configuration has been run before. Load the previous result or start anyway.",
-          variant: "destructive",
-        });
-        return;
-      }
+    const rangesKey = JSON.stringify(Object.fromEntries(Object.entries(parameterRanges).sort()));
+    const duplicate = runs.find(
+      (r) =>
+        r.asset === backtestConfig.symbol &&
+        r.date_from === backtestConfig.startDate &&
+        r.date_to === backtestConfig.endDate &&
+        r.strategy === backtestConfig.strategy &&
+        r.parameter_group === parameterGroup &&
+        r.target_metric === targetMetric &&
+        JSON.stringify(Object.fromEntries(Object.entries(r.parameter_ranges).sort())) === rangesKey
+    );
+    if (duplicate) {
+      setDuplicateRun(duplicate);
     }
 
-    setDuplicateRun(null);
     await startOptimization({ parameterGroup, targetMetric, parameterRanges, mt5ModeOverride: effectiveMt5Mode, hardConstraint });
   }
 
@@ -380,37 +365,33 @@ export default function OptimizerPage() {
                 />
               )}
 
-              {/* Duplicate run warning */}
-              {duplicateRun && (
-                <div ref={duplicateWarningRef} className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-                  <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-amber-300">This configuration has already been optimized</p>
-                    <p className="mt-0.5 text-xs text-amber-400/70">
-                      Run from {new Date(duplicateRun.created_at).toLocaleDateString("en-US")} with{" "}
-                      {duplicateRun.total_combinations} combinations.
-                    </p>
-                    <div className="mt-3 flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
-                        onClick={() => handleLoadRun(duplicateRun.id)}
-                      >
-                        Load previous run
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="border-white/20 text-slate-300 hover:bg-white/10"
-                        onClick={() => handleStart(true)}
-                      >
-                        Start anyway
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* Duplicate run warning dialog */}
+              <Dialog open={!!duplicateRun} onOpenChange={(open) => { if (!open) setDuplicateRun(null); }}>
+                <DialogContent className="max-w-md">
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2 text-amber-400">
+                      <AlertCircle className="h-5 w-5" />
+                      Already optimized
+                    </DialogTitle>
+                    <DialogDescription>
+                      This exact configuration was already run on{" "}
+                      {duplicateRun ? new Date(duplicateRun.created_at).toLocaleDateString("en-US") : ""} with{" "}
+                      {duplicateRun?.total_combinations} combinations. The new optimization is running in the background.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter>
+                    <Button
+                      variant="outline"
+                      onClick={() => { if (duplicateRun) handleLoadRun(duplicateRun.id); setDuplicateRun(null); }}
+                    >
+                      Load previous run
+                    </Button>
+                    <Button onClick={() => setDuplicateRun(null)}>
+                      Continue
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
               {/* Start Button */}
               <Button
