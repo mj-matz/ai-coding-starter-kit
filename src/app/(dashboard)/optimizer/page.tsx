@@ -143,7 +143,7 @@ export default function OptimizerPage() {
         r.strategy === backtestConfig.strategy &&
         r.parameter_group === parameterGroup &&
         r.target_metric === targetMetric &&
-        JSON.stringify(Object.fromEntries(Object.entries(r.parameter_ranges).sort())) === rangesKey
+        JSON.stringify(Object.fromEntries(Object.entries(r.parameter_ranges ?? {}).sort())) === rangesKey
     );
     if (duplicate) {
       setDuplicateRun(duplicate);
