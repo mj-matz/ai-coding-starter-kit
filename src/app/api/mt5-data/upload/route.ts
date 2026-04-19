@@ -27,6 +27,7 @@ const UploadRequestSchema = z.object({
     .transform((v) => v.toUpperCase()),
   timeframe: z.enum(MT5_TIMEFRAME_VALUES),
   candles: z.array(Mt5CandleSchema).min(1).max(500_000),
+  broker_timezone: z.string().min(1).max(64).default("UTC"),
   conflict_resolution: z.enum(["merge", "replace"]).optional(),
 });
 
@@ -82,7 +83,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { asset, timeframe, candles, conflict_resolution } = parsed.data;
+  const { asset, timeframe, candles, broker_timezone, conflict_resolution } = parsed.data;
 
   // OHLC sanity check
   for (let i = 0; i < candles.length; i++) {
@@ -150,6 +151,7 @@ export async function POST(request: NextRequest) {
         start_date: candles[0].timestamp.slice(0, 10),
         end_date: candles[candles.length - 1].timestamp.slice(0, 10),
         candle_count: 0,
+        broker_timezone,
       })
       .select("id")
       .single();
@@ -228,7 +230,7 @@ export async function POST(request: NextRequest) {
       uploaded_at: new Date().toISOString(),
     })
     .eq("id", datasetId)
-    .select("id, asset, timeframe, start_date, end_date, candle_count, uploaded_at")
+    .select("id, asset, timeframe, start_date, end_date, candle_count, uploaded_at, broker_timezone")
     .single();
 
   if (updateError || !updatedDataset) {

@@ -33,11 +33,13 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
 import { AssetCombobox } from "@/components/backtest/asset-combobox";
 import {
+  BROKER_TIMEZONES,
   CsvParseError,
   MT5_MAX_FILE_SIZE_BYTES,
   MT5_TIMEFRAMES,
   formatMt5DateTime,
   parseMt5Csv,
+  type BrokerTimezone,
   type CsvParseResult,
   type Mt5Timeframe,
 } from "@/lib/mt5-data-types";
@@ -79,7 +81,9 @@ export function Mt5UploadDialog({
 
   const [asset, setAsset] = useState(initialAsset ?? "");
   const [timeframe, setTimeframe] = useState<Mt5Timeframe>(initialTimeframe ?? "1m");
+  const [brokerTimezone, setBrokerTimezone] = useState<BrokerTimezone>("Europe/Athens");
   const [conflictResolution, setConflictResolution] = useState<"merge" | "replace">("merge");
+  const [rawFileText, setRawFileText] = useState<string | null>(null);
 
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadedDataset, setUploadedDataset] = useState<Mt5UploadResponse | null>(null);
@@ -100,7 +104,9 @@ export function Mt5UploadDialog({
         setIsParsing(false);
         setAsset(initialAsset ?? "");
         setTimeframe(initialTimeframe ?? "1m");
+        setBrokerTimezone("Europe/Athens");
         setConflictResolution("merge");
+        setRawFileText(null);
         setUploadError(null);
         setUploadedDataset(null);
       }, 200);
@@ -129,7 +135,10 @@ export function Mt5UploadDialog({
     setIsParsing(true);
     try {
       const text = await selected.text();
-      const parsed = parseMt5Csv(text);
+      // Parse with UTC for initial validation and row-count display.
+      // The actual timezone conversion is applied when the user clicks Continue.
+      const parsed = parseMt5Csv(text, "UTC");
+      setRawFileText(text);
       setParseResult(parsed);
       setStep("configure");
     } catch (err) {
@@ -169,9 +178,12 @@ export function Mt5UploadDialog({
   // ── Navigation ────────────────────────────────────────────────────────────
 
   const handleGoToPreview = () => {
-    if (!parseResult || !asset) return;
+    if (!rawFileText || !asset) return;
 
-    // If overlapping dataset exists, show conflict resolution step first
+    // Re-parse with the selected broker timezone to apply correct UTC conversion.
+    const finalParsed = parseMt5Csv(rawFileText, brokerTimezone);
+    setParseResult(finalParsed);
+
     if (existsForAsset(asset, timeframe)) {
       setStep("conflict");
     } else {
@@ -228,6 +240,7 @@ export function Mt5UploadDialog({
           asset,
           timeframe,
           candles: chunk,
+          broker_timezone: brokerTimezone,
           conflict_resolution,
         });
       }
@@ -368,6 +381,35 @@ export function Mt5UploadDialog({
                   </SelectContent>
                 </Select>
               </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="mt5-broker-tz" className="text-slate-300">
+                  Broker server timezone
+                </Label>
+                <Select value={brokerTimezone} onValueChange={(v) => setBrokerTimezone(v as BrokerTimezone)}>
+                  <SelectTrigger
+                    id="mt5-broker-tz"
+                    className="border-white/10 bg-black/20 text-gray-100"
+                    aria-label="Select broker server timezone"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="border-white/10 bg-[#0d0f14]">
+                    {BROKER_TIMEZONES.map((tz) => (
+                      <SelectItem
+                        key={tz.value}
+                        value={tz.value}
+                        className="text-gray-100 focus:bg-white/10 focus:text-white"
+                      >
+                        {tz.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-slate-500">
+                  MT5 exports candles in broker server time. Select your broker&apos;s clock timezone so timestamps are correctly converted to UTC.
+                </p>
+              </div>
             </div>
           )}
 
@@ -435,6 +477,7 @@ export function Mt5UploadDialog({
                 <dl className="mt-3 space-y-2 text-sm">
                   <Row label="Asset" value={asset} />
                   <Row label="Timeframe" value={timeframe.toUpperCase()} />
+                  <Row label="Broker timezone" value={BROKER_TIMEZONES.find((t) => t.value === brokerTimezone)?.label ?? brokerTimezone} />
                   <Row
                     label="Candles"
                     value={parseResult.total_rows.toLocaleString()}

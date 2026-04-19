@@ -8,6 +8,25 @@
  * this schema, and then pushed as JSON rows to the API for storage.
  */
 
+// ── Broker server timezones ─────────────────────────────────────────────────
+// MT5 History Center exports candles in the broker's server time, not UTC.
+// Users must select the timezone that matches their broker's server clock.
+
+export const BROKER_TIMEZONES = [
+  { value: "UTC",               label: "UTC (GMT+0) – no conversion" },
+  { value: "Europe/Athens",     label: "EET/EEST (GMT+2/+3) – Startrader, most EU brokers" },
+  { value: "Europe/Helsinki",   label: "EET/EEST (GMT+2/+3) – Finland / Baltic" },
+  { value: "Europe/Berlin",     label: "CET/CEST (GMT+1/+2) – Western Europe" },
+  { value: "Europe/London",     label: "GMT/BST (GMT+0/+1) – UK" },
+  { value: "America/New_York",  label: "EST/EDT (GMT-5/-4) – New York" },
+  { value: "Asia/Dubai",        label: "GST (GMT+4) – Dubai, no DST" },
+  { value: "Asia/Singapore",    label: "SGT (GMT+8) – Singapore" },
+  { value: "Asia/Tokyo",        label: "JST (GMT+9) – Tokyo" },
+  { value: "Australia/Sydney",  label: "AEST/AEDT (GMT+10/+11) – Sydney" },
+] as const;
+
+export type BrokerTimezone = (typeof BROKER_TIMEZONES)[number]["value"];
+
 // ── Supported timeframes (must match Python backend) ────────────────────────
 
 export const MT5_TIMEFRAMES = [
@@ -39,6 +58,7 @@ export interface Mt5Dataset {
   end_date: string;            // ISO date (UTC)
   candle_count: number;
   uploaded_at: string;         // ISO datetime
+  broker_timezone: string;     // IANA timezone of the broker server clock
 }
 
 export interface Mt5Candle {
@@ -56,6 +76,8 @@ export interface Mt5UploadRequest {
   asset: string;
   timeframe: Mt5Timeframe;
   candles: Mt5Candle[];
+  /** IANA timezone of the broker server clock (candle timestamps are already in UTC after client-side conversion). */
+  broker_timezone: string;
   /** How to handle overlap with existing dataset for same asset+timeframe. */
   conflict_resolution?: "merge" | "replace";
 }
@@ -108,8 +130,12 @@ export class CsvParseError extends Error {
  *   Date,Time,Open,High,Low,Close,TickVol,Volume,Spread
  *   <DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>\t<VOL>\t<SPREAD>
  *   "Date  Time","Open","High","Low","Close","TickVol","Volume","Spread"
+ *
+ * @param brokerTimezone IANA timezone of the broker server clock (e.g. "Europe/Athens").
+ *   Candle timestamps in the CSV are in broker-local time; this parameter is used to
+ *   convert them to UTC before storing.  Defaults to "UTC" (no conversion).
  */
-export function parseMt5Csv(raw: string): CsvParseResult {
+export function parseMt5Csv(raw: string, brokerTimezone = "UTC"): CsvParseResult {
   const trimmed = raw.replace(/^\uFEFF/, "").trim();
   if (!trimmed) {
     throw new CsvParseError(
@@ -167,7 +193,7 @@ export function parseMt5Csv(raw: string): CsvParseResult {
     const dateStr = cells[idx.date]?.trim() ?? "";
     const timeStr = idx.time !== -1 ? (cells[idx.time]?.trim() ?? "") : "";
 
-    const parsed = parseMt5DateTime(dateStr, timeStr);
+    const parsed = parseMt5DateTime(dateStr, timeStr, brokerTimezone);
     if (!parsed) {
       throw new CsvParseError(
         `Invalid date/time in row ${i + 1}: "${dateStr} ${timeStr}".`,
@@ -235,6 +261,51 @@ export function parseMt5Csv(raw: string): CsvParseResult {
   };
 }
 
+// ── Timezone conversion helper ───────────────────────────────────────────────
+
+/**
+ * Convert a naive local datetime (as parsed from an MT5 CSV) to a UTC ISO string,
+ * accounting for DST via the Intl API.  Works by finding how far the given IANA
+ * timezone is ahead of/behind UTC at approximately that moment, then subtracting
+ * that offset.
+ */
+function naiveLocalToUtcIso(
+  year: number, month: number, day: number,
+  hour: number, minute: number, second: number,
+  timezone: string,
+): string {
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  if (timezone === "UTC") {
+    return `${year}-${p2(month)}-${p2(day)}T${p2(hour)}:${p2(minute)}:${p2(second)}Z`;
+  }
+
+  // Treat the naive time as UTC to get a reference millisecond value.
+  const approxUtcMs = Date.UTC(year, month - 1, day, hour, minute, second);
+
+  // Ask the Intl API what local time the target timezone shows for that ms value.
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = Object.fromEntries(
+    fmt.formatToParts(new Date(approxUtcMs)).map((p) => [p.type, p.value]),
+  );
+
+  const tzDisplayMs = Date.UTC(
+    Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+    Number(parts.hour), Number(parts.minute), Number(parts.second),
+  );
+
+  // offsetMs = how many ms the timezone is ahead of UTC (positive = east of UTC).
+  // tzDisplay - approxUtcMs = how much the timezone clock leads UTC.
+  // True UTC for the naive local time = approxUtcMs - (tzDisplay - approxUtcMs)
+  //   but simpler: utcMs = approxUtcMs + (approxUtcMs - tzDisplayMs)
+  const utcMs = approxUtcMs + (approxUtcMs - tzDisplayMs);
+  return new Date(utcMs).toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function detectDelimiter(headerLine: string): ";" | "," | "\t" {
@@ -280,7 +351,7 @@ interface ParsedDateTime {
   format: string;
 }
 
-function parseMt5DateTime(date: string, time: string): ParsedDateTime | null {
+function parseMt5DateTime(date: string, time: string, timezone: string): ParsedDateTime | null {
   const cleanDate = date.replace(/"/g, "").trim();
   const cleanTime = time.replace(/"/g, "").trim();
 
@@ -315,7 +386,7 @@ function parseMt5DateTime(date: string, time: string): ParsedDateTime | null {
     second = tMatch[3] ? Number(tMatch[3]) : 0;
   }
 
-  const iso = `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}Z`;
+  const iso = naiveLocalToUtcIso(Number(yyyy), Number(mm), Number(dd), hour, minute, second, timezone);
 
   // Validate that it's a real date
   const ms = Date.parse(iso);
