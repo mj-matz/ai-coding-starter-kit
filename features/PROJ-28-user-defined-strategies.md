@@ -82,7 +82,110 @@ After converting an MQL Expert Adviser via PROJ-22, the user can promote the con
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /architecture_
+
+### Component Structure
+```
+MQL Converter Page (existing, extended)
++-- Tab: Converter (existing)
+|   +-- Code Review Panel (existing)
+|       +-- "Add to Strategy Library" Button  ← NEW
+|           → opens AddToLibraryDialog        ← NEW
+|               +-- Strategy name input (pre-filled from EA/Claude name)
+|               +-- Description input (optional, max 300 chars)
+|               +-- Parameter schema preview (read-only)
+|               +-- [Cancel] [Save to Library]
+|
++-- Tab: My Conversions (existing)
++-- Tab: My Library  ← NEW tab
+    +-- UserStrategyList  ← NEW
+        +-- StrategyCard (per saved strategy)
+            +-- Name, description, param count, date, "Custom" badge
+            +-- [Open in Converter] [Edit] [Delete]
+        +-- Empty state: "No strategies yet…"
+        +-- Disabled "Add" button with tooltip when limit of 50 reached
+
+Backtest Page — Configuration Panel (existing, minimal change)
++-- Strategy Selector (existing dropdown)
+    +-- Built-in strategies (existing)
+    +-- ── separator ──
+    +-- User strategies ← NEW entries, each with "Custom" badge
+```
+
+### Data Model
+
+**New Supabase table: `user_strategies`**
+
+Each saved strategy stores:
+- `id` — UUID primary key
+- `user_id` — owner (foreign key to auth.users, RLS-enforced)
+- `name` — display name, max 80 chars (unique per user)
+- `description` — optional, max 300 chars
+- `python_code` — full Python strategy code (never sent to the browser)
+- `parameter_schema` — JSON in `StrategyParametersSchema` format (compatible with existing `DynamicParamForm`)
+- `source_conversion_id` — optional UUID linking back to `mql_conversions` (enables "Open in Converter")
+- `created_at`, `updated_at`
+
+**RLS policies:** SELECT / INSERT / UPDATE / DELETE only for `user_id = auth.uid()`.
+**50-strategy cap** enforced at the API level (not database constraint).
+
+**Parameter schema:** reuses the existing `StrategyParametersSchema` JSON shape — no new rendering logic in `DynamicParamForm`.
+
+### Request Flows
+
+**Adding a strategy to the library:**
+```
+User clicks "Add to Strategy Library" in Code Review Panel
+  → Dialog pre-fills name from EA/Claude-detected name
+  → User edits name/description → clicks Save
+  → POST /api/user-strategies  ← NEW
+  → Supabase: INSERT into user_strategies (python_code server-side only)
+  → Toast: "Strategy saved to library"
+  → Immediately available in backtest selector
+```
+
+**Loading strategies in the backtest selector:**
+```
+Backtest page loads
+  → GET /api/strategies (existing, extended)
+  → Next.js: 1) fetch built-ins from FastAPI  2) fetch user rows from Supabase
+  → Merge: user strategies tagged is_custom=true, id prefixed "user_"
+  → Frontend: built-ins first, then user strategies with "Custom" badge
+```
+
+**Running a backtest with a user-defined strategy:**
+```
+User selects custom strategy + fills params + clicks Run
+  → POST /api/backtest/run (existing, extended)
+  → Next.js detects "user_" prefix in strategy_id
+  → Fetches python_code from Supabase (server-side only, never to browser)
+  → Forwards python_code + params to FastAPI /run (same sandbox as PROJ-22)
+  → Result flows back identically to a built-in strategy backtest
+```
+
+### API Changes
+
+| Route | Change |
+|-------|--------|
+| `POST /api/user-strategies` | NEW — save strategy; enforces name uniqueness + 50-cap |
+| `GET /api/user-strategies` | NEW — list user strategies (metadata only, no python_code) |
+| `PATCH /api/user-strategies/[id]` | NEW — rename / update description |
+| `DELETE /api/user-strategies/[id]` | NEW — delete with ownership check |
+| `GET /api/strategies` | EXTENDED — merge Supabase user strategies into built-in list |
+| `POST /api/backtest/run` | EXTENDED — resolve python_code for "user_" prefixed strategy IDs |
+
+### Tech Decisions
+
+| Decision | Choice | Why |
+|----------|--------|-----|
+| Storage | Supabase `user_strategies` | Consistent with stack; RLS enforces ownership; no new infrastructure |
+| Python code | Server-side only | Security requirement; established pattern from PROJ-22 |
+| Parameter schema format | Reuse `StrategyParametersSchema` | `DynamicParamForm` already renders it — zero new UI rendering work |
+| Strategy list merging | In Next.js `GET /api/strategies` | FastAPI stays unmodified; single browser API call |
+| Execution path | Same FastAPI sandbox as PROJ-22 `/run` | No new execution infrastructure; same safety guarantees |
+| Management UI | New "My Library" tab on MQL Converter page | Keeps MQL features together; no sidebar changes |
+| Strategy ID format | `user_` prefix in API responses | Allows `POST /api/backtest/run` to route correctly without a new endpoint |
+
+### No new packages required.
 
 ## QA Test Results
 _To be added by /qa_
