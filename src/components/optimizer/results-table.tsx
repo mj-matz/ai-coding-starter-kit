@@ -339,28 +339,16 @@ export function ResultsTable({
       {/* Detail panel */}
       {selectedResult && (
         <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-4">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <h4 className="text-sm font-medium text-gray-300">
-              Detail:{" "}
-              {orderedParamKeys.map((k) => `${k}=${formatParamValue(k, selectedResult.params[k])}`).join(", ")}
-              {isConstraintViolated(selectedResult, hardConstraint) && (
-                <Badge variant="secondary" className="ml-2 bg-amber-600/20 text-amber-300 border-amber-500/30 text-xs">
-                  Excluded by constraint
-                </Badge>
-              )}
-            </h4>
-            {backtestConfig && (
-              <Button
-                size="sm"
-                onClick={handleApplySelected}
-                className="shrink-0 bg-blue-600 text-white hover:bg-blue-500"
-              >
-                <ArrowUpRight className="mr-1 h-3.5 w-3.5" />
-                Apply Params
-              </Button>
+          <h4 className="mb-2 text-sm font-medium text-gray-300">
+            Detail:{" "}
+            {orderedParamKeys.map((k) => `${k}=${formatParamValue(k, selectedResult.params[k])}`).join(", ")}
+            {isConstraintViolated(selectedResult, hardConstraint) && (
+              <Badge variant="secondary" className="ml-2 bg-amber-600/20 text-amber-300 border-amber-500/30 text-xs">
+                Excluded by constraint
+              </Badge>
             )}
-          </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3 lg:grid-cols-7">
+          </h4>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3 lg:grid-cols-8 items-end">
             <div>
               <p className="text-xs text-gray-500">Profit Factor</p>
               <p className="text-sm font-medium text-white">{fmt(selectedResult.profit_factor)}</p>
@@ -391,6 +379,18 @@ export function ResultsTable({
               <p className="text-xs text-gray-500">Trades</p>
               <p className="text-sm font-medium text-white">{selectedResult.total_trades}</p>
             </div>
+            {backtestConfig && (
+              <div className="flex items-end justify-end">
+                <Button
+                  size="sm"
+                  onClick={handleApplySelected}
+                  className="shrink-0 bg-blue-600 text-white hover:bg-blue-500"
+                >
+                  <ArrowUpRight className="mr-1 h-3.5 w-3.5" />
+                  Apply Params
+                </Button>
+              </div>
+            )}
           </div>
           {selectedResult.error && (
             <p className="mt-2 text-xs text-red-400">{selectedResult.error}</p>
