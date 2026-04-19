@@ -112,9 +112,13 @@ function ConfigBadges({ config, mt5ModeOverride }: { config: BacktestFormValues;
           Trail: {String(p.trailTriggerPips)}/{String(p.trailLockPips)}
         </Badge>
       )}
-      {effectiveMt5Mode && (
+      {effectiveMt5Mode ? (
         <Badge variant="secondary" className="bg-emerald-600/20 text-emerald-300 border-emerald-500/30">
-          MT5 Mode
+          MT5 Data
+        </Badge>
+      ) : (
+        <Badge variant="secondary" className="bg-white/10 text-gray-300 border-white/10">
+          BID Data
         </Badge>
       )}
     </div>
