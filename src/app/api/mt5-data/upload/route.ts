@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 
 export const maxDuration = 300;
 
-const RATE_LIMIT_MAX = 10;
+const RATE_LIMIT_MAX = 100;
 const RATE_LIMIT_WINDOW_SECONDS = 60;
 const MT5_TIMEFRAME_VALUES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"] as const;
 

@@ -215,7 +215,7 @@ export function Mt5UploadDialog({
     setUploadError(null);
     setUploadProgress(null);
 
-    const CHUNK_SIZE = 10_000;
+    const CHUNK_SIZE = 20_000;
     const candles = parseResult.candles;
     const totalChunks = Math.ceil(candles.length / CHUNK_SIZE);
     const hasExisting = existsForAsset(asset, timeframe);
