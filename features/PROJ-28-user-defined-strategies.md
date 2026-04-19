@@ -109,6 +109,12 @@ Backtest Page — Configuration Panel (existing, minimal change)
     +-- Built-in strategies (existing)
     +-- ── separator ──
     +-- User strategies ← NEW entries, each with "Custom" badge
+
+Settings Page (existing, admin section extended)
++-- [Admin only] User Strategies tab  ← NEW
+    +-- All users' strategies table
+        +-- Columns: name, owner (user_id), param count, created date
+        +-- [Delete] per row (admin moderation)
 ```
 
 ### Data Model
@@ -125,7 +131,11 @@ Each saved strategy stores:
 - `source_conversion_id` — optional UUID linking back to `mql_conversions` (enables "Open in Converter")
 - `created_at`, `updated_at`
 
-**RLS policies:** SELECT / INSERT / UPDATE / DELETE only for `user_id = auth.uid()`.
+**RLS policies:**
+- SELECT: owner (`user_id = auth.uid()`) OR admin (`app_metadata.is_admin = true` or `app_metadata.role = 'admin'`)
+- INSERT / UPDATE / DELETE: owner only (`user_id = auth.uid()`)
+- Admin DELETE (e.g. moderation): handled via service role key in the admin API route, consistent with existing admin patterns
+
 **50-strategy cap** enforced at the API level (not database constraint).
 
 **Parameter schema:** reuses the existing `StrategyParametersSchema` JSON shape — no new rendering logic in `DynamicParamForm`.
@@ -167,9 +177,9 @@ User selects custom strategy + fills params + clicks Run
 | Route | Change |
 |-------|--------|
 | `POST /api/user-strategies` | NEW — save strategy; enforces name uniqueness + 50-cap |
-| `GET /api/user-strategies` | NEW — list user strategies (metadata only, no python_code) |
-| `PATCH /api/user-strategies/[id]` | NEW — rename / update description |
-| `DELETE /api/user-strategies/[id]` | NEW — delete with ownership check |
+| `GET /api/user-strategies` | NEW — list user strategies (metadata only, no python_code); admin gets ALL users' strategies with owner info |
+| `PATCH /api/user-strategies/[id]` | NEW — rename / update description (owner only) |
+| `DELETE /api/user-strategies/[id]` | NEW — delete; owner OR admin allowed |
 | `GET /api/strategies` | EXTENDED — merge Supabase user strategies into built-in list |
 | `POST /api/backtest/run` | EXTENDED — resolve python_code for "user_" prefixed strategy IDs |
 
