@@ -246,7 +246,7 @@ async def _download_candle_raw(
                 raise RuntimeError("Circuit breaker triggered — Dukascopy returning 503")
 
             try:
-                resp = await client.get(url, timeout=20)
+                resp = await client.get(url, timeout=10)
             except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
                 if attempt < MAX_RETRIES:
                     backoff = RETRY_BACKOFF_SECONDS[attempt]
@@ -255,6 +255,18 @@ async def _download_candle_raw(
                         side, day_str, attempt + 1, 1 + MAX_RETRIES, type(exc).__name__, backoff,
                     )
                 else:
+                    # Persistent timeouts count toward the circuit breaker — same as 503s
+                    if fail_counter is not None:
+                        fail_counter[0] += 1
+                        if fail_counter[0] >= CIRCUIT_BREAK_THRESHOLD and abort_event is not None:
+                            logger.warning(
+                                "Circuit breaker triggered: %d persistent timeout/error responses — aborting",
+                                fail_counter[0],
+                            )
+                            abort_event.set()
+                            raise RuntimeError(
+                                f"Circuit breaker: {fail_counter[0]} persistent timeout/connection errors from Dukascopy"
+                            )
                     raise RuntimeError(
                         f"Connection error for {side} candle {day_str} after {1 + MAX_RETRIES} attempts: {exc}"
                     ) from exc
@@ -684,14 +696,19 @@ def fetch_dukascopy(
         logger.info("Candle-API: %d day-frames for %s", len(frames), symbol)
     except Exception as exc:
         exc_str = str(exc)
-        # Circuit breaker fired = Dukascopy is returning HTTP 503 for this symbol.
-        # The tick endpoint uses the same infrastructure, so a tick fallback would
-        # also 503 — or succeed but be far too slow for multi-month ranges → 504.
+        # Circuit breaker or persistent timeouts = Dukascopy infrastructure is degraded.
+        # The tick endpoint uses the same infrastructure, so a tick fallback would also
+        # fail — or succeed but be far too slow for multi-month ranges → 504.
         # Fail fast with a user-friendly message instead of burning more time.
         if "Circuit breaker" in exc_str or "circuit breaker" in exc_str:
             raise ValueError(
                 f"Dukascopy is temporarily unavailable for {symbol} — "
                 f"too many HTTP 503 responses. Please try again in a few minutes."
+            ) from exc
+        if "timeout" in exc_str.lower() or "Connection error" in exc_str or "timed out" in exc_str.lower():
+            raise ValueError(
+                f"Dukascopy requests are timing out for {symbol} — "
+                f"the server is temporarily slow. Please try again in a few minutes."
             ) from exc
         logger.warning(
             "Candle-API failed for %s — falling back to tick endpoint: %s", symbol, exc
