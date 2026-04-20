@@ -103,18 +103,18 @@ void OnTick()
       if(InpDirection == "long" || InpDirection == "both")
       {
          double entry = NormalizeDouble(gRangeHigh, _Digits);
-         Trade.BuyStop(InpLotSize, entry,
+         Trade.BuyStop(InpLotSize, entry, _Symbol,
                        NormalizeDouble(entry - sl, _Digits),
                        NormalizeDouble(entry + tp, _Digits),
-                       "TRB Long", ORDER_TIME_DAY, 0);
+                       ORDER_TIME_DAY, 0, "TRB Long");
       }
       if(InpDirection == "short" || InpDirection == "both")
       {
          double entry = NormalizeDouble(gRangeLow, _Digits);
-         Trade.SellStop(InpLotSize, entry,
+         Trade.SellStop(InpLotSize, entry, _Symbol,
                         NormalizeDouble(entry + sl, _Digits),
                         NormalizeDouble(entry - tp, _Digits),
-                        "TRB Short", ORDER_TIME_DAY, 0);
+                        ORDER_TIME_DAY, 0, "TRB Short");
       }
       return;
    }
