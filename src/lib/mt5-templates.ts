@@ -27,6 +27,12 @@ enum ENUM_LOT_MODE
    LOT_MODE_RISK_PCT = 1    // % Risk per Trade
 };
 
+enum ENUM_TIME_MODE
+{
+   TIME_MODE_DE_PLUS_OFFSET = 0,   // DE-Zeit + Broker-Offset
+   TIME_MODE_BROKER_DIRECT  = 1    // Broker-Server-Zeit direkt
+};
+
 //+------------------------------------------------------------------+
 input group "=== Symbol & Magic ==="
 input string        InpSymbol              = "{{SYMBOL}}"; // Symbol (e.g. XAUUSD+)
@@ -34,6 +40,7 @@ input ulong         InpMagic               = 20260420;     // Magic Number
 input string        InpComment             = "TRB";        // Order Comment
 
 input group "=== Timezone ==="
+input ENUM_TIME_MODE InpTimeMode           = TIME_MODE_DE_PLUS_OFFSET; // Time mode
 input int           InpBrokerOffsetDE      = {{BROKER_OFFSET}}; // Broker time = DE-Zeit + X hours
 
 input group "=== Times (DE-Zeit) ==="
@@ -54,7 +61,7 @@ input bool          InpTradeThursday       = {{TRADE_THU}};
 input bool          InpTradeFriday         = {{TRADE_FRI}};
 
 input group "=== Position Sizing ==="
-input ENUM_LOT_MODE InpLotMode             = {{LOT_MODE}};      // Lot Mode
+input ENUM_LOT_MODE InpLotMode             = {{LOT_MODE_NAME}};  // Lot Mode
 input double        InpFixedLot            = {{FIXED_LOT}};     // Fixed Lot Size
 input double        InpRiskPercent         = {{RISK_PERCENT}};  // Risk % per Trade
 
@@ -66,6 +73,7 @@ input int           InpSlippage            = 30;             // Slippage Points
 
 input group "=== OCO ==="
 input bool          InpUseOCO              = true;  // Cancel opposite order when one fills
+input bool          InpVerboseLog          = true;  // Detailed logging
 
 input group "=== Trailing Stop (Points, 0 = off) ==="
 input double        InpTrailTrigger        = {{TRAIL_TRIGGER_PIPS}};
@@ -113,19 +121,49 @@ int OnInit()
    trade.SetDeviationInPoints(InpSlippage);
    trade.SetTypeFillingBySymbol(g_symbol);
 
-   PrintFormat("=== TRB EA | %s | Digits=%d | Point=%.5f", g_symbol, g_digits, g_point);
-   PrintFormat("Sizing: %s | FixedLot=%.2f | Risk=%.2f%%",
+   Print("=================================================");
+   Print("=== Time-Range Breakout EA ===");
+   Print("=================================================");
+   PrintFormat("Symbol: %s | Digits: %d | Point: %.5f",
+               g_symbol, g_digits, g_point);
+   PrintFormat("Tick Value: %.5f | Tick Size: %.5f | Contract: %.2f",
+               SymbolInfoDouble(g_symbol, SYMBOL_TRADE_TICK_VALUE),
+               SymbolInfoDouble(g_symbol, SYMBOL_TRADE_TICK_SIZE),
+               SymbolInfoDouble(g_symbol, SYMBOL_TRADE_CONTRACT_SIZE));
+   PrintFormat("Min Lot: %.2f | Max Lot: %.2f | Lot Step: %.2f",
+               SymbolInfoDouble(g_symbol, SYMBOL_VOLUME_MIN),
+               SymbolInfoDouble(g_symbol, SYMBOL_VOLUME_MAX),
+               SymbolInfoDouble(g_symbol, SYMBOL_VOLUME_STEP));
+   PrintFormat("Stop Level: %d Points | Freeze Level: %d Points",
+               (int)SymbolInfoInteger(g_symbol, SYMBOL_TRADE_STOPS_LEVEL),
+               (int)SymbolInfoInteger(g_symbol, SYMBOL_TRADE_FREEZE_LEVEL));
+   PrintFormat("Zeit-Modus: %s",
+               InpTimeMode == TIME_MODE_DE_PLUS_OFFSET ? "DE+Offset" : "Broker-Direkt");
+   PrintFormat("Zeiten (Input): Range %02d:%02d-%02d:%02d | Cutoff %02d:%02d | Close %02d:%02d",
+               InpRangeStartHour, InpRangeStartMin,
+               InpRangeEndHour, InpRangeEndMin,
+               InpEntryCutoffHour, InpEntryCutoffMin,
+               InpForceCloseHour, InpForceCloseMin);
+   if(InpTimeMode == TIME_MODE_DE_PLUS_OFFSET)
+      PrintFormat("  -> Broker-Zeit (mit Offset +%dh): Range %02d:%02d-%02d:%02d | Cutoff %02d:%02d | Close %02d:%02d",
+                  InpBrokerOffsetDE,
+                  (InpRangeStartHour + InpBrokerOffsetDE) % 24, InpRangeStartMin,
+                  (InpRangeEndHour   + InpBrokerOffsetDE) % 24, InpRangeEndMin,
+                  (InpEntryCutoffHour+ InpBrokerOffsetDE) % 24, InpEntryCutoffMin,
+                  (InpForceCloseHour + InpBrokerOffsetDE) % 24, InpForceCloseMin);
+   PrintFormat("Sizing: %s | Fix=%.2f | Risk=%.2f%%",
                InpLotMode == LOT_MODE_FIXED ? "FIXED" : "RISK%",
                InpFixedLot, InpRiskPercent);
-   PrintFormat("SL=%d pts | TP=%d pts | BrokerOffset=+%dh",
-               InpSL_Points, InpTP_Points, InpBrokerOffsetDE);
-   PrintFormat("Account: Balance=%.2f %s | Equity=%.2f",
+   PrintFormat("SL: %d Points | TP: %d Points", InpSL_Points, InpTP_Points);
+   PrintFormat("Account: Balance=%.2f %s | Equity=%.2f | Leverage=1:%d",
                AccountInfoDouble(ACCOUNT_BALANCE),
                AccountInfoString(ACCOUNT_CURRENCY),
-               AccountInfoDouble(ACCOUNT_EQUITY));
+               AccountInfoDouble(ACCOUNT_EQUITY),
+               (int)AccountInfoInteger(ACCOUNT_LEVERAGE));
    PrintFormat("TimeCurrent()=%s | TimeGMT()=%s",
                TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS),
                TimeToString(TimeGMT(),     TIME_DATE|TIME_SECONDS));
+   Print("=================================================");
    return(INIT_SUCCEEDED);
 }
 
@@ -136,18 +174,25 @@ void OnDeinit(const int reason)
 }
 
 //+------------------------------------------------------------------+
-datetime GetBrokerTimeToday(int deHour, int deMin)
+datetime GetBrokerTimeToday(int inputHour, int inputMin)
 {
-   int brokerHour = deHour + InpBrokerOffsetDE;
-   int dayShift = 0;
-   while(brokerHour >= 24) { brokerHour -= 24; dayShift++; }
-   while(brokerHour <  0)  { brokerHour += 24; dayShift--; }
-
    MqlDateTime now;
    TimeToStruct(TimeCurrent(), now);
+
+   int brokerHour = inputHour;
+   int dayShift = 0;
+
+   if(InpTimeMode == TIME_MODE_DE_PLUS_OFFSET)
+   {
+      brokerHour = inputHour + InpBrokerOffsetDE;
+      while(brokerHour >= 24) { brokerHour -= 24; dayShift++; }
+      while(brokerHour <  0)  { brokerHour += 24; dayShift--; }
+   }
+
    MqlDateTime t;
-   t.year = now.year; t.mon = now.mon; t.day = now.day;
-   t.hour = brokerHour; t.min = deMin; t.sec = 0;
+   t.year = now.year;  t.mon = now.mon;  t.day = now.day;
+   t.hour = brokerHour; t.min = inputMin; t.sec = 0;
+
    return StructToTime(t) + dayShift * 86400;
 }
 
@@ -172,28 +217,34 @@ void CheckDailyReset()
 {
    MqlDateTime dt;
    TimeToStruct(TimeCurrent(), dt);
-   if(dt.day == g_lastProcessedDay) return;
 
-   g_lastProcessedDay = dt.day;
-   g_rangeCalculated  = false;
-   g_ordersPlaced     = false;
-   g_pendingCleared   = false;
-   g_forceClosed      = false;
-   g_rangeHigh        = 0.0;
-   g_rangeLow         = 0.0;
-   g_buyStopTicket    = 0;
-   g_sellStopTicket   = 0;
+   if(dt.day != g_lastProcessedDay)
+   {
+      g_lastProcessedDay = dt.day;
+      g_rangeCalculated  = false;
+      g_ordersPlaced     = false;
+      g_pendingCleared   = false;
+      g_forceClosed      = false;
+      g_rangeHigh        = 0.0;
+      g_rangeLow         = 0.0;
+      g_buyStopTicket    = 0;
+      g_sellStopTicket   = 0;
 
-   g_rangeEndBroker    = GetBrokerTimeToday(InpRangeEndHour,    InpRangeEndMin);
-   g_entryCutoffBroker = GetBrokerTimeToday(InpEntryCutoffHour, InpEntryCutoffMin);
-   g_forceCloseBroker  = GetBrokerTimeToday(InpForceCloseHour,  InpForceCloseMin);
+      g_rangeEndBroker    = GetBrokerTimeToday(InpRangeEndHour,    InpRangeEndMin);
+      g_entryCutoffBroker = GetBrokerTimeToday(InpEntryCutoffHour, InpEntryCutoffMin);
+      g_forceCloseBroker  = GetBrokerTimeToday(InpForceCloseHour,  InpForceCloseMin);
 
-   PrintFormat("Daily Reset | %s | DoW=%d | RangeEnd=%s | Cutoff=%s | Close=%s",
-               TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES),
-               dt.day_of_week,
-               TimeToString(g_rangeEndBroker,    TIME_DATE|TIME_MINUTES),
-               TimeToString(g_entryCutoffBroker, TIME_DATE|TIME_MINUTES),
-               TimeToString(g_forceCloseBroker,  TIME_DATE|TIME_MINUTES));
+      if(InpVerboseLog)
+      {
+         PrintFormat("--- Daily Reset | Now=%s | DoW=%d (%s) | RangeEnd=%s | Cutoff=%s | Close=%s",
+                     TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES),
+                     dt.day_of_week,
+                     IsTradingDayAllowed() ? "TRADING" : "SKIP",
+                     TimeToString(g_rangeEndBroker,    TIME_DATE|TIME_MINUTES),
+                     TimeToString(g_entryCutoffBroker, TIME_DATE|TIME_MINUTES),
+                     TimeToString(g_forceCloseBroker,  TIME_DATE|TIME_MINUTES));
+      }
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -275,9 +326,13 @@ double CalculateLotSize(double entryPrice, double slPrice)
    if(lossPerLot <= 0) return NormalizeLot(InpFixedLot);
 
    double lot = riskMoney / lossPerLot;
-   PrintFormat("Risk%%: Balance=%.2f x %.2f%% = %.2f | SL-Dist=%.*f | Loss/Lot=%.2f -> Lot=%.2f",
-               balance, InpRiskPercent, riskMoney, g_digits, slDist, lossPerLot, lot);
-   return NormalizeLot(lot);
+   lot = NormalizeLot(lot);
+
+   PrintFormat("  Risk-Calc: Balance=%.2f Risk%%=%.2f -> %.2f %s | SL-Dist=%.*f | Loss/Lot=%.2f -> Lot=%.2f",
+               balance, InpRiskPercent, riskMoney,
+               AccountInfoString(ACCOUNT_CURRENCY),
+               g_digits, slDist, lossPerLot, lot);
+   return lot;
 }
 
 //+------------------------------------------------------------------+

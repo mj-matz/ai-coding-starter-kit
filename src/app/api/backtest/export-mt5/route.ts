@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
       TRADE_WED: trading_days.includes(2) ? "true" : "false",
       TRADE_THU: trading_days.includes(3) ? "true" : "false",
       TRADE_FRI: trading_days.includes(4) ? "true" : "false",
-      LOT_MODE: sizing_mode === "risk_percent" ? 1 : 0,
+      LOT_MODE_NAME: sizing_mode === "risk_percent" ? "LOT_MODE_RISK_PCT" : "LOT_MODE_FIXED",
       FIXED_LOT: fixed_lot,
       RISK_PERCENT: risk_percent,
       SL_POINTS: numParam(strategy_params, "stopLoss", 150),
