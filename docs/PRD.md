@@ -42,6 +42,7 @@ A personal web-based backtesting platform for systematic trading strategies. The
 | P1 | MQL Converter – MT5 EA Export | Planned |
 | P1 | MT5 Broker Data Import | Planned |
 | P1 | Optimizer – Extended Target Metrics & Hard Constraint Filter | Planned |
+| P1 | Breakout – Continuous Trailing Stop & Partial Close Config | Planned |
 
 ## Success Metrics
 - Backtesting engine produces identical results on repeated runs (deterministic)

@@ -1,6 +1,6 @@
 # PROJ-28: User-Defined Strategies (MQL → Strategy Library)
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-04-01
 **Last Updated:** 2026-04-20
 
@@ -370,4 +370,7 @@ The spec requires "a read-only preview of the extracted parameter schema" in the
 | Low | 2 (BUG-28-07, BUG-28-08) |
 
 ## Deployment
-_To be added by /deploy_
+
+**Deployed:** 2026-04-20
+**Production URL:** Auto-deployed via Vercel on push to `main`
+**Railway (Python backend):** No changes required — execution sandbox unchanged

@@ -1,16 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useMt5Data } from "@/hooks/use-mt5-data";
 import { useDataCache, type CacheGroup } from "@/hooks/use-data-cache";
+import { createClient } from "@/lib/supabase/client";
 
 import { Mt5DataTable } from "@/components/settings/mt5-data-table";
 import { Mt5UploadDialog } from "@/components/settings/mt5-upload-dialog";
 import { CacheManagementTable } from "@/components/settings/cache-management-table";
+import { AdminUserStrategiesTable } from "@/components/settings/admin-user-strategies-table";
 
 import type { Mt5Timeframe, Mt5UploadRequest } from "@/lib/mt5-data-types";
 
@@ -20,6 +22,15 @@ export default function SettingsPage() {
   const { groups, isLoading: cacheLoading, error: cacheError, deleteGroup } = useDataCache();
 
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getSession().then(({ data }) => {
+      const role = (data.session?.user?.app_metadata as Record<string, unknown>)?.role;
+      setIsAdmin(role === "admin");
+    });
+  }, []);
 
   async function handleUpload(req: Mt5UploadRequest) {
     const res = await upload(req);
@@ -126,6 +137,19 @@ export default function SettingsPage() {
         existsForAsset={existsForAsset}
         onUpload={handleUpload}
       />
+
+      {/* Section: User Strategies (admin only) */}
+      {isAdmin && (
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold text-white">User Strategies</h2>
+            <p className="mt-1 text-sm text-gray-400">
+              All custom strategies saved by users from the MQL Converter.
+            </p>
+          </div>
+          <AdminUserStrategiesTable />
+        </section>
+      )}
     </div>
   );
 }

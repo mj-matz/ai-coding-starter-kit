@@ -132,7 +132,39 @@ export async function POST(request: NextRequest) {
     }
 
     const { strategyParams, ...engineParams } = parsed.data;
-    const fastapiBody = { ...strategyParams, ...engineParams };
+
+    // Resolve user-defined strategy: fetch python_code server-side, never expose to client
+    let resolvedStrategy = engineParams.strategy;
+    let userPythonCode: string | undefined;
+    if (engineParams.strategy.startsWith("user_")) {
+      const strategyId = engineParams.strategy.slice(5); // strip "user_" prefix
+      const { data: userStrategy, error: strategyError } = await supabase
+        .from("user_strategies")
+        .select("python_code")
+        .eq("id", strategyId)
+        .eq("user_id", user.id)
+        .single();
+
+      if (strategyError || !userStrategy) {
+        return NextResponse.json(
+          { error: "Strategy not found or no longer exists. Please select another." },
+          { status: 404 }
+        );
+      }
+
+      userPythonCode = userStrategy.python_code;
+      resolvedStrategy = "sandbox";
+    }
+
+    const fastapiBody: Record<string, unknown> = {
+      ...strategyParams,
+      ...engineParams,
+      strategy: resolvedStrategy,
+    };
+
+    if (userPythonCode) {
+      fastapiBody.user_python_code = userPythonCode;
+    }
 
     const response = await fetch(`${FASTAPI_URL}/backtest`, {
       method: "POST",
