@@ -34,8 +34,16 @@ enum ENUM_TIME_MODE
 };
 
 //+------------------------------------------------------------------+
+enum ENUM_LOG_LEVEL
+{
+   LOG_SILENT  = 0,   // Errors & critical events only
+   LOG_NORMAL  = 1,   // + Order events, range, force-close
+   LOG_VERBOSE = 2    // + Minute-tick debug inside range window
+};
+
+//+------------------------------------------------------------------+
 input group "=== Symbol & Magic ==="
-input string        InpSymbol              = "{{SYMBOL}}"; // Symbol (e.g. XAUUSD+)
+input string        InpSymbol              = "{{SYMBOL}}+"; // Symbol at broker (e.g. XAUUSD+, XAUUSDm, XAUUSD.a)
 input ulong         InpMagic               = 20260420;     // Magic Number
 input string        InpComment             = "TRB";        // Order Comment
 
@@ -73,11 +81,13 @@ input int           InpSlippage            = 30;             // Slippage Points
 
 input group "=== OCO ==="
 input bool          InpUseOCO              = true;  // Cancel opposite order when one fills
-input bool          InpVerboseLog          = true;  // Detailed logging
 
 input group "=== Trailing Stop (Points, 0 = off) ==="
 input double        InpTrailTrigger        = {{TRAIL_TRIGGER_PIPS}};
 input double        InpTrailLock           = {{TRAIL_LOCK_PIPS}};
+
+input group "=== Logging ==="
+input ENUM_LOG_LEVEL InpLogLevel           = LOG_NORMAL;   // Log-Level
 
 //+------------------------------------------------------------------+
 CTrade        trade;
@@ -121,49 +131,54 @@ int OnInit()
    trade.SetDeviationInPoints(InpSlippage);
    trade.SetTypeFillingBySymbol(g_symbol);
 
-   Print("=================================================");
-   Print("=== Time-Range Breakout EA ===");
-   Print("=================================================");
-   PrintFormat("Symbol: %s | Digits: %d | Point: %.5f",
-               g_symbol, g_digits, g_point);
-   PrintFormat("Tick Value: %.5f | Tick Size: %.5f | Contract: %.2f",
-               SymbolInfoDouble(g_symbol, SYMBOL_TRADE_TICK_VALUE),
-               SymbolInfoDouble(g_symbol, SYMBOL_TRADE_TICK_SIZE),
-               SymbolInfoDouble(g_symbol, SYMBOL_TRADE_CONTRACT_SIZE));
-   PrintFormat("Min Lot: %.2f | Max Lot: %.2f | Lot Step: %.2f",
-               SymbolInfoDouble(g_symbol, SYMBOL_VOLUME_MIN),
-               SymbolInfoDouble(g_symbol, SYMBOL_VOLUME_MAX),
-               SymbolInfoDouble(g_symbol, SYMBOL_VOLUME_STEP));
-   PrintFormat("Stop Level: %d Points | Freeze Level: %d Points",
-               (int)SymbolInfoInteger(g_symbol, SYMBOL_TRADE_STOPS_LEVEL),
-               (int)SymbolInfoInteger(g_symbol, SYMBOL_TRADE_FREEZE_LEVEL));
-   PrintFormat("Zeit-Modus: %s",
-               InpTimeMode == TIME_MODE_DE_PLUS_OFFSET ? "DE+Offset" : "Broker-Direkt");
-   PrintFormat("Zeiten (Input): Range %02d:%02d-%02d:%02d | Cutoff %02d:%02d | Close %02d:%02d",
-               InpRangeStartHour, InpRangeStartMin,
-               InpRangeEndHour, InpRangeEndMin,
-               InpEntryCutoffHour, InpEntryCutoffMin,
-               InpForceCloseHour, InpForceCloseMin);
-   if(InpTimeMode == TIME_MODE_DE_PLUS_OFFSET)
-      PrintFormat("  -> Broker-Zeit (mit Offset +%dh): Range %02d:%02d-%02d:%02d | Cutoff %02d:%02d | Close %02d:%02d",
-                  InpBrokerOffsetDE,
-                  (InpRangeStartHour + InpBrokerOffsetDE) % 24, InpRangeStartMin,
-                  (InpRangeEndHour   + InpBrokerOffsetDE) % 24, InpRangeEndMin,
-                  (InpEntryCutoffHour+ InpBrokerOffsetDE) % 24, InpEntryCutoffMin,
-                  (InpForceCloseHour + InpBrokerOffsetDE) % 24, InpForceCloseMin);
-   PrintFormat("Sizing: %s | Fix=%.2f | Risk=%.2f%%",
-               InpLotMode == LOT_MODE_FIXED ? "FIXED" : "RISK%",
-               InpFixedLot, InpRiskPercent);
-   PrintFormat("SL: %d Points | TP: %d Points", InpSL_Points, InpTP_Points);
-   PrintFormat("Account: Balance=%.2f %s | Equity=%.2f | Leverage=1:%d",
-               AccountInfoDouble(ACCOUNT_BALANCE),
-               AccountInfoString(ACCOUNT_CURRENCY),
-               AccountInfoDouble(ACCOUNT_EQUITY),
-               (int)AccountInfoInteger(ACCOUNT_LEVERAGE));
-   PrintFormat("TimeCurrent()=%s | TimeGMT()=%s",
-               TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS),
-               TimeToString(TimeGMT(),     TIME_DATE|TIME_SECONDS));
-   Print("=================================================");
+   if(InpLogLevel >= LOG_NORMAL)
+   {
+      Print("=================================================");
+      Print("=== Time-Range Breakout EA ===");
+      Print("=================================================");
+      PrintFormat("Symbol: %s | Digits: %d | Point: %.5f",
+                  g_symbol, g_digits, g_point);
+      PrintFormat("Tick Value: %.5f | Tick Size: %.5f | Contract: %.2f",
+                  SymbolInfoDouble(g_symbol, SYMBOL_TRADE_TICK_VALUE),
+                  SymbolInfoDouble(g_symbol, SYMBOL_TRADE_TICK_SIZE),
+                  SymbolInfoDouble(g_symbol, SYMBOL_TRADE_CONTRACT_SIZE));
+      PrintFormat("Min Lot: %.2f | Max Lot: %.2f | Lot Step: %.2f",
+                  SymbolInfoDouble(g_symbol, SYMBOL_VOLUME_MIN),
+                  SymbolInfoDouble(g_symbol, SYMBOL_VOLUME_MAX),
+                  SymbolInfoDouble(g_symbol, SYMBOL_VOLUME_STEP));
+      PrintFormat("Stop Level: %d Points | Freeze Level: %d Points",
+                  (int)SymbolInfoInteger(g_symbol, SYMBOL_TRADE_STOPS_LEVEL),
+                  (int)SymbolInfoInteger(g_symbol, SYMBOL_TRADE_FREEZE_LEVEL));
+      PrintFormat("Zeit-Modus: %s",
+                  InpTimeMode == TIME_MODE_DE_PLUS_OFFSET ? "DE+Offset" : "Broker-Direkt");
+      PrintFormat("Zeiten (Input): Range %02d:%02d-%02d:%02d | Cutoff %02d:%02d | Close %02d:%02d",
+                  InpRangeStartHour, InpRangeStartMin,
+                  InpRangeEndHour, InpRangeEndMin,
+                  InpEntryCutoffHour, InpEntryCutoffMin,
+                  InpForceCloseHour, InpForceCloseMin);
+      if(InpTimeMode == TIME_MODE_DE_PLUS_OFFSET)
+         PrintFormat("  -> Broker-Zeit (mit Offset +%dh): Range %02d:%02d-%02d:%02d | Cutoff %02d:%02d | Close %02d:%02d",
+                     InpBrokerOffsetDE,
+                     (InpRangeStartHour + InpBrokerOffsetDE) % 24, InpRangeStartMin,
+                     (InpRangeEndHour   + InpBrokerOffsetDE) % 24, InpRangeEndMin,
+                     (InpEntryCutoffHour+ InpBrokerOffsetDE) % 24, InpEntryCutoffMin,
+                     (InpForceCloseHour + InpBrokerOffsetDE) % 24, InpForceCloseMin);
+      PrintFormat("Sizing: %s | Fix=%.2f | Risk=%.2f%%",
+                  InpLotMode == LOT_MODE_FIXED ? "FIXED" : "RISK%",
+                  InpFixedLot, InpRiskPercent);
+      PrintFormat("SL: %d Points | TP: %d Points", InpSL_Points, InpTP_Points);
+      PrintFormat("Account: Balance=%.2f %s | Equity=%.2f | Leverage=1:%d",
+                  AccountInfoDouble(ACCOUNT_BALANCE),
+                  AccountInfoString(ACCOUNT_CURRENCY),
+                  AccountInfoDouble(ACCOUNT_EQUITY),
+                  (int)AccountInfoInteger(ACCOUNT_LEVERAGE));
+      PrintFormat("TimeCurrent()=%s | TimeGMT()=%s",
+                  TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS),
+                  TimeToString(TimeGMT(),     TIME_DATE|TIME_SECONDS));
+      Print("=================================================");
+   }
+   else
+      PrintFormat("EA Init OK | Symbol=%s", g_symbol);
    return(INIT_SUCCEEDED);
 }
 
@@ -234,7 +249,7 @@ void CheckDailyReset()
       g_entryCutoffBroker = GetBrokerTimeToday(InpEntryCutoffHour, InpEntryCutoffMin);
       g_forceCloseBroker  = GetBrokerTimeToday(InpForceCloseHour,  InpForceCloseMin);
 
-      if(InpVerboseLog)
+      if(InpLogLevel >= LOG_VERBOSE)
       {
          PrintFormat("--- Daily Reset | Now=%s | DoW=%d (%s) | RangeEnd=%s | Cutoff=%s | Close=%s",
                      TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES),
@@ -285,9 +300,10 @@ bool CalculateRange()
    g_rangeHigh      = NormalizeDouble(highest + InpRangeBufferPts * g_point, g_digits);
    g_rangeLow       = NormalizeDouble(lowest  - InpRangeBufferPts * g_point, g_digits);
    g_rangeCalculated = true;
-   PrintFormat("RANGE: High=%.*f Low=%.*f Spread=%.*f Bars=%d",
-               g_digits, g_rangeHigh, g_digits, g_rangeLow,
-               g_digits, g_rangeHigh - g_rangeLow, matched);
+   if(InpLogLevel >= LOG_NORMAL)
+      PrintFormat("RANGE: High=%.*f Low=%.*f Spread=%.*f Bars=%d",
+                  g_digits, g_rangeHigh, g_digits, g_rangeLow,
+                  g_digits, g_rangeHigh - g_rangeLow, matched);
    return true;
 }
 
@@ -328,10 +344,11 @@ double CalculateLotSize(double entryPrice, double slPrice)
    double lot = riskMoney / lossPerLot;
    lot = NormalizeLot(lot);
 
-   PrintFormat("  Risk-Calc: Balance=%.2f Risk%%=%.2f -> %.2f %s | SL-Dist=%.*f | Loss/Lot=%.2f -> Lot=%.2f",
-               balance, InpRiskPercent, riskMoney,
-               AccountInfoString(ACCOUNT_CURRENCY),
-               g_digits, slDist, lossPerLot, lot);
+   if(InpLogLevel >= LOG_NORMAL)
+      PrintFormat("  Risk-Calc: Balance=%.2f Risk%%=%.2f -> %.2f %s | SL-Dist=%.*f | Loss/Lot=%.2f -> Lot=%.2f",
+                  balance, InpRiskPercent, riskMoney,
+                  AccountInfoString(ACCOUNT_CURRENCY),
+                  g_digits, slDist, lossPerLot, lot);
    return lot;
 }
 
@@ -354,8 +371,9 @@ bool PlacePendingOrders()
    if(buyOk)
    {
       g_buyStopTicket = trade.ResultOrder();
-      PrintFormat("BuyStop #%I64u Lot=%.2f @%.*f SL=%.*f TP=%.*f",
-                  g_buyStopTicket, buyLot, g_digits, buyPrice, g_digits, buySL, g_digits, buyTP);
+      if(InpLogLevel >= LOG_NORMAL)
+         PrintFormat("BuyStop #%I64u Lot=%.2f @%.*f SL=%.*f TP=%.*f",
+                     g_buyStopTicket, buyLot, g_digits, buyPrice, g_digits, buySL, g_digits, buyTP);
    }
    else
       PrintFormat("BuyStop FAILED: rc=%u (%s) | Lot=%.2f @%.*f SL=%.*f TP=%.*f | Ask=%.*f",
@@ -372,8 +390,9 @@ bool PlacePendingOrders()
    if(sellOk)
    {
       g_sellStopTicket = trade.ResultOrder();
-      PrintFormat("SellStop #%I64u Lot=%.2f @%.*f SL=%.*f TP=%.*f",
-                  g_sellStopTicket, sellLot, g_digits, sellPrice, g_digits, sellSL, g_digits, sellTP);
+      if(InpLogLevel >= LOG_NORMAL)
+         PrintFormat("SellStop #%I64u Lot=%.2f @%.*f SL=%.*f TP=%.*f",
+                     g_sellStopTicket, sellLot, g_digits, sellPrice, g_digits, sellSL, g_digits, sellTP);
    }
    else
       PrintFormat("SellStop FAILED: rc=%u (%s) | Lot=%.2f @%.*f SL=%.*f TP=%.*f | Bid=%.*f",
@@ -410,12 +429,12 @@ void HandleOCO()
    if(buyPos && sellPend && g_sellStopTicket > 0)
    {
       if(trade.OrderDelete(g_sellStopTicket))
-      { PrintFormat("OCO: Buy filled -> SellStop #%I64u deleted", g_sellStopTicket); g_sellStopTicket = 0; }
+      { if(InpLogLevel >= LOG_NORMAL) PrintFormat("OCO: Buy filled -> SellStop #%I64u deleted", g_sellStopTicket); g_sellStopTicket = 0; }
    }
    if(sellPos && buyPend && g_buyStopTicket > 0)
    {
       if(trade.OrderDelete(g_buyStopTicket))
-      { PrintFormat("OCO: Sell filled -> BuyStop #%I64u deleted", g_buyStopTicket); g_buyStopTicket = 0; }
+      { if(InpLogLevel >= LOG_NORMAL) PrintFormat("OCO: Sell filled -> BuyStop #%I64u deleted", g_buyStopTicket); g_buyStopTicket = 0; }
    }
 }
 
@@ -466,7 +485,10 @@ void DeleteOurPendingOrders(string reason)
       if(orderInfo.Magic() != InpMagic || orderInfo.Symbol() != g_symbol) continue;
       ulong t = orderInfo.Ticket();
       if(trade.OrderDelete(t))
-         PrintFormat("Pending #%I64u deleted (%s)", t, reason);
+      {
+         if(InpLogLevel >= LOG_NORMAL)
+            PrintFormat("Pending #%I64u deleted (%s)", t, reason);
+      }
    }
    g_buyStopTicket = 0; g_sellStopTicket = 0;
 }
@@ -480,7 +502,10 @@ void CloseAllOurPositions(string reason)
       if(posInfo.Magic() != InpMagic || posInfo.Symbol() != g_symbol) continue;
       ulong t = posInfo.Ticket();
       if(trade.PositionClose(t))
-         PrintFormat("Position #%I64u closed (%s)", t, reason);
+      {
+         if(InpLogLevel >= LOG_NORMAL)
+            PrintFormat("Position #%I64u closed (%s)", t, reason);
+      }
       else
          PrintFormat("Close #%I64u FAILED: %s", t, trade.ResultRetcodeDescription());
    }
