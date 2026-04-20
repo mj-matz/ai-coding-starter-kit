@@ -26,11 +26,17 @@ import {
 import type { StrategyParameter } from "@/components/mql-converter/parameters-panel";
 import { SaveConversionSection } from "@/components/mql-converter/save-conversion-section";
 import { SavedConversionsList } from "@/components/mql-converter/saved-conversions-list";
+import { UserStrategyList } from "@/components/mql-converter/user-strategy-list";
+import { AddToLibraryDialog } from "@/components/mql-converter/add-to-library-dialog";
+import { UnsupportedFeatureAlert } from "@/components/mql-converter/unsupported-feature-alert";
 import { ResultsPanel } from "@/components/backtest/results-panel";
 
 import { useMqlConverter } from "@/hooks/use-mql-converter";
 import type { MqlVersion, MappingEntry } from "@/hooks/use-mql-converter";
+import { useUserStrategies } from "@/hooks/use-user-strategies";
 import { useToast } from "@/hooks/use-toast";
+import type { UserStrategy } from "@/lib/strategy-types";
+import { USER_STRATEGY_LIMIT } from "@/lib/strategy-types";
 
 export default function MqlConverterPage() {
   const {
@@ -51,6 +57,12 @@ export default function MqlConverterPage() {
   } = useMqlConverter();
 
   const { toast } = useToast();
+  const userStrategies = useUserStrategies();
+
+  const [addToLibraryOpen, setAddToLibraryOpen] = useState(false);
+  const [liveEditedCode, setLiveEditedCode] = useState<string | null>(null);
+  const [liveCodeEdited, setLiveCodeEdited] = useState(false);
+  const [savedConversionId, setSavedConversionId] = useState<string | null>(null);
 
   // PROJ-34: MT5 data state
   const { findDataset, upload: uploadMt5Data } = useMt5Data();
@@ -94,6 +106,13 @@ export default function MqlConverterPage() {
     status === "converting" ||
     status === "fetching_data" ||
     status === "running";
+
+  // Reset live edited code tracking when a new conversion arrives
+  useEffect(() => {
+    setLiveEditedCode(null);
+    setLiveCodeEdited(false);
+    setSavedConversionId(null);
+  }, [convertResult?.python_code]);
 
   // Sync parameters when a new conversion result arrives
   useEffect(() => {
@@ -163,7 +182,7 @@ export default function MqlConverterPage() {
     async (name: string): Promise<boolean> => {
       if (!convertResult || !lastInputValues) return false;
 
-      const success = await saveConversion({
+      const savedId = await saveConversion({
         name,
         mqlCode: lastInputValues.mqlCode,
         mqlVersion: lastInputValues.mqlVersion,
@@ -176,7 +195,8 @@ export default function MqlConverterPage() {
           : undefined,
       });
 
-      if (success) {
+      if (savedId) {
+        setSavedConversionId(savedId);
         toast({
           title: "Conversion saved",
           description: `"${name}" has been saved to your conversions.`,
@@ -189,7 +209,7 @@ export default function MqlConverterPage() {
         });
       }
 
-      return success;
+      return !!savedId;
     },
     [convertResult, lastInputValues, backtestResult, saveConversion, toast, hasParameters, strategyParameters, parameterValues]
   );
@@ -275,6 +295,56 @@ export default function MqlConverterPage() {
     [deleteConversion, toast]
   );
 
+  // ── Handle Open User Strategy in Converter ───────────────────────────────
+
+  const handleOpenUserStrategyInConverter = useCallback(
+    async (strategy: UserStrategy) => {
+      try {
+        const { createClient } = await import("@/lib/supabase/client");
+        const supabase = createClient();
+
+        // Fetch source_conversion_id only — python_code is never sent to the client
+        const { data, error: fetchError } = await supabase
+          .from("user_strategies")
+          .select("source_conversion_id")
+          .eq("id", strategy.id)
+          .single();
+
+        if (fetchError || !data) {
+          toast({ title: "Load failed", description: "Could not load the strategy.", variant: "destructive" });
+          return;
+        }
+
+        if (data.source_conversion_id) {
+          const { data: conv } = await supabase
+            .from("mql_conversions")
+            .select("mql_code, mql_version, python_code, mapping_report")
+            .eq("id", data.source_conversion_id)
+            .single();
+
+          if (conv) {
+            setPreloadMqlCode(conv.mql_code);
+            setPreloadMqlVersion(conv.mql_version as MqlVersion);
+            setPreloadedConversionResult({ pythonCode: conv.python_code, mappingReport: conv.mapping_report ?? [] });
+            loadConversionResult(conv.python_code, conv.mapping_report ?? []);
+            setActiveTab("converter");
+            toast({ title: "Strategy loaded", description: "Original conversion restored — configure backtest settings and re-run." });
+            return;
+          }
+        }
+
+        // No source conversion linked — inform the user instead of exposing python_code
+        toast({
+          title: "Original MQL not available",
+          description: "This strategy has no linked conversion. Re-convert your MQL code in the Converter tab to create a new version.",
+        });
+      } catch {
+        toast({ title: "Load failed", description: "Could not load the strategy.", variant: "destructive" });
+      }
+    },
+    [toast, loadConversionResult]
+  );
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -302,6 +372,12 @@ export default function MqlConverterPage() {
             className="text-slate-400 data-[state=active]:bg-white/10 data-[state=active]:text-slate-100"
           >
             My Conversions
+          </TabsTrigger>
+          <TabsTrigger
+            value="library"
+            className="text-slate-400 data-[state=active]:bg-white/10 data-[state=active]:text-slate-100"
+          >
+            Strategy Library
           </TabsTrigger>
         </TabsList>
 
@@ -340,27 +416,30 @@ export default function MqlConverterPage() {
 
               {/* Error */}
               {status === "error" && error && (
-                <Alert
-                  variant="destructive"
-                  className="border-red-900/50 bg-red-950/30 text-red-300"
-                >
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Conversion Failed</AlertTitle>
-                  <AlertDescription className="mt-2 whitespace-pre-wrap text-red-300/80 text-sm">
-                    {error}
-                  </AlertDescription>
-                  {lastInputValues && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="mt-3 border-red-800/60 bg-red-950/40 text-red-300 hover:bg-red-900/40 hover:text-red-200"
-                      onClick={() => handleSubmit(lastInputValues)}
-                    >
-                      <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                      Retry
-                    </Button>
-                  )}
-                </Alert>
+                <>
+                  <UnsupportedFeatureAlert error={error} />
+                  <Alert
+                    variant="destructive"
+                    className="border-red-900/50 bg-red-950/30 text-red-300"
+                  >
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Conversion Failed</AlertTitle>
+                    <AlertDescription className="mt-2 whitespace-pre-wrap text-red-300/80 text-sm">
+                      {error}
+                    </AlertDescription>
+                    {lastInputValues && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="mt-3 border-red-800/60 bg-red-950/40 text-red-300 hover:bg-red-900/40 hover:text-red-200"
+                        onClick={() => handleSubmit(lastInputValues)}
+                      >
+                        <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                        Retry
+                      </Button>
+                    )}
+                  </Alert>
+                </>
               )}
 
               {/* Warnings */}
@@ -413,6 +492,13 @@ export default function MqlConverterPage() {
                   onRerun={handleRerun}
                   parametersValid={parametersValid}
                   canRerun={!!cacheId && !!lastInputValues}
+                  onAddToLibrary={() => setAddToLibraryOpen(true)}
+                  canAddToLibrary={!!backtestResult}
+                  isAtLibraryLimit={userStrategies.strategies.length >= USER_STRATEGY_LIMIT}
+                  onEditedCodeChange={(code, isEdited) => {
+                    setLiveEditedCode(code);
+                    setLiveCodeEdited(isEdited);
+                  }}
                 />
               )}
 
@@ -457,7 +543,37 @@ export default function MqlConverterPage() {
             />
           </div>
         </TabsContent>
+
+        {/* ── Tab: Strategy Library ─────────────────────────────────────────── */}
+        <TabsContent value="library" className="mt-6">
+          <div className="max-w-3xl">
+            <UserStrategyList onOpenInConverter={handleOpenUserStrategyInConverter} />
+          </div>
+        </TabsContent>
       </Tabs>
+
+      {/* Add to Library Dialog */}
+      {convertResult && (
+        <AddToLibraryDialog
+          open={addToLibraryOpen}
+          onOpenChange={setAddToLibraryOpen}
+          pythonCode={liveEditedCode ?? convertResult.python_code}
+          parameters={strategyParameters}
+          sourceConversionId={savedConversionId ?? undefined}
+          defaultName={lastInputValues?.symbol ? `${lastInputValues.symbol} Strategy` : "My Strategy"}
+          isCodeEdited={liveCodeEdited}
+          onSuccess={(id) => {
+            toast({
+              title: "Strategy saved",
+              description: "Your strategy is now available in the backtest selector.",
+            });
+            userStrategies.fetch();
+            // Switch to library tab so user can see the new entry
+            setActiveTab("library");
+            void id;
+          }}
+        />
+      )}
     </div>
   );
 }

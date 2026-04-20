@@ -51,8 +51,10 @@ import {
   type BacktestFormValues,
 } from "@/lib/backtest-types";
 import { useStrategies } from "@/hooks/use-strategies";
+import { useUserStrategies } from "@/hooks/use-user-strategies";
 import { useMt5Data } from "@/hooks/use-mt5-data";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 
 interface ConfigurationPanelProps {
   onSubmit: (config: BacktestFormValues) => void;
@@ -78,7 +80,11 @@ export function ConfigurationPanel({
   preloadConfig,
 }: ConfigurationPanelProps) {
   const { strategies, isLoading: strategiesLoading, error: strategiesError, retry: retryStrategies } = useStrategies();
+  const { strategies: userStrategies, fetch: fetchUserStrategies } = useUserStrategies();
   const { findDataset } = useMt5Data();
+
+  // Fetch user strategies once on mount
+  useEffect(() => { fetchUserStrategies(); }, [fetchUserStrategies]);
   const [engineAdvancedOpen, setEngineAdvancedOpen] = useState(false);
 
   const form = useForm<BacktestFormValues>({
@@ -88,7 +94,21 @@ export function ConfigurationPanel({
 
   const sizingMode = form.watch("sizingMode");
   const selectedStrategyId = form.watch("strategy");
-  const selectedStrategy = strategies.find((s) => s.id === selectedStrategyId);
+  const selectedStrategy = selectedStrategyId?.startsWith("user_")
+    ? (() => {
+        const us = userStrategies.find((s) => `user_${s.id}` === selectedStrategyId);
+        if (!us) return undefined;
+        return {
+          id: `user_${us.id}`,
+          name: us.name,
+          description: us.description ?? "",
+          parameters_schema: {
+            properties: us.parameter_schema?.properties ?? {},
+          },
+          is_custom: true,
+        };
+      })()
+    : strategies.find((s) => s.id === selectedStrategyId);
 
   // PROJ-34: Block submit when MT5 Mode is on and data doesn't cover the requested range
   const mt5Mode = form.watch("mt5Mode");
@@ -154,9 +174,16 @@ export function ConfigurationPanel({
   // When strategy changes, reset strategyParams to the new strategy's defaults
   function handleStrategyChange(strategyId: string) {
     form.setValue("strategy", strategyId);
-    const strategy = strategies.find((s) => s.id === strategyId);
-    if (strategy) {
-      form.setValue("strategyParams", buildDefaultParams(strategy.parameters_schema));
+    if (strategyId.startsWith("user_")) {
+      const us = userStrategies.find((s) => `user_${s.id}` === strategyId);
+      if (us) {
+        form.setValue("strategyParams", buildDefaultParams({ properties: us.parameter_schema?.properties ?? {} }));
+      }
+    } else {
+      const strategy = strategies.find((s) => s.id === strategyId);
+      if (strategy) {
+        form.setValue("strategyParams", buildDefaultParams(strategy.parameters_schema));
+      }
     }
   }
 
@@ -238,6 +265,26 @@ export function ConfigurationPanel({
                             {s.name}
                           </SelectItem>
                         ))}
+                        {userStrategies.length > 0 && (
+                          <>
+                            <Separator className="my-1 bg-white/10" />
+                            <div className="px-2 py-1 text-xs text-gray-500 select-none">Your Strategies</div>
+                            {userStrategies.map((s) => (
+                              <SelectItem
+                                key={`user_${s.id}`}
+                                value={`user_${s.id}`}
+                                className="text-gray-100 focus:bg-white/10 focus:text-white"
+                              >
+                                <span className="flex items-center gap-2">
+                                  {s.name}
+                                  <Badge className="bg-blue-900/50 text-blue-300 border-blue-800/50 hover:bg-blue-900/50 text-[10px] py-0 px-1 h-4">
+                                    Custom
+                                  </Badge>
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </>
+                        )}
                       </SelectContent>
                     </Select>
                     )}

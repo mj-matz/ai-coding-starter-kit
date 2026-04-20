@@ -1,5 +1,25 @@
 // Types for the /api/strategies response (mirrors Python registry output)
 
+export const USER_STRATEGY_LIMIT = 50;
+
+export interface UserStrategyParameter {
+  name: string;
+  label: string;
+  type: "number" | "integer" | "string";
+  default: number | string;
+}
+
+export interface UserStrategy {
+  id: string;
+  user_id?: string;
+  name: string;
+  description: string | null;
+  parameter_schema: {
+    properties: Record<string, UserStrategyParameter>;
+  };
+  created_at: string;
+}
+
 export interface StrategyParamFieldDef {
   type?: string;
   anyOf?: Array<{
@@ -31,4 +51,5 @@ export interface Strategy {
   name: string;
   description: string;
   parameters_schema: StrategyParametersSchema;
+  is_custom?: boolean;
 }

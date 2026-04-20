@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Loader2, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, RefreshCw, BookPlus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -58,6 +58,14 @@ interface CodeReviewPanelProps {
   parametersValid?: boolean;
   /** When false, the Re-run button is disabled (e.g. no cacheId available). Defaults to true. */
   canRerun?: boolean;
+  /** Called when user clicks Add to Strategy Library */
+  onAddToLibrary?: () => void;
+  /** Whether a successful backtest result exists (enables the Add to Library button). */
+  canAddToLibrary?: boolean;
+  /** Whether the user has reached the library limit. */
+  isAtLibraryLimit?: boolean;
+  /** Fires whenever the code in the editor changes — passes (code, isEdited). */
+  onEditedCodeChange?: (code: string, isEdited: boolean) => void;
 }
 
 export function CodeReviewPanel({
@@ -67,6 +75,10 @@ export function CodeReviewPanel({
   onRerun,
   parametersValid = true,
   canRerun = true,
+  onAddToLibrary,
+  canAddToLibrary = false,
+  isAtLibraryLimit = false,
+  onEditedCodeChange,
 }: CodeReviewPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [prevPythonCode, setPrevPythonCode] = useState(pythonCode);
@@ -103,37 +115,63 @@ export function CodeReviewPanel({
           <div className="px-6 pb-6 space-y-6">
             {/* Python Code (editable) */}
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <h4 className="text-sm font-medium text-gray-400">
                   Generated Python Code
                   {hasEdited && (
                     <span className="ml-2 text-xs text-yellow-400">(edited)</span>
                   )}
                 </h4>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onRerun(editedCode)}
-                  disabled={isRunning || !parametersValid || !canRerun}
-                  className="border-white/20 bg-white/10 text-slate-200 hover:bg-white/20"
-                  aria-label="Re-run backtest with edited code"
-                >
-                  {isRunning ? (
-                    <>
-                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                      Running...
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="mr-2 h-3.5 w-3.5" />
-                      Re-run Backtest
-                    </>
+                <div className="flex gap-2">
+                  {onAddToLibrary && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={onAddToLibrary}
+                      disabled={!canAddToLibrary || isAtLibraryLimit || isRunning}
+                      className="border-blue-800/50 bg-blue-950/30 text-blue-300 hover:bg-blue-950/50 disabled:opacity-40"
+                      aria-label="Add to Strategy Library"
+                      title={
+                        isAtLibraryLimit
+                          ? "Library limit reached"
+                          : !canAddToLibrary
+                          ? "Run a backtest first to enable this"
+                          : "Save this strategy to your personal library"
+                      }
+                    >
+                      <BookPlus className="mr-1.5 h-3.5 w-3.5" />
+                      Add to Library
+                    </Button>
                   )}
-                </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onRerun(editedCode)}
+                    disabled={isRunning || !parametersValid || !canRerun}
+                    className="border-white/20 bg-white/10 text-slate-200 hover:bg-white/20"
+                    aria-label="Re-run backtest with edited code"
+                  >
+                    {isRunning ? (
+                      <>
+                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                        Running...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                        Re-run Backtest
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
               <Textarea
                 value={editedCode}
-                onChange={(e) => setEditedCode(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setEditedCode(next);
+                  onEditedCodeChange?.(next, next !== pythonCode);
+                }}
                 className="min-h-[300px] max-h-[600px] resize-y border-white/10 bg-black/30 font-mono text-xs text-gray-100 rounded-lg leading-relaxed"
                 aria-label="Editable Python code"
                 disabled={isRunning}

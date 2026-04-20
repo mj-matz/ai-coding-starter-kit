@@ -71,7 +71,7 @@ interface UseMqlConverterReturn {
   savedConversions: SavedConversion[];
   loadingSaves: boolean;
   fetchSaves: () => Promise<void>;
-  saveConversion: (params: SaveParams) => Promise<boolean>;
+  saveConversion: (params: SaveParams) => Promise<string | false>;
   deleteConversion: (id: string) => Promise<boolean>;
 }
 
@@ -403,7 +403,7 @@ export function useMqlConverter(): UseMqlConverterReturn {
     }
   }, []);
 
-  const saveConversion = useCallback(async (params: SaveParams): Promise<boolean> => {
+  const saveConversion = useCallback(async (params: SaveParams): Promise<string | false> => {
     try {
       const res = await fetch("/api/mql-converter/saves", {
         method: "POST",
@@ -427,9 +427,10 @@ export function useMqlConverter(): UseMqlConverterReturn {
         throw new Error(body.error || "Failed to save");
       }
 
+      const data = await res.json();
       // Refresh list
       await fetchSaves();
-      return true;
+      return (data.conversion?.id as string) ?? false;
     } catch {
       return false;
     }
