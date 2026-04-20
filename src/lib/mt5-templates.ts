@@ -29,44 +29,47 @@ enum ENUM_LOT_MODE
 
 //+------------------------------------------------------------------+
 input group "=== Symbol & Magic ==="
-input string        InpSymbol         = "{{SYMBOL}}"; // Symbol (e.g. XAUUSD+)
-input ulong         InpMagic          = 20260420;      // Magic Number
-input string        InpComment        = "TRB";         // Order Comment
+input string        InpSymbol              = "{{SYMBOL}}"; // Symbol (e.g. XAUUSD+)
+input ulong         InpMagic               = 20260420;     // Magic Number
+input string        InpComment             = "TRB";        // Order Comment
 
 input group "=== Timezone ==="
-input int           InpBrokerOffsetDE = {{BROKER_OFFSET}}; // Broker time = DE-Zeit + X hours
+input int           InpBrokerOffsetDE      = {{BROKER_OFFSET}}; // Broker time = DE-Zeit + X hours
 
 input group "=== Times (DE-Zeit) ==="
-input int           InpRangeStartHour = {{RANGE_START_H}};  // Range Start Hour
-input int           InpRangeStartMin  = {{RANGE_START_M}};  // Range Start Minute
-input int           InpRangeEndHour   = {{RANGE_END_H}};    // Range End Hour
-input int           InpRangeEndMin    = {{RANGE_END_M}};    // Range End Minute
-input int           InpCutoffHour     = {{CUTOFF_H}};       // Entry Cutoff Hour
-input int           InpCutoffMin      = {{CUTOFF_M}};       // Entry Cutoff Minute
-input int           InpCloseHour      = {{CLOSE_H}};        // Force Close Hour
-input int           InpCloseMin       = {{CLOSE_M}};        // Force Close Minute
+input int           InpRangeStartHour      = {{RANGE_START_H}};  // Range Start Hour
+input int           InpRangeStartMin       = {{RANGE_START_M}};  // Range Start Minute
+input int           InpRangeEndHour        = {{RANGE_END_H}};    // Range End Hour
+input int           InpRangeEndMin         = {{RANGE_END_M}};    // Range End Minute
+input int           InpEntryCutoffHour     = {{CUTOFF_H}};       // Entry Cutoff Hour
+input int           InpEntryCutoffMin      = {{CUTOFF_M}};       // Entry Cutoff Minute
+input int           InpForceCloseHour      = {{CLOSE_H}};        // Force Close Hour
+input int           InpForceCloseMin       = {{CLOSE_M}};        // Force Close Minute
 
 input group "=== Trading Days ==="
-input bool          InpTradeMonday    = {{TRADE_MON}};
-input bool          InpTradeTuesday   = {{TRADE_TUE}};
-input bool          InpTradeWednesday = {{TRADE_WED}};
-input bool          InpTradeThursday  = {{TRADE_THU}};
-input bool          InpTradeFriday    = {{TRADE_FRI}};
+input bool          InpTradeMonday         = {{TRADE_MON}};
+input bool          InpTradeTuesday        = {{TRADE_TUE}};
+input bool          InpTradeWednesday      = {{TRADE_WED}};
+input bool          InpTradeThursday       = {{TRADE_THU}};
+input bool          InpTradeFriday         = {{TRADE_FRI}};
 
 input group "=== Position Sizing ==="
-input ENUM_LOT_MODE InpLotMode        = {{LOT_MODE}};     // Lot Mode
-input double        InpFixedLot       = {{FIXED_LOT}};    // Fixed Lot Size
-input double        InpRiskPercent    = {{RISK_PERCENT}}; // Risk % per Trade
+input ENUM_LOT_MODE InpLotMode             = {{LOT_MODE}};      // Lot Mode
+input double        InpFixedLot            = {{FIXED_LOT}};     // Fixed Lot Size
+input double        InpRiskPercent         = {{RISK_PERCENT}};  // Risk % per Trade
 
 input group "=== SL / TP (in Points) ==="
-input int           InpSL_Points      = {{SL_POINTS}};  // Stop Loss in Points
-input int           InpTP_Points      = {{TP_POINTS}};  // Take Profit in Points
-input string        InpDirection      = "{{DIRECTION}}"; // Direction: long | short | both
-input int           InpSlippage       = 30;              // Slippage Points
+input int           InpSL_Points           = {{SL_POINTS}};  // Stop Loss in Points
+input int           InpTP_Points           = {{TP_POINTS}};  // Take Profit in Points
+input int           InpRangeBufferPts      = 0;              // Buffer on High/Low in Points
+input int           InpSlippage            = 30;             // Slippage Points
+
+input group "=== OCO ==="
+input bool          InpUseOCO              = true;  // Cancel opposite order when one fills
 
 input group "=== Trailing Stop (Points, 0 = off) ==="
-input double        InpTrailTrigger   = {{TRAIL_TRIGGER_PIPS}};
-input double        InpTrailLock      = {{TRAIL_LOCK_PIPS}};
+input double        InpTrailTrigger        = {{TRAIL_TRIGGER_PIPS}};
+input double        InpTrailLock           = {{TRAIL_LOCK_PIPS}};
 
 //+------------------------------------------------------------------+
 CTrade        trade;
@@ -74,22 +77,22 @@ CPositionInfo posInfo;
 COrderInfo    orderInfo;
 CSymbolInfo   symInfo;
 
-int    g_lastDay      = -1;
-bool   g_rangeCalc    = false;
-bool   g_ordersPlaced = false;
-bool   g_cutoffDone   = false;
-bool   g_forceClosed  = false;
-double g_rangeHigh    = 0.0;
-double g_rangeLow     = 0.0;
-ulong  g_buyTicket    = 0;
-ulong  g_sellTicket   = 0;
-int    g_digits       = 0;
-double g_point        = 0.0;
-string g_symbol       = "";
+int    g_lastProcessedDay = -1;
+bool   g_rangeCalculated  = false;
+bool   g_ordersPlaced     = false;
+bool   g_pendingCleared   = false;
+bool   g_forceClosed      = false;
+double g_rangeHigh        = 0.0;
+double g_rangeLow         = 0.0;
+ulong  g_buyStopTicket    = 0;
+ulong  g_sellStopTicket   = 0;
+int    g_digits           = 0;
+double g_point            = 0.0;
+string g_symbol           = "";
 
-datetime g_rangeEndTime = 0;
-datetime g_cutoffTime   = 0;
-datetime g_closeTime    = 0;
+datetime g_rangeEndBroker    = 0;
+datetime g_entryCutoffBroker = 0;
+datetime g_forceCloseBroker  = 0;
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -120,14 +123,20 @@ int OnInit()
                AccountInfoDouble(ACCOUNT_BALANCE),
                AccountInfoString(ACCOUNT_CURRENCY),
                AccountInfoDouble(ACCOUNT_EQUITY));
+   PrintFormat("TimeCurrent()=%s | TimeGMT()=%s",
+               TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS),
+               TimeToString(TimeGMT(),     TIME_DATE|TIME_SECONDS));
    return(INIT_SUCCEEDED);
 }
 
 //+------------------------------------------------------------------+
-void OnDeinit(const int reason) {}
+void OnDeinit(const int reason)
+{
+   PrintFormat("EA stopped. Reason: %d", reason);
+}
 
 //+------------------------------------------------------------------+
-datetime BrokerTimeToday(int deHour, int deMin)
+datetime GetBrokerTimeToday(int deHour, int deMin)
 {
    int brokerHour = deHour + InpBrokerOffsetDE;
    int dayShift = 0;
@@ -143,7 +152,7 @@ datetime BrokerTimeToday(int deHour, int deMin)
 }
 
 //+------------------------------------------------------------------+
-bool IsTradingDay()
+bool IsTradingDayAllowed()
 {
    MqlDateTime dt;
    TimeToStruct(TimeCurrent(), dt);
@@ -159,61 +168,75 @@ bool IsTradingDay()
 }
 
 //+------------------------------------------------------------------+
-void DailyReset()
+void CheckDailyReset()
 {
    MqlDateTime dt;
    TimeToStruct(TimeCurrent(), dt);
-   if(dt.day == g_lastDay) return;
+   if(dt.day == g_lastProcessedDay) return;
 
-   g_lastDay      = dt.day;
-   g_rangeCalc    = false;
-   g_ordersPlaced = false;
-   g_cutoffDone   = false;
-   g_forceClosed  = false;
-   g_rangeHigh    = 0.0;
-   g_rangeLow     = 0.0;
-   g_buyTicket    = 0;
-   g_sellTicket   = 0;
+   g_lastProcessedDay = dt.day;
+   g_rangeCalculated  = false;
+   g_ordersPlaced     = false;
+   g_pendingCleared   = false;
+   g_forceClosed      = false;
+   g_rangeHigh        = 0.0;
+   g_rangeLow         = 0.0;
+   g_buyStopTicket    = 0;
+   g_sellStopTicket   = 0;
 
-   g_rangeEndTime = BrokerTimeToday(InpRangeEndHour, InpRangeEndMin);
-   g_cutoffTime   = BrokerTimeToday(InpCutoffHour,   InpCutoffMin);
-   g_closeTime    = BrokerTimeToday(InpCloseHour,    InpCloseMin);
+   g_rangeEndBroker    = GetBrokerTimeToday(InpRangeEndHour,    InpRangeEndMin);
+   g_entryCutoffBroker = GetBrokerTimeToday(InpEntryCutoffHour, InpEntryCutoffMin);
+   g_forceCloseBroker  = GetBrokerTimeToday(InpForceCloseHour,  InpForceCloseMin);
 
    PrintFormat("Daily Reset | %s | DoW=%d | RangeEnd=%s | Cutoff=%s | Close=%s",
-               TimeToString(TimeCurrent(), TIME_DATE),
+               TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES),
                dt.day_of_week,
-               TimeToString(g_rangeEndTime, TIME_MINUTES),
-               TimeToString(g_cutoffTime,   TIME_MINUTES),
-               TimeToString(g_closeTime,    TIME_MINUTES));
+               TimeToString(g_rangeEndBroker,    TIME_DATE|TIME_MINUTES),
+               TimeToString(g_entryCutoffBroker, TIME_DATE|TIME_MINUTES),
+               TimeToString(g_forceCloseBroker,  TIME_DATE|TIME_MINUTES));
 }
 
 //+------------------------------------------------------------------+
 bool CalculateRange()
 {
-   datetime rangeStart = BrokerTimeToday(InpRangeStartHour, InpRangeStartMin);
+   datetime rangeStart = GetBrokerTimeToday(InpRangeStartHour, InpRangeStartMin);
    MqlRates rates[];
    ArraySetAsSeries(rates, true);
    int copied = CopyRates(g_symbol, PERIOD_M1, 0, 300, rates);
-   if(copied <= 0) { PrintFormat("CopyRates failed: %d", GetLastError()); return false; }
+   if(copied <= 0)
+   {
+      PrintFormat("CopyRates failed: copied=%d err=%d", copied, GetLastError());
+      return false;
+   }
 
-   double hi = -DBL_MAX, lo = DBL_MAX;
-   int    bars = 0;
+   double highest = -DBL_MAX, lowest = DBL_MAX;
+   int    matched = 0;
    for(int i = 0; i < copied; i++)
    {
-      if(rates[i].time >= rangeStart && rates[i].time < g_rangeEndTime)
+      if(rates[i].time >= rangeStart && rates[i].time < g_rangeEndBroker)
       {
-         if(rates[i].high > hi) hi = rates[i].high;
-         if(rates[i].low  < lo) lo = rates[i].low;
-         bars++;
+         if(rates[i].high > highest) highest = rates[i].high;
+         if(rates[i].low  < lowest)  lowest  = rates[i].low;
+         matched++;
       }
    }
-   if(bars == 0) { Print("Range: no bars in window"); return false; }
+   if(matched == 0)
+   {
+      PrintFormat("Range: no bars in window %s - %s (copied=%d oldest=%s newest=%s)",
+                  TimeToString(rangeStart,       TIME_DATE|TIME_MINUTES),
+                  TimeToString(g_rangeEndBroker, TIME_DATE|TIME_MINUTES),
+                  copied,
+                  copied > 0 ? TimeToString(rates[copied-1].time, TIME_DATE|TIME_MINUTES) : "-",
+                  copied > 0 ? TimeToString(rates[0].time,        TIME_DATE|TIME_MINUTES) : "-");
+      return false;
+   }
 
-   g_rangeHigh = NormalizeDouble(hi, g_digits);
-   g_rangeLow  = NormalizeDouble(lo, g_digits);
-   g_rangeCalc = true;
-   PrintFormat("RANGE: High=%.*f Low=%.*f Bars=%d",
-               g_digits, g_rangeHigh, g_digits, g_rangeLow, bars);
+   g_rangeHigh      = NormalizeDouble(highest + InpRangeBufferPts * g_point, g_digits);
+   g_rangeLow       = NormalizeDouble(lowest  - InpRangeBufferPts * g_point, g_digits);
+   g_rangeCalculated = true;
+   PrintFormat("RANGE: High=%.*f Low=%.*f Spread=%.*f Bars=%d",
+               g_digits, g_rangeHigh, g_digits, g_rangeLow,
+               g_digits, g_rangeHigh - g_rangeLow, matched);
    return true;
 }
 
@@ -231,7 +254,7 @@ double NormalizeLot(double lot)
 }
 
 //+------------------------------------------------------------------+
-double CalcLot(double entryPrice, double slPrice)
+double CalculateLotSize(double entryPrice, double slPrice)
 {
    if(InpLotMode == LOT_MODE_FIXED)
       return NormalizeLot(InpFixedLot);
@@ -258,7 +281,7 @@ double CalcLot(double entryPrice, double slPrice)
 }
 
 //+------------------------------------------------------------------+
-void PlaceOrders()
+bool PlacePendingOrders()
 {
    symInfo.RefreshRates();
    double ask     = symInfo.Ask();
@@ -266,49 +289,51 @@ void PlaceOrders()
    int    stopLvl = (int)SymbolInfoInteger(g_symbol, SYMBOL_TRADE_STOPS_LEVEL);
    double minDist = stopLvl * g_point;
 
-   if(InpDirection == "long" || InpDirection == "both")
+   double buyPrice = g_rangeHigh;
+   if(minDist > 0 && buyPrice - ask < minDist)
+      buyPrice = NormalizeDouble(ask + minDist + g_point, g_digits);
+   double buySL  = NormalizeDouble(buyPrice - InpSL_Points * g_point, g_digits);
+   double buyTP  = NormalizeDouble(buyPrice + InpTP_Points * g_point, g_digits);
+   double buyLot = CalculateLotSize(buyPrice, buySL);
+   bool buyOk = trade.BuyStop(buyLot, buyPrice, g_symbol, buySL, buyTP, ORDER_TIME_DAY, 0, InpComment + "_BS");
+   if(buyOk)
    {
-      double buyPrice = g_rangeHigh;
-      if(minDist > 0 && buyPrice - ask < minDist)
-         buyPrice = NormalizeDouble(ask + minDist + g_point, g_digits);
-      double buySL  = NormalizeDouble(buyPrice - InpSL_Points * g_point, g_digits);
-      double buyTP  = NormalizeDouble(buyPrice + InpTP_Points * g_point, g_digits);
-      double buyLot = CalcLot(buyPrice, buySL);
-      if(trade.BuyStop(buyLot, buyPrice, g_symbol, buySL, buyTP, ORDER_TIME_DAY, 0, InpComment + "_BS"))
-      {
-         g_buyTicket = trade.ResultOrder();
-         PrintFormat("BuyStop #%I64u Lot=%.2f @%.*f SL=%.*f TP=%.*f",
-                     g_buyTicket, buyLot, g_digits, buyPrice, g_digits, buySL, g_digits, buyTP);
-      }
-      else
-         PrintFormat("BuyStop FAILED: %u %s", trade.ResultRetcode(), trade.ResultRetcodeDescription());
+      g_buyStopTicket = trade.ResultOrder();
+      PrintFormat("BuyStop #%I64u Lot=%.2f @%.*f SL=%.*f TP=%.*f",
+                  g_buyStopTicket, buyLot, g_digits, buyPrice, g_digits, buySL, g_digits, buyTP);
    }
+   else
+      PrintFormat("BuyStop FAILED: rc=%u (%s) | Lot=%.2f @%.*f SL=%.*f TP=%.*f | Ask=%.*f",
+                  trade.ResultRetcode(), trade.ResultRetcodeDescription(),
+                  buyLot, g_digits, buyPrice, g_digits, buySL, g_digits, buyTP, g_digits, ask);
 
-   if(InpDirection == "short" || InpDirection == "both")
+   double sellPrice = g_rangeLow;
+   if(minDist > 0 && bid - sellPrice < minDist)
+      sellPrice = NormalizeDouble(bid - minDist - g_point, g_digits);
+   double sellSL  = NormalizeDouble(sellPrice + InpSL_Points * g_point, g_digits);
+   double sellTP  = NormalizeDouble(sellPrice - InpTP_Points * g_point, g_digits);
+   double sellLot = CalculateLotSize(sellPrice, sellSL);
+   bool sellOk = trade.SellStop(sellLot, sellPrice, g_symbol, sellSL, sellTP, ORDER_TIME_DAY, 0, InpComment + "_SS");
+   if(sellOk)
    {
-      double sellPrice = g_rangeLow;
-      if(minDist > 0 && bid - sellPrice < minDist)
-         sellPrice = NormalizeDouble(bid - minDist - g_point, g_digits);
-      double sellSL  = NormalizeDouble(sellPrice + InpSL_Points * g_point, g_digits);
-      double sellTP  = NormalizeDouble(sellPrice - InpTP_Points * g_point, g_digits);
-      double sellLot = CalcLot(sellPrice, sellSL);
-      if(trade.SellStop(sellLot, sellPrice, g_symbol, sellSL, sellTP, ORDER_TIME_DAY, 0, InpComment + "_SS"))
-      {
-         g_sellTicket = trade.ResultOrder();
-         PrintFormat("SellStop #%I64u Lot=%.2f @%.*f SL=%.*f TP=%.*f",
-                     g_sellTicket, sellLot, g_digits, sellPrice, g_digits, sellSL, g_digits, sellTP);
-      }
-      else
-         PrintFormat("SellStop FAILED: %u %s", trade.ResultRetcode(), trade.ResultRetcodeDescription());
+      g_sellStopTicket = trade.ResultOrder();
+      PrintFormat("SellStop #%I64u Lot=%.2f @%.*f SL=%.*f TP=%.*f",
+                  g_sellStopTicket, sellLot, g_digits, sellPrice, g_digits, sellSL, g_digits, sellTP);
    }
+   else
+      PrintFormat("SellStop FAILED: rc=%u (%s) | Lot=%.2f @%.*f SL=%.*f TP=%.*f | Bid=%.*f",
+                  trade.ResultRetcode(), trade.ResultRetcodeDescription(),
+                  sellLot, g_digits, sellPrice, g_digits, sellSL, g_digits, sellTP, g_digits, bid);
 
-   g_ordersPlaced = true;
+   g_ordersPlaced = (buyOk && sellOk);
+   return g_ordersPlaced;
 }
 
 //+------------------------------------------------------------------+
 void HandleOCO()
 {
-   if(g_buyTicket == 0 && g_sellTicket == 0) return;
+   if(!InpUseOCO) return;
+   if(g_buyStopTicket == 0 && g_sellStopTicket == 0) return;
 
    bool buyPos = false, sellPos = false, buyPend = false, sellPend = false;
 
@@ -323,19 +348,19 @@ void HandleOCO()
    {
       if(!orderInfo.SelectByIndex(i)) continue;
       if(orderInfo.Magic() != InpMagic || orderInfo.Symbol() != g_symbol) continue;
-      if(orderInfo.Ticket() == g_buyTicket)  buyPend  = true;
-      if(orderInfo.Ticket() == g_sellTicket) sellPend = true;
+      if(orderInfo.Ticket() == g_buyStopTicket)  buyPend  = true;
+      if(orderInfo.Ticket() == g_sellStopTicket) sellPend = true;
    }
 
-   if(buyPos && sellPend && g_sellTicket > 0)
+   if(buyPos && sellPend && g_sellStopTicket > 0)
    {
-      if(trade.OrderDelete(g_sellTicket))
-      { PrintFormat("OCO: Buy filled -> SellStop #%I64u deleted", g_sellTicket); g_sellTicket = 0; }
+      if(trade.OrderDelete(g_sellStopTicket))
+      { PrintFormat("OCO: Buy filled -> SellStop #%I64u deleted", g_sellStopTicket); g_sellStopTicket = 0; }
    }
-   if(sellPos && buyPend && g_buyTicket > 0)
+   if(sellPos && buyPend && g_buyStopTicket > 0)
    {
-      if(trade.OrderDelete(g_buyTicket))
-      { PrintFormat("OCO: Sell filled -> BuyStop #%I64u deleted", g_buyTicket); g_buyTicket = 0; }
+      if(trade.OrderDelete(g_buyStopTicket))
+      { PrintFormat("OCO: Sell filled -> BuyStop #%I64u deleted", g_buyStopTicket); g_buyStopTicket = 0; }
    }
 }
 
@@ -378,7 +403,7 @@ void ManageTrail()
 }
 
 //+------------------------------------------------------------------+
-void DeletePending(string reason)
+void DeleteOurPendingOrders(string reason)
 {
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
@@ -388,18 +413,20 @@ void DeletePending(string reason)
       if(trade.OrderDelete(t))
          PrintFormat("Pending #%I64u deleted (%s)", t, reason);
    }
-   g_buyTicket = 0; g_sellTicket = 0;
+   g_buyStopTicket = 0; g_sellStopTicket = 0;
 }
 
 //+------------------------------------------------------------------+
-void ClosePositions(string reason)
+void CloseAllOurPositions(string reason)
 {
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       if(!posInfo.SelectByIndex(i)) continue;
       if(posInfo.Magic() != InpMagic || posInfo.Symbol() != g_symbol) continue;
       ulong t = posInfo.Ticket();
-      if(!trade.PositionClose(t))
+      if(trade.PositionClose(t))
+         PrintFormat("Position #%I64u closed (%s)", t, reason);
+      else
          PrintFormat("Close #%I64u FAILED: %s", t, trade.ResultRetcodeDescription());
    }
 }
@@ -407,32 +434,32 @@ void ClosePositions(string reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   DailyReset();
+   CheckDailyReset();
    datetime now = TimeCurrent();
 
-   if(!g_forceClosed && now >= g_closeTime)
+   if(!g_forceClosed && now >= g_forceCloseBroker)
    {
-      ClosePositions("ForceClose");
-      DeletePending("ForceClose");
+      CloseAllOurPositions("ForceClose");
+      DeleteOurPendingOrders("ForceClose");
       g_forceClosed = true;
       return;
    }
 
-   if(!IsTradingDay()) return;
+   if(!IsTradingDayAllowed()) return;
 
-   if(now >= g_cutoffTime)
+   if(now >= g_entryCutoffBroker)
    {
-      if(!g_cutoffDone) { DeletePending("EntryCutoff"); g_cutoffDone = true; }
+      if(!g_pendingCleared) { DeleteOurPendingOrders("EntryCutoff"); g_pendingCleared = true; }
       HandleOCO();
       ManageTrail();
       return;
    }
 
-   if(!g_rangeCalc && now >= g_rangeEndTime)
+   if(!g_rangeCalculated && now >= g_rangeEndBroker)
       CalculateRange();
 
-   if(g_rangeCalc && !g_ordersPlaced)
-      PlaceOrders();
+   if(g_rangeCalculated && !g_ordersPlaced && now < g_entryCutoffBroker)
+      PlacePendingOrders();
 
    HandleOCO();
    ManageTrail();
