@@ -11,6 +11,11 @@ const ExportMT5Schema = z.object({
   date_from: z.string().min(1),
   date_to: z.string().min(1),
   strategy_params: z.record(z.string(), z.unknown()).default({}),
+  trading_days: z.array(z.number().int().min(0).max(4)).default([0, 1, 2, 3, 4]),
+  sizing_mode: z.enum(["risk_percent", "fixed_lot"]).default("risk_percent"),
+  risk_percent: z.number().min(0.01).max(100).default(1.0),
+  fixed_lot: z.number().positive().default(0.01),
+  broker_offset_hours: z.number().int().min(-12).max(12).default(1),
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -28,6 +33,14 @@ function numParam(params: Record<string, unknown>, key: string, fallback = 0): n
 function strParam(params: Record<string, unknown>, key: string, fallback = ""): string {
   const v = params[key];
   return typeof v === "string" ? v : fallback;
+}
+
+function parseHHMM(time: string, fallbackH: number, fallbackM: number): [number, number] {
+  const parts = time.split(":");
+  if (parts.length < 2) return [fallbackH, fallbackM];
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  return [isNaN(h) ? fallbackH : h, isNaN(m) ? fallbackM : m];
 }
 
 function fillTemplate(template: string, vars: Record<string, string | number>): string {
@@ -68,7 +81,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { strategy_id, symbol, date_from, date_to, strategy_params } = parsed.data;
+  const {
+    strategy_id, symbol, date_from, date_to, strategy_params,
+    trading_days, sizing_mode, risk_percent, fixed_lot, broker_offset_hours,
+  } = parsed.data;
 
   // Check strategy is supported
   if (!SUPPORTED_STRATEGIES.includes(strategy_id)) {
@@ -94,15 +110,27 @@ export async function POST(request: NextRequest) {
   let strategyVars: Record<string, string | number> = {};
 
   if (strategy_id === "time_range_breakout") {
+    const [rsH, rsM] = parseHHMM(strParam(strategy_params, "rangeStart", "02:00"), 2, 0);
+    const [reH, reM] = parseHHMM(strParam(strategy_params, "rangeEnd", "06:00"), 6, 0);
+    const [ctH, ctM] = parseHHMM(strParam(strategy_params, "triggerDeadline", "12:00"), 12, 0);
+    const [clH, clM] = parseHHMM(strParam(strategy_params, "timeExit", "20:00"), 20, 0);
     strategyVars = {
-      RANGE_START: strParam(strategy_params, "rangeStart", "02:00"),
-      RANGE_END: strParam(strategy_params, "rangeEnd", "06:00"),
-      TRIGGER_DEADLINE: strParam(strategy_params, "triggerDeadline", "12:00"),
-      TIME_EXIT: strParam(strategy_params, "timeExit", "20:00"),
-      STOP_LOSS: numParam(strategy_params, "stopLoss", 150),
-      TAKE_PROFIT: numParam(strategy_params, "takeProfit", 175),
+      BROKER_OFFSET: broker_offset_hours,
+      RANGE_START_H: rsH, RANGE_START_M: rsM,
+      RANGE_END_H: reH,   RANGE_END_M: reM,
+      CUTOFF_H: ctH,      CUTOFF_M: ctM,
+      CLOSE_H: clH,       CLOSE_M: clM,
+      TRADE_MON: trading_days.includes(0) ? "true" : "false",
+      TRADE_TUE: trading_days.includes(1) ? "true" : "false",
+      TRADE_WED: trading_days.includes(2) ? "true" : "false",
+      TRADE_THU: trading_days.includes(3) ? "true" : "false",
+      TRADE_FRI: trading_days.includes(4) ? "true" : "false",
+      LOT_MODE: sizing_mode === "risk_percent" ? 1 : 0,
+      FIXED_LOT: fixed_lot,
+      RISK_PERCENT: risk_percent,
+      SL_POINTS: numParam(strategy_params, "stopLoss", 150),
+      TP_POINTS: numParam(strategy_params, "takeProfit", 175),
       DIRECTION: strParam(strategy_params, "direction", "both"),
-      ENTRY_DELAY_BARS: numParam(strategy_params, "entryDelayBars", 1),
       TRAIL_TRIGGER_PIPS: numParam(strategy_params, "trailTriggerPips", 0),
       TRAIL_LOCK_PIPS: numParam(strategy_params, "trailLockPips", 0),
     };

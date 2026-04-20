@@ -78,6 +78,10 @@ function BacktestPageInner() {
           date_from: lastConfig.startDate,
           date_to: lastConfig.endDate,
           strategy_params: lastConfig.strategyParams,
+          trading_days: lastConfig.tradingDays,
+          sizing_mode: lastConfig.sizingMode,
+          risk_percent: lastConfig.riskPercent,
+          fixed_lot: lastConfig.fixedLot,
         }),
       });
       if (!response.ok) {
