@@ -2680,9 +2680,17 @@ def _check_sandbox_imports(code: str) -> None:
 
 class SandboxRunRequest(BaseModel):
     python_code: str = Field(min_length=1)
-    cache_id: str
     config: BacktestConfigRequest
     params: dict[str, Union[float, str]] = Field(default_factory=dict)
+    # MQL Converter always runs against MT5 broker data — query mt5_candles
+    # directly by date range instead of resolving a single Dukascopy chunk.
+    symbol: str = Field(min_length=1)
+    timeframe: str = Field(min_length=1)
+    date_from: date
+    date_to: date
+    # Legacy: kept optional so old clients (if any) don't break. Not used when
+    # mt5_mode=True (the only path the MQL Converter takes).
+    cache_id: Optional[str] = None
 
 
 @app.post("/sandbox/run", response_model=BacktestOrchestrationResponse)
@@ -2753,36 +2761,60 @@ async def sandbox_run(
                 except Exception:
                     pass
 
-    # ── 3. Load OHLCV from cache ────────────────────────────────────────────
-    from services.cache_service import _get_supabase_client
+    # ── 3. Load OHLCV ───────────────────────────────────────────────────────
+    # MQL Converter path: mt5_mode is always True → query mt5_candles directly
+    # by date range (covers all months in [date_from, date_to]).
+    symbol = request.symbol.upper()
+    _validate_date_range(request.date_from, request.date_to)
 
-    try:
-        client = _get_supabase_client()
-        resp = (
-            client.table("data_cache")
-            .select("file_path, symbol")
-            .eq("id", request.cache_id)
-            .eq("created_by", user_id)
-            .single()
-            .execute()
-        )
-    except Exception as e:
-        logger.error(f"Supabase lookup failed for sandbox cache_id={request.cache_id}: {e}")
-        raise HTTPException(status_code=502, detail="Failed to query data cache.")
+    if request.config.mt5_mode:
+        try:
+            df = _load_mt5_data(
+                symbol=symbol,
+                timeframe=request.timeframe,
+                date_from=request.date_from,
+                date_to=request.date_to,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"MT5 data load error for sandbox {symbol}: {e}", exc_info=True)
+            raise HTTPException(status_code=502, detail="Failed to load MT5 data.")
+    else:
+        # Legacy Dukascopy cache_id path (unused by current UI but kept for compat).
+        if not request.cache_id:
+            raise HTTPException(
+                status_code=400,
+                detail="cache_id is required when mt5_mode is false.",
+            )
+        from services.cache_service import _get_supabase_client
 
-    if not resp.data:
-        raise HTTPException(status_code=404, detail=f"cache_id '{request.cache_id}' not found.")
+        try:
+            client = _get_supabase_client()
+            resp = (
+                client.table("data_cache")
+                .select("file_path, symbol")
+                .eq("id", request.cache_id)
+                .eq("created_by", user_id)
+                .single()
+                .execute()
+            )
+        except Exception as e:
+            logger.error(f"Supabase lookup failed for sandbox cache_id={request.cache_id}: {e}")
+            raise HTTPException(status_code=502, detail="Failed to query data cache.")
 
-    file_path: str = resp.data["file_path"]
-    symbol: str = resp.data.get("symbol", "")
+        if not resp.data:
+            raise HTTPException(status_code=404, detail=f"cache_id '{request.cache_id}' not found.")
 
-    try:
-        df = load_cached_data(file_path)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Parquet file for cache_id '{request.cache_id}' not found.")
-    except Exception as e:
-        logger.error(f"Parquet load error (sandbox): {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to load data.")
+        file_path: str = resp.data["file_path"]
+
+        try:
+            df = load_cached_data(file_path)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Parquet file for cache_id '{request.cache_id}' not found.")
+        except Exception as e:
+            logger.error(f"Parquet load error (sandbox): {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to load data.")
 
     if "datetime" in df.columns:
         df = df.set_index("datetime")

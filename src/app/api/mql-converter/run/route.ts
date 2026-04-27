@@ -57,7 +57,12 @@ const BacktestConfigSchema = z
 
 const RunRequestSchema = z.object({
   python_code: z.string().min(1, "Python code is required"),
-  cache_id: z.string().uuid("cache_id must be a valid UUID"),
+  // MQL Converter loads MT5 broker data by (symbol, timeframe, date range)
+  // — no Dukascopy cache_id needed.
+  symbol: z.string().min(1),
+  timeframe: z.string().min(1),
+  date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be YYYY-MM-DD"),
+  date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be YYYY-MM-DD"),
   config: BacktestConfigSchema,
   params: z.record(z.string(), z.union([z.number(), z.string()])).optional(),
 });
@@ -124,7 +129,10 @@ export async function POST(request: NextRequest) {
 
     const sandboxPayload: Record<string, unknown> = {
       python_code: parsed.data.python_code,
-      cache_id: parsed.data.cache_id,
+      symbol: parsed.data.symbol,
+      timeframe: parsed.data.timeframe,
+      date_from: parsed.data.date_from,
+      date_to: parsed.data.date_to,
       config: configWithMt5,
     };
 

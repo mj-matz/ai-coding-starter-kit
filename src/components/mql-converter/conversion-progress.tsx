@@ -12,22 +12,25 @@ interface ConversionProgressProps {
 
 const STEP_CONFIG: Record<
   string,
-  { label: string; description: string; progress: number }
+  { label: string; description: string; progress: number; step: number }
 > = {
   converting: {
     label: "Converting MQL to Python",
     description: "AI is analyzing your Expert Adviser and generating a Python strategy...",
-    progress: 25,
+    progress: 33,
+    step: 1,
   },
   fetching_data: {
-    label: "Fetching Market Data",
-    description: "Downloading historical data from Dukascopy...",
-    progress: 55,
+    label: "Loading MT5 Data",
+    description: "Loading uploaded MT5 broker data for the selected range...",
+    progress: 66,
+    step: 2,
   },
   running: {
     label: "Running Backtest",
-    description: "Executing the converted strategy on historical data...",
+    description: "Executing the converted strategy on MT5 broker data...",
     progress: 80,
+    step: 2,
   },
 };
 
@@ -55,7 +58,7 @@ export function ConversionProgress({
             className="h-2 bg-white/10"
           />
           <p className="mt-2 text-xs text-gray-500">
-            Step {status === "converting" ? 1 : status === "fetching_data" ? 2 : 3} of 3
+            Step {config.step} of 2
           </p>
         </div>
 

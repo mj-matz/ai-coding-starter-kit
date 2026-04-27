@@ -95,8 +95,10 @@ export interface ConvertAndRunParams {
 
 export interface RerunParams {
   pythonCode: string;
-  cacheId: string;
   symbol: string;
+  timeframe: string;
+  startDate: string;
+  endDate: string;
   initialCapital: number;
   sizingMode: "risk_percent" | "fixed_lot";
   riskPercent?: number;
@@ -208,40 +210,11 @@ export function useMqlConverter(): UseMqlConverterReturn {
         setConvertResult(convertData);
       }
 
-      // Step 2: Fetch data to get cache_id
-      setStatus("fetching_data");
-
-      const fetchRes = await fetch("/api/data/fetch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          symbol: params.symbol,
-          source: "dukascopy",
-          timeframe: params.timeframe,
-          date_from: params.startDate,
-          date_to: params.endDate,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!fetchRes.ok) {
-        const body = await fetchRes.json().catch(() => ({}));
-        throw new Error(body.error || `Data fetch failed (${fetchRes.status})`);
-      }
-
-      const fetchData = await fetchRes.json();
-      const newCacheId = fetchData.cache_id;
-
-      if (!newCacheId) {
-        throw new Error("Data fetch did not return a cache_id");
-      }
-
-      setCacheId(newCacheId);
-
-      // Step 3: Get instrument config
+      // Step 2: Get instrument config
       const instrument = await getInstrumentConfig(params.symbol);
 
-      // Step 4: Run backtest with converted code
+      // Step 3: Run backtest with converted code (MT5 broker data is loaded
+      // server-side by date range — no separate /api/data/fetch step needed)
       setStatus("running");
 
       const runRes = await fetch("/api/mql-converter/run", {
@@ -249,7 +222,10 @@ export function useMqlConverter(): UseMqlConverterReturn {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           python_code: convertData.python_code,
-          cache_id: newCacheId,
+          symbol: params.symbol,
+          timeframe: params.timeframe,
+          date_from: params.startDate,
+          date_to: params.endDate,
           config: {
             initial_balance: params.initialCapital,
             sizing_mode: params.sizingMode,
@@ -332,7 +308,10 @@ export function useMqlConverter(): UseMqlConverterReturn {
 
       const runPayload: Record<string, unknown> = {
         python_code: params.pythonCode,
-        cache_id: params.cacheId,
+        symbol: params.symbol,
+        timeframe: params.timeframe,
+        date_from: params.startDate,
+        date_to: params.endDate,
         config: {
           initial_balance: params.initialCapital,
           sizing_mode: params.sizingMode,

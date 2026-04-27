@@ -63,6 +63,39 @@ When the MQL EA uses a trailing stop (trade.PositionModify, TrailingStop, InpUse
 - \`signals_df['trail_dont_cross_entry'] = 1.0\` (float 1.0/0.0: set to 1.0 if the EA uses a dont-cross-entry guard)
 These columns map directly to the engine's PROJ-30 position management. Status: "mapped" — not "unsupported".
 
+CRITICAL — PREVIOUS-DAY LOOKUPS MUST BE WEEKEND-AWARE:
+When the MQL EA references the previous day's high/low/close (e.g. \`iHigh(_Symbol, PERIOD_D1, 1)\`, \`iLow(_Symbol, PERIOD_D1, 1)\`, \`iClose(_Symbol, PERIOD_D1, 1)\`), MetaTrader's daily series skips non-trading days (weekends, holidays). On Monday, "shift 1" returns FRIDAY's value — not Sunday's.
+
+The DataFrame \`df\` you receive is intraday (1m / 5m / 1h / etc.), so naive calendar arithmetic like \`today - timedelta(days=1)\` lands on Sunday, finds zero rows, and produces NO signal on every Monday — a silent bug.
+
+You MUST replicate the trading-day shift. Use a per-date aggregate, shift by one row, then broadcast back onto the intraday index:
+
+CORRECT (works for Monday — gets Friday's high):
+\`\`\`python
+daily = df.groupby(df.index.normalize()).agg(
+    day_high=("high", "max"),
+    day_low=("low", "min"),
+    day_close=("close", "last"),
+)
+prev_day_high  = daily["day_high"].shift(1)   # one TRADING day back
+prev_day_low   = daily["day_low"].shift(1)
+prev_day_close = daily["day_close"].shift(1)
+
+# Broadcast onto the intraday index by date lookup
+date_key = df.index.normalize()
+prev_high_series  = pd.Series(date_key.map(prev_day_high.to_dict()),  index=df.index)
+prev_low_series   = pd.Series(date_key.map(prev_day_low.to_dict()),   index=df.index)
+prev_close_series = pd.Series(date_key.map(prev_day_close.to_dict()), index=df.index)
+\`\`\`
+
+WRONG (no Monday signals):
+\`\`\`python
+yesterday = df.index.date - pd.Timedelta(days=1)            # ← Monday → Sunday → empty
+prev_high = df.loc[df.index.date == yesterday, "high"].max() # ← NaN on Mondays
+\`\`\`
+
+The same rule applies to ANY "N days ago" reference (\`PERIOD_D1, N\`): shift by N rows in the per-day aggregate, never by N calendar days.
+
 CRITICAL — STRING COLUMNS MUST USE None, NOT np.nan:
 String columns (trail_type) cannot use np.nan as a fill value — numpy cannot promote string and float dtypes. Always use None as the no-value sentinel for string columns:
 CORRECT:   \`signals_df['trail_type'] = np.where(condition, 'continuous', None)\`
@@ -83,7 +116,8 @@ MQL function mappings:
 - iBands() -> pandas_ta.bbands()
 - iCCI() -> pandas_ta.cci()
 - iStochastic() -> pandas_ta.stoch()
-- iHigh/iLow/iOpen/iClose -> df["high"]/df["low"]/df["open"]/df["close"]
+- iHigh/iLow/iOpen/iClose on the current timeframe -> df["high"]/df["low"]/df["open"]/df["close"]
+- iHigh/iLow/iOpen/iClose on PERIOD_D1 with shift>0 -> per-trading-day groupby + .shift(N); MUST be weekend-aware (see CRITICAL section above). Never use \`date - timedelta(days=N)\`.
 - OrderSend(BUY) -> set long_entry, long_sl, long_tp in signals_df
 - OrderSend(SELL) -> set short_entry, short_sl, short_tp in signals_df
 - OnTick() -> converted to bar-by-bar iteration in generate_signals

@@ -44,7 +44,6 @@ export default function MqlConverterPage() {
     convertResult,
     backtestResult,
     error,
-    cacheId,
     convertAndRun,
     rerunBacktest,
     loadConversionResult,
@@ -156,7 +155,7 @@ export default function MqlConverterPage() {
   // ── Handle Re-run (edited code, no conversion) ───────────────────────────
 
   function handleRerun(editedCode: string) {
-    if (!cacheId || !lastInputValues) return;
+    if (!lastInputValues) return;
 
     const paramsDict = hasParameters
       ? buildParamsDict(strategyParameters, parameterValues)
@@ -164,8 +163,10 @@ export default function MqlConverterPage() {
 
     rerunBacktest({
       pythonCode: editedCode,
-      cacheId,
       symbol: lastInputValues.symbol,
+      timeframe: lastInputValues.timeframe,
+      startDate: lastInputValues.startDate,
+      endDate: lastInputValues.endDate,
       initialCapital: lastInputValues.initialCapital,
       sizingMode: lastInputValues.sizingMode,
       riskPercent: lastInputValues.riskPercent,
@@ -491,7 +492,7 @@ export default function MqlConverterPage() {
                   isRunning={isRunning}
                   onRerun={handleRerun}
                   parametersValid={parametersValid}
-                  canRerun={!!cacheId && !!lastInputValues}
+                  canRerun={!!lastInputValues}
                   onAddToLibrary={() => setAddToLibraryOpen(true)}
                   canAddToLibrary={!!backtestResult}
                   isAtLibraryLimit={userStrategies.strategies.length >= USER_STRATEGY_LIMIT}
