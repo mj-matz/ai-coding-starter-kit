@@ -2678,6 +2678,25 @@ def _check_sandbox_imports(code: str) -> None:
                 )
 
 
+def _merge_strategy_params(
+    user_params: dict[str, Union[float, str]],
+    instrument: "InstrumentConfigRequest",
+) -> dict[str, Union[float, str]]:
+    """Inject instrument-derived values into the strategy params dict.
+
+    The MQL→Python converter prompt instructs Claude to read pip_size via
+    params.get("pip_size", 0.0001). Without injection the strategy falls back
+    to the forex default (0.0001) and produces 100× too small SL/TP distances
+    on instruments like XAUUSD (pip_size=0.01). Server-side keys win so user-
+    supplied params cannot override them.
+    """
+    return {
+        **user_params,
+        "pip_size": instrument.pip_size,
+        "pip_value_per_lot": instrument.pip_value_per_lot,
+    }
+
+
 class SandboxRunRequest(BaseModel):
     python_code: str = Field(min_length=1)
     config: BacktestConfigRequest
@@ -2851,10 +2870,12 @@ async def sandbox_run(
             f.write(_SANDBOX_RUN_SCRIPT)
             run_script_tmp = f.name
 
+        merged_params = _merge_strategy_params(request.params, request.config.instrument)
+
         try:
             result = subprocess.run(
                 [sys.executable, run_script_tmp, code_tmp2, df_tmp, signals_tmp, project_root,
-                 json.dumps(request.params)],
+                 json.dumps(merged_params)],
                 capture_output=True,
                 text=True,
                 timeout=60,
