@@ -25,6 +25,11 @@ class PendingOrder:
     partial_close_pct: Optional[float] = None    # e.g. 40.0 = close 40% of position
     partial_at_pips: Optional[float] = None      # trigger: fixed pip distance from entry
     partial_at_r: Optional[float] = None         # trigger: R-multiple of initial risk
+    # Opt-in OCO/once-per-day guard (PROJ-22 follow-up): when True, the engine
+    # blocks any subsequent fill of a max_per_day-tagged order on the same local
+    # trading day after one such order has filled. Pending orders without this
+    # flag are unaffected, so multi-trade strategies remain supported.
+    max_per_day: bool = False
 
 
 def evaluate_pending_orders(

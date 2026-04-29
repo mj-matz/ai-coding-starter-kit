@@ -5,41 +5,52 @@ import { AlertTriangle } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 
 // ── Types ──────────────────────────────────────────────────────────────────
+
+export type ParamValue = number | string | boolean;
 
 export interface StrategyParameter {
   name: string;
   label: string;
-  type: "number" | "integer" | "string";
-  default: number | string;
-  mql_input_name: string;
+  type: "number" | "integer" | "string" | "boolean";
+  default: ParamValue;
+  mql_input_name: string | null;
 }
 
 export interface ParametersPanelProps {
   parameters: StrategyParameter[];
-  values: Record<string, number | string>;
-  onChange: (values: Record<string, number | string>) => void;
+  values: Record<string, ParamValue>;
+  onChange: (values: Record<string, ParamValue>) => void;
   disabled?: boolean;
 }
 
 // ── Validation helpers ─────────────────────────────────────────────────────
 
-function isValidValue(param: StrategyParameter, value: string): boolean {
-  if (value.trim() === "") return false;
+function isValidValue(param: StrategyParameter, value: ParamValue): boolean {
+  if (param.type === "boolean") return typeof value === "boolean";
+  const raw = String(value ?? "");
+  if (raw.trim() === "") return false;
   if (param.type === "integer") {
-    return /^-?\d+$/.test(value.trim());
+    return /^-?\d+$/.test(raw.trim());
   }
   if (param.type === "number") {
-    return value.trim() !== "" && !isNaN(Number(value.trim()));
+    return !isNaN(Number(raw.trim()));
   }
   return true; // string type accepts anything non-empty
 }
 
-function parseValue(param: StrategyParameter, raw: string): number | string {
-  if (param.type === "integer") return parseInt(raw.trim(), 10);
-  if (param.type === "number") return parseFloat(raw.trim());
-  return raw;
+function parseValue(param: StrategyParameter, raw: ParamValue): ParamValue {
+  if (param.type === "boolean") {
+    if (typeof raw === "boolean") return raw;
+    const s = String(raw).trim().toLowerCase();
+    return s === "true" || s === "1" || s === "yes";
+  }
+  const s = String(raw ?? "").trim();
+  if (param.type === "integer") return parseInt(s, 10);
+  if (param.type === "number") return parseFloat(s);
+  return s;
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -51,8 +62,8 @@ export function ParametersPanel({
   disabled = false,
 }: ParametersPanelProps) {
   const handleFieldChange = useCallback(
-    (paramName: string, rawValue: string) => {
-      onChange({ ...values, [paramName]: rawValue });
+    (paramName: string, value: ParamValue) => {
+      onChange({ ...values, [paramName]: value });
     },
     [values, onChange]
   );
@@ -75,6 +86,7 @@ export function ParametersPanel({
 
   // Check validity for all fields (used to show per-field errors)
   function getFieldError(param: StrategyParameter): string | null {
+    if (param.type === "boolean") return null;
     const raw = String(values[param.name] ?? "");
     if (raw.trim() === "") return "Value is required";
     if (param.type === "integer" && !/^-?\d+$/.test(raw.trim())) {
@@ -99,10 +111,40 @@ export function ParametersPanel({
         }`}
       >
         {parameters.map((param) => {
-          const rawValue = String(values[param.name] ?? param.default ?? "");
           const error = getFieldError(param);
           const fieldId = `param-${param.name}`;
 
+          if (param.type === "boolean") {
+            const current = values[param.name];
+            const checked =
+              typeof current === "boolean"
+                ? current
+                : current === undefined
+                ? Boolean(param.default)
+                : String(current).toLowerCase() === "true";
+            return (
+              <div
+                key={param.name}
+                className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2"
+              >
+                <Label
+                  htmlFor={fieldId}
+                  className="text-xs font-medium text-gray-300"
+                >
+                  {param.label}
+                </Label>
+                <Switch
+                  id={fieldId}
+                  checked={checked}
+                  onCheckedChange={(v) => handleFieldChange(param.name, v)}
+                  disabled={disabled}
+                  aria-label={param.label}
+                />
+              </div>
+            );
+          }
+
+          const rawValue = String(values[param.name] ?? param.default ?? "");
           return (
             <div key={param.name} className="space-y-1.5">
               <Label
@@ -113,7 +155,7 @@ export function ParametersPanel({
               </Label>
               <Input
                 id={fieldId}
-                type={param.type === "string" ? "text" : "text"}
+                type="text"
                 inputMode={
                   param.type === "string"
                     ? "text"
@@ -153,22 +195,23 @@ export function ParametersPanel({
 /** Check if all parameter values are valid (used to disable Re-run button) */
 export function areParametersValid(
   parameters: StrategyParameter[],
-  values: Record<string, number | string>
+  values: Record<string, ParamValue>
 ): boolean {
   return parameters.every((param) => {
-    const raw = String(values[param.name] ?? "");
-    return isValidValue(param, raw);
+    const v = values[param.name];
+    if (param.type === "boolean") return typeof v === "boolean" || v === undefined;
+    return isValidValue(param, v ?? "");
   });
 }
 
-/** Convert raw string values to typed params dict for the API */
+/** Convert raw values to typed params dict for the API */
 export function buildParamsDict(
   parameters: StrategyParameter[],
-  values: Record<string, number | string>
-): Record<string, number | string> {
-  const result: Record<string, number | string> = {};
+  values: Record<string, ParamValue>
+): Record<string, ParamValue> {
+  const result: Record<string, ParamValue> = {};
   for (const param of parameters) {
-    const raw = String(values[param.name] ?? param.default ?? "");
+    const raw = values[param.name] ?? param.default ?? "";
     result[param.name] = parseValue(param, raw);
   }
   return result;
@@ -177,9 +220,9 @@ export function buildParamsDict(
 /** Initialize values from parameters defaults or saved values */
 export function initParameterValues(
   parameters: StrategyParameter[],
-  savedValues?: Record<string, number | string> | null
-): Record<string, number | string> {
-  const result: Record<string, number | string> = {};
+  savedValues?: Record<string, ParamValue> | null
+): Record<string, ParamValue> {
+  const result: Record<string, ParamValue> = {};
   for (const param of parameters) {
     result[param.name] =
       savedValues?.[param.name] !== undefined

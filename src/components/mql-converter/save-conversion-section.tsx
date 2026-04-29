@@ -14,7 +14,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-import type { StrategyParameter } from "@/components/mql-converter/parameters-panel";
+import type { StrategyParameter, ParamValue } from "@/components/mql-converter/parameters-panel";
 
 interface SaveConversionSectionProps {
   onSave: (name: string) => Promise<boolean>;
@@ -24,7 +24,7 @@ interface SaveConversionSectionProps {
   /** Current strategy parameters with mql_input_name mapping */
   parameters?: StrategyParameter[];
   /** Current parameter values */
-  parameterValues?: Record<string, number | string>;
+  parameterValues?: Record<string, ParamValue>;
   /** Symbol used in the backtest */
   symbol?: string;
   /** Start date of the backtest */

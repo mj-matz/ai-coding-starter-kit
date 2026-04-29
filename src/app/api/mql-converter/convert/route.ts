@@ -108,6 +108,34 @@ When the MQL EA uses partial close (ClosePartialByDeal, InpUsePartialTP, partial
 - \`signals_df['partial_at_pips'] = N\` (float: fixed pip distance trigger — takes priority over partial_at_r if both set)
 These columns map directly to the engine's PROJ-30 partial close logic. Status: "mapped" — not "unsupported".
 
+CRITICAL — ONCE-PER-DAY / OCO LIFECYCLE FOR DAILY-RHYTHM EAs:
+Many EAs follow a "place pendings once per day, only one position per day" pattern (e.g. previous-day breakout EAs that place a buy_stop above prev_high and a sell_stop below prev_low at a fixed time, with \`InpCancelOldPendings = true\`). The engine handles cross-bar OCO cancellation natively — DO NOT re-implement \`InpCancelOldPendings\`, \`OrderDelete\`, or "track which pendings are alive" logic in Python. Instead, follow these strict rules:
+
+1) **Emit each daily OCO pair on EXACTLY ONE bar per trading day** — the bar matching the EA's place-time (e.g. \`InpPlaceHour=1, InpPlaceMinute=1\` → emit on the 01:01 bar, server-time, for that calendar day). All other bars on that day MUST be NaN for entry columns. Never broadcast the same level to multiple bars.
+
+2) **Set \`signals_df['signal_expiry']\` to next-day place-time** (UTC). This makes the engine auto-expire unfilled pendings at the next emission, replicating the EA's daily refresh.
+
+3) **Set \`signals_df['max_per_day'] = 1.0\`** (float column, NaN = disabled, 1.0 = enabled) on every signal row of a once-per-day EA. The engine then enforces "after one max_per_day order fills on local-tz date D, no further max_per_day order can fill on date D" — covering the case where the long pending fills + SL hits, then later the same day the short pending would otherwise trigger. Use the engine's local timezone (the \`timezone\` param of \`run_backtest\`) — DO NOT replicate this guard in Python.
+
+4) **Detect this pattern automatically** when ANY of the following hold in the MQL source:
+   - The EA places pendings at a fixed daily time (\`Hour(TimeCurrent()) == InpPlaceHour\` style guards, \`InpPlaceMinute\`, "once a day" comments).
+   - The EA references previous-day high/low/close as breakout levels.
+   - The EA uses \`InpCancelOldPendings\` or any flag that cancels prior pendings on new placement.
+   - The EA uses \`GlobalVariableSet\` or a "lastPlacedDate" tracker to avoid placing twice per day.
+   When detected, set \`max_per_day = 1.0\` AND emit a synthetic parameter named \`max_per_day\` (type "boolean", default true) so the user can override it in the UI.
+
+5) **If the EA legitimately enters multiple times per day** (scalping, mean-reversion, multi-signal): leave \`max_per_day\` as NaN/absent and emit one synthetic boolean parameter \`max_per_day\` with default false. Multi-trade behavior is then preserved.
+
+The generated Python code reads \`params.get('max_per_day', <inferred_default>)\` and sets the column accordingly:
+\`\`\`python
+mpd = params.get('max_per_day', True)  # or False for multi-trade EAs
+if mpd:
+    signals_df['max_per_day'] = np.where(
+        ~np.isnan(signals_df['long_entry']) | ~np.isnan(signals_df['short_entry']),
+        1.0, np.nan
+    )
+\`\`\`
+
 MQL function mappings:
 - iMA() -> pandas_ta.ema() / sma() / wma() depending on method parameter
 - iRSI() -> pandas_ta.rsi()
@@ -134,10 +162,11 @@ MQL function mappings:
 PARAMETER EXTRACTION:
 After converting the code, extract all MQL \`input\` variables (e.g. \`input int InpStopLoss = 50;\`, \`input double InpTakeProfit = 100.0;\`, \`extern int Period_MA = 14;\`) into a "parameters" array. Rules:
 - Only extract variables explicitly declared as \`input\` or \`extern\` in the original MQL code — never include calculated/derived values.
-- For each parameter, provide: name (the Python snake_case key used in params.get()), label (human-readable display name, e.g. "Stop Loss (Pips)"), type ("number" for doubles/floats, "integer" for ints, "string" for strings), default (the original value from the MQL code), mql_input_name (the original MQL variable name).
+- For each parameter, provide: name (the Python snake_case key used in params.get()), label (human-readable display name, e.g. "Stop Loss (Pips)"), type ("number" for doubles/floats, "integer" for ints, "string" for strings, "boolean" for true/false flags), default (the original value from the MQL code; for booleans use true/false), mql_input_name (the original MQL variable name; use null for synthetic engine-level parameters that have no MQL counterpart).
 - The generated Python code MUST read all extracted parameters via \`params.get("name", default)\` — never hardcode.
 - Use snake_case names that are NOT Python keywords (e.g. use "stop_loss_pips" not "type").
 - If no input/extern variables are found, return an empty "parameters" array.
+- Always append the synthetic engine-level parameter \`max_per_day\` (type "boolean", default true for once-per-day EAs / false for multi-trade EAs, mql_input_name null) so the user can override the auto-detected lifecycle (see ONCE-PER-DAY / OCO LIFECYCLE section above).
 
 You MUST respond with ONLY a valid JSON object (no markdown, no code fences) with this exact structure:
 {
@@ -285,9 +314,9 @@ export async function POST(request: NextRequest) {
       parameters?: Array<{
         name: string;
         label: string;
-        type: "number" | "integer" | "string";
-        default: number | string;
-        mql_input_name: string;
+        type: "number" | "integer" | "string" | "boolean";
+        default: number | string | boolean;
+        mql_input_name: string | null;
       }>;
     };
 

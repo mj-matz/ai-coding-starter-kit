@@ -5,8 +5,8 @@ export const USER_STRATEGY_LIMIT = 50;
 export interface UserStrategyParameter {
   name: string;
   label: string;
-  type: "number" | "integer" | "string";
-  default: number | string;
+  type: "number" | "integer" | "string" | "boolean";
+  default: number | string | boolean;
 }
 
 export interface UserStrategy {

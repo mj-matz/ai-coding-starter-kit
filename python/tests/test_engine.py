@@ -1097,3 +1097,102 @@ class TestUsed1sResolutionFlag:
         t = result.trades[0]
         assert t.exit_reason == "SL"
         assert t.used_1s_resolution is True
+
+
+class TestMaxPerDay:
+    """Opt-in once-per-day guard via signals_df['max_per_day'] = True."""
+
+    def test_blocks_second_entry_on_same_local_day(self):
+        """First max_per_day signal fills + SL; second signal on same day must NOT fire."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T08:00:00Z", 1950, 1952, 1948, 1951),
+            ("2024-01-02T08:01:00Z", 1951, 1958, 1950, 1956),
+            ("2024-01-02T08:02:00Z", 1956, 1957, 1939, 1942),
+            ("2024-01-02T14:00:00Z", 1942, 1944, 1940, 1943),
+            ("2024-01-02T14:01:00Z", 1943, 1955, 1942, 1954),
+            ("2024-01-02T14:02:00Z", 1954, 1958, 1953, 1956),
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T08:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 2000.0
+            },
+            "2024-01-02T14:00:00Z": {
+                "short_entry": 1944.0, "short_sl": 1960.0, "short_tp": 1900.0
+            },
+        })
+        signals["max_per_day"] = 1.0
+        result = run_backtest(ohlcv, signals, cfg())
+
+        assert len(result.trades) == 1
+        assert result.trades[0].direction == "long"
+        assert result.trades[0].exit_reason == "SL"
+
+    def test_allows_entry_on_following_day(self):
+        """max_per_day fill on day 1 must NOT block day 2."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T08:00:00Z", 1950, 1952, 1948, 1951),
+            ("2024-01-02T08:01:00Z", 1951, 1958, 1950, 1956),
+            ("2024-01-02T08:02:00Z", 1956, 1957, 1939, 1942),
+            ("2024-01-03T08:00:00Z", 1942, 1944, 1940, 1943),
+            ("2024-01-03T08:01:00Z", 1943, 1955, 1942, 1954),
+            ("2024-01-03T08:02:00Z", 1954, 1980, 1953, 1975),
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T08:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 2000.0
+            },
+            "2024-01-03T08:00:00Z": {
+                "long_entry": 1950.0, "long_sl": 1935.0, "long_tp": 1970.0
+            },
+        })
+        signals["max_per_day"] = 1.0
+        result = run_backtest(ohlcv, signals, cfg())
+
+        assert len(result.trades) == 2
+        assert result.trades[0].exit_reason == "SL"
+        assert result.trades[1].exit_reason == "TP"
+
+    def test_does_not_block_when_flag_absent(self):
+        """Without max_per_day, multiple entries on the same day still allowed."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T08:00:00Z", 1950, 1952, 1948, 1951),
+            ("2024-01-02T08:01:00Z", 1951, 1958, 1950, 1956),
+            ("2024-01-02T08:02:00Z", 1956, 1957, 1939, 1942),
+            ("2024-01-02T14:00:00Z", 1942, 1944, 1940, 1943),
+            ("2024-01-02T14:01:00Z", 1943, 1955, 1942, 1954),
+            ("2024-01-02T14:02:00Z", 1954, 1980, 1953, 1975),
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T08:00:00Z": {
+                "long_entry": 1955.0, "long_sl": 1940.0, "long_tp": 2000.0
+            },
+            "2024-01-02T14:00:00Z": {
+                "long_entry": 1950.0, "long_sl": 1935.0, "long_tp": 1970.0
+            },
+        })
+        result = run_backtest(ohlcv, signals, cfg())
+
+        assert len(result.trades) == 2
+
+    def test_blocks_oco_partner_pending_from_prior_bar(self):
+        """OCO pair placed on bar N: long fills, short pending stays unfilled.
+        Later bar same day where short would trigger -> must be skipped."""
+        ohlcv = make_ohlcv([
+            ("2024-01-02T08:00:00Z", 1950, 1952, 1948, 1951),
+            ("2024-01-02T08:01:00Z", 1951, 1956, 1950, 1955),
+            ("2024-01-02T08:02:00Z", 1955, 1956, 1939, 1942),
+            ("2024-01-02T14:00:00Z", 1942, 1943, 1935, 1937),
+        ])
+        signals = make_signals(ohlcv, {
+            "2024-01-02T08:00:00Z": {
+                "long_entry":  1955.0, "long_sl": 1940.0, "long_tp": 2000.0,
+                "short_entry": 1940.0, "short_sl": 1955.0, "short_tp": 1900.0,
+            },
+        })
+        signals["max_per_day"] = 1.0
+        signals["signal_expiry"] = pd.Series(pd.NaT, index=signals.index, dtype="datetime64[ns, UTC]")
+        signals.at[pd.Timestamp("2024-01-02T08:00:00Z"), "signal_expiry"] = pd.Timestamp("2024-01-03T00:00:00Z")
+        result = run_backtest(ohlcv, signals, cfg())
+
+        assert len(result.trades) == 1
+        assert result.trades[0].direction == "long"

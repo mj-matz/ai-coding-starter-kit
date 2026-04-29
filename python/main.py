@@ -2679,9 +2679,9 @@ def _check_sandbox_imports(code: str) -> None:
 
 
 def _merge_strategy_params(
-    user_params: dict[str, Union[float, str]],
+    user_params: dict[str, Union[float, str, bool]],
     instrument: "InstrumentConfigRequest",
-) -> dict[str, Union[float, str]]:
+) -> dict[str, Union[float, str, bool]]:
     """Inject instrument-derived values into the strategy params dict.
 
     The MQL→Python converter prompt instructs Claude to read pip_size via
@@ -2700,7 +2700,7 @@ def _merge_strategy_params(
 class SandboxRunRequest(BaseModel):
     python_code: str = Field(min_length=1)
     config: BacktestConfigRequest
-    params: dict[str, Union[float, str]] = Field(default_factory=dict)
+    params: dict[str, Union[float, str, bool]] = Field(default_factory=dict)
     # MQL Converter always runs against MT5 broker data — query mt5_candles
     # directly by date range instead of resolving a single Dukascopy chunk.
     symbol: str = Field(min_length=1)

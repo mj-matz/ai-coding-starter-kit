@@ -212,17 +212,21 @@ def run_backtest(
     _partial_pct      = signals["partial_close_pct"].to_numpy(dtype=float)  if "partial_close_pct"     in signals.columns else _nan_col
     _partial_at_pips  = signals["partial_at_pips"].to_numpy(dtype=float)    if "partial_at_pips"       in signals.columns else _nan_col
     _partial_at_r     = signals["partial_at_r"].to_numpy(dtype=float)       if "partial_at_r"          in signals.columns else _nan_col
+    # Opt-in once-per-day guard (PROJ-22 follow-up). Default 0.0 (disabled).
+    _zero_col        = np.zeros(len(signals), dtype=float)
+    _max_per_day_arr = signals["max_per_day"].to_numpy(dtype=float) if "max_per_day" in signals.columns else _zero_col
 
-    # ── Option B: Pre-compute time-exit flags (avoid tz_convert per bar) ─────
+    # ── Option B: Pre-compute local-tz dates + time-exit flags ────────────────
+    # _local_dates is always computed (used by both time-exit gap detection and
+    # the once-per-day guard).
+    _local_idx   = ohlcv.index.tz_convert(exit_tz)
+    _local_dates = np.array(_local_idx.date)
     if exit_time is not None:
-        _local_idx   = ohlcv.index.tz_convert(exit_tz)
         _exit_min    = exit_time.hour * 60 + exit_time.minute
         _bar_min     = _local_idx.hour * 60 + _local_idx.minute
-        _local_dates = np.array(_local_idx.date)
         exit_flags: Optional[np.ndarray] = (_bar_min >= _exit_min)
     else:
         exit_flags = None
-        _local_dates = None
 
     def _str_val(v) -> Optional[str]:
         """Return string value from object array cell, or None if NaN/None."""
@@ -239,6 +243,9 @@ def run_backtest(
     position: Optional[OpenPosition] = None
     pending_orders: List[PendingOrder] = []
     expired_order_dates: List[str] = []
+    # Once-per-day guard: local-tz date on which a max_per_day-tagged order
+    # last filled. Subsequent max_per_day orders on the same date are blocked.
+    last_max_per_day_date = None
 
     for i in range(len(ohlcv)):
         bar_time = ohlcv.index[i]
@@ -311,8 +318,16 @@ def run_backtest(
                 _flip_pct = float(_partial_pct[i - 1]) if not np.isnan(_partial_pct[i - 1]) else None
                 _flip_at_pips = float(_partial_at_pips[i - 1]) if not np.isnan(_partial_at_pips[i - 1]) else None
                 _flip_at_r = float(_partial_at_r[i - 1]) if not np.isnan(_partial_at_r[i - 1]) else None
+                _flip_mpd = bool(_max_per_day_arr[i - 1])
+                # Once-per-day guard: skip flip orders that are tagged max_per_day
+                # if today already had a max_per_day fill.
+                _flip_blocked = (
+                    _flip_mpd
+                    and last_max_per_day_date is not None
+                    and _local_dates[i] == last_max_per_day_date
+                )
                 flip_orders: List[PendingOrder] = []
-                if not np.isnan(_le_flip):
+                if not _flip_blocked and not np.isnan(_le_flip):
                     _ltp_flip = _long_tp[i - 1]
                     flip_orders.append(PendingOrder(
                         direction="long",
@@ -328,8 +343,9 @@ def run_backtest(
                         partial_close_pct=_flip_pct,
                         partial_at_pips=_flip_at_pips,
                         partial_at_r=_flip_at_r,
+                        max_per_day=_flip_mpd,
                     ))
-                if not np.isnan(_se_flip):
+                if not _flip_blocked and not np.isnan(_se_flip):
                     _stp_flip = _short_tp[i - 1]
                     flip_orders.append(PendingOrder(
                         direction="short",
@@ -345,6 +361,7 @@ def run_backtest(
                         partial_close_pct=_flip_pct,
                         partial_at_pips=_flip_at_pips,
                         partial_at_r=_flip_at_r,
+                        max_per_day=_flip_mpd,
                     ))
                 if flip_orders:
                     pending_orders = flip_orders
@@ -448,6 +465,15 @@ def run_backtest(
                         break  # OCO pair shares the same expiry; one record per day is enough
             pending_orders = active
 
+        # ── 1e. Once-per-day guard: prune max_per_day-tagged pendings if today
+        # already had a max_per_day fill.  Untagged orders pass through.
+        if (
+            pending_orders
+            and last_max_per_day_date is not None
+            and _local_dates[i] == last_max_per_day_date
+        ):
+            pending_orders = [o for o in pending_orders if not o.max_per_day]
+
         # ── 2. Check pending orders ─────────────────────────────────────────
         if position is None and pending_orders:
             triggered = evaluate_pending_orders(pending_orders, bar_high, bar_low, bar_open, spread_offset=spread_offset)
@@ -498,6 +524,8 @@ def run_backtest(
                     partial_at_r=triggered.partial_at_r,
                 )
                 pending_orders = []  # cancel OCO partner
+                if triggered.max_per_day:
+                    last_max_per_day_date = _local_dates[i]
 
                 # Initialize MAE with the entry bar's adverse extreme
                 if position.direction == "long":
@@ -607,6 +635,11 @@ def run_backtest(
             _le = _long_entry[i]
             _se = _short_entry[i]
             if not (np.isnan(_le) and np.isnan(_se)):
+                _sig_mpd = bool(_max_per_day_arr[i])
+                # Once-per-day guard: drop max_per_day signals on a date that
+                # already had a max_per_day fill.  Non-tagged signals proceed.
+                if _sig_mpd and last_max_per_day_date is not None and _local_dates[i] == last_max_per_day_date:
+                    continue
                 _raw_exp = _sig_expiry[i]
                 _expiry: Optional[pd.Timestamp] = None
                 if not pd.isnull(_raw_exp):
@@ -641,6 +674,7 @@ def run_backtest(
                         partial_close_pct=_sig_pct,
                         partial_at_pips=_sig_at_pips,
                         partial_at_r=_sig_at_r,
+                        max_per_day=_sig_mpd,
                     ))
                 if not np.isnan(_se):
                     _stp = _short_tp[i]
@@ -658,6 +692,7 @@ def run_backtest(
                         partial_close_pct=_sig_pct,
                         partial_at_pips=_sig_at_pips,
                         partial_at_r=_sig_at_r,
+                        max_per_day=_sig_mpd,
                     ))
                 if new_orders:
                     pending_orders = new_orders

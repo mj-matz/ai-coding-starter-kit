@@ -15,12 +15,14 @@ export interface MappingEntry {
   note: string;
 }
 
+export type ParamValue = number | string | boolean;
+
 export interface StrategyParameter {
   name: string;
   label: string;
-  type: "number" | "integer" | "string";
-  default: number | string;
-  mql_input_name: string;
+  type: "number" | "integer" | "string" | "boolean";
+  default: ParamValue;
+  mql_input_name: string | null;
 }
 
 export interface ConvertResult {
@@ -29,7 +31,7 @@ export interface ConvertResult {
   warnings: string[];
   parameters?: StrategyParameter[];
   /** Saved parameter values to restore when loading a conversion (not set on fresh conversions) */
-  initialParameterValues?: Record<string, number | string>;
+  initialParameterValues?: Record<string, ParamValue>;
 }
 
 export interface SavedConversionMetrics {
@@ -63,7 +65,7 @@ interface UseMqlConverterReturn {
 
   convertAndRun: (params: ConvertAndRunParams) => Promise<void>;
   rerunBacktest: (params: RerunParams) => Promise<void>;
-  loadConversionResult: (pythonCode: string, mappingReport: MappingEntry[], parameters?: StrategyParameter[], savedValues?: Record<string, number | string>) => void;
+  loadConversionResult: (pythonCode: string, mappingReport: MappingEntry[], parameters?: StrategyParameter[], savedValues?: Record<string, ParamValue>) => void;
   cancel: () => void;
   reset: () => void;
 
@@ -105,7 +107,7 @@ export interface RerunParams {
   fixedLot?: number;
   commission: number;
   slippage: number;
-  params?: Record<string, number | string>;
+  params?: Record<string, ParamValue>;
 }
 
 interface SaveParams {
@@ -116,7 +118,7 @@ interface SaveParams {
   mappingReport: MappingEntry[];
   backtestResult?: BacktestResult;
   parameters?: StrategyParameter[];
-  parameterValues?: Record<string, number | string>;
+  parameterValues?: Record<string, ParamValue>;
 }
 
 // ── Instrument config lookup ────────────────────────────────────────────────
@@ -277,7 +279,7 @@ export function useMqlConverter(): UseMqlConverterReturn {
     pythonCode: string,
     mappingReport: MappingEntry[],
     parameters?: StrategyParameter[],
-    savedValues?: Record<string, number | string>
+    savedValues?: Record<string, ParamValue>
   ) => {
     setConvertResult({
       python_code: pythonCode,

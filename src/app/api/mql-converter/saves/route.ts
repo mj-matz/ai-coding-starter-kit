@@ -7,9 +7,9 @@ import { createClient } from "@/lib/supabase/server";
 const StrategyParameterSchema = z.object({
   name: z.string(),
   label: z.string(),
-  type: z.enum(["number", "integer", "string"]),
-  default: z.union([z.number(), z.string()]),
-  mql_input_name: z.string(),
+  type: z.enum(["number", "integer", "string", "boolean"]),
+  default: z.union([z.number(), z.string(), z.boolean()]),
+  mql_input_name: z.string().nullable(),
 });
 
 const SaveConversionSchema = z.object({
@@ -27,7 +27,7 @@ const SaveConversionSchema = z.object({
   ),
   backtest_result: z.record(z.string(), z.unknown()).optional(),
   parameters: z.array(StrategyParameterSchema).optional(),
-  parameter_values: z.record(z.string(), z.union([z.number(), z.string()])).optional(),
+  parameter_values: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])).optional(),
 });
 
 // ── GET: list saved conversions ──────────────────────────────────────────────

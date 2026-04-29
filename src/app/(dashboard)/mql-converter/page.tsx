@@ -23,7 +23,7 @@ import {
   buildParamsDict,
   initParameterValues,
 } from "@/components/mql-converter/parameters-panel";
-import type { StrategyParameter } from "@/components/mql-converter/parameters-panel";
+import type { StrategyParameter, ParamValue } from "@/components/mql-converter/parameters-panel";
 import { SaveConversionSection } from "@/components/mql-converter/save-conversion-section";
 import { SavedConversionsList } from "@/components/mql-converter/saved-conversions-list";
 import { UserStrategyList } from "@/components/mql-converter/user-strategy-list";
@@ -99,7 +99,7 @@ export default function MqlConverterPage() {
 
   // Parameter state (extracted from conversion, editable by user)
   const [strategyParameters, setStrategyParameters] = useState<StrategyParameter[]>([]);
-  const [parameterValues, setParameterValues] = useState<Record<string, number | string>>({});
+  const [parameterValues, setParameterValues] = useState<Record<string, ParamValue>>({});
 
   const isRunning =
     status === "converting" ||
@@ -250,7 +250,7 @@ export default function MqlConverterPage() {
         // Pass both definitions and saved values into loadConversionResult so the
         // useEffect can initialise parameterValues correctly without a second render
         // overwriting them with defaults.
-        const savedParams = data.parameters as { definitions?: StrategyParameter[]; values?: Record<string, number | string> } | null;
+        const savedParams = data.parameters as { definitions?: StrategyParameter[]; values?: Record<string, ParamValue> } | null;
         loadConversionResult(
           data.python_code,
           data.mapping_report ?? [],

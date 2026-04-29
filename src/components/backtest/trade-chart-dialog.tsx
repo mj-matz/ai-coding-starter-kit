@@ -170,12 +170,15 @@ export function TradeChartDialog({
     const timeParams = new URLSearchParams({ timeframe });
 
     if (trade != null) {
-      // Load from 14:00 so candles before rangeStart are available on zoom-out
+      // Load the full trading day in the instrument timezone so trades at any
+      // hour (early-morning EAs, late-evening exits) are visible. The previous
+      // 14:00–23:59 window assumed afternoon-only breakouts and missed trades
+      // outside that band (e.g. golddave fills at 03:47).
       const dayStartIso = new Date(
-        buildLocalTimestamp(trade.entry_time, "14:00") * 1000
+        buildTimestampInTz(trade.entry_time, "00:00", instrumentTimezone) * 1000
       ).toISOString();
       const endOfDayIso = new Date(
-        buildLocalTimestamp(trade.entry_time, "23:59") * 1000
+        buildTimestampInTz(trade.entry_time, "23:59", instrumentTimezone) * 1000
       ).toISOString();
       timeParams.set("entry_time", dayStartIso);
       timeParams.set("exit_time", endOfDayIso);
@@ -228,7 +231,7 @@ export function TradeChartDialog({
       });
 
     return () => controller.abort();
-  }, [open, trade, skippedDay, cacheId, symbol, canFetch, timeframe, cacheKey, candleCache?.key, rangeStart, mt5Mode]);
+  }, [open, trade, skippedDay, cacheId, symbol, canFetch, timeframe, cacheKey, candleCache?.key, rangeStart, mt5Mode, instrumentTimezone]);
 
   // Render chart once candles are available
   useEffect(() => {

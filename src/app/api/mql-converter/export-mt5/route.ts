@@ -6,8 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 
 const ParameterSchema = z.object({
   mql_input_name: z.string().min(1),
-  current_value: z.union([z.number(), z.string()]),
-  type: z.enum(["number", "integer", "string"]),
+  current_value: z.union([z.number(), z.string(), z.boolean()]),
+  type: z.enum(["number", "integer", "string", "boolean"]),
 });
 
 const ExportRequestSchema = z.object({
@@ -67,6 +67,13 @@ function formatValue(param: ExportParameter): string {
   }
   if (param.type === "integer") {
     return String(Math.round(Number(param.current_value)));
+  }
+  if (param.type === "boolean") {
+    const v =
+      typeof param.current_value === "boolean"
+        ? param.current_value
+        : String(param.current_value).toLowerCase() === "true";
+    return v ? "true" : "false";
   }
   return String(param.current_value);
 }

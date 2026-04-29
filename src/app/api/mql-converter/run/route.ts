@@ -64,7 +64,7 @@ const RunRequestSchema = z.object({
   date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be YYYY-MM-DD"),
   date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be YYYY-MM-DD"),
   config: BacktestConfigSchema,
-  params: z.record(z.string(), z.union([z.number(), z.string()])).optional(),
+  params: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])).optional(),
 });
 
 // ── Route handler ────────────────────────────────────────────────────────────
