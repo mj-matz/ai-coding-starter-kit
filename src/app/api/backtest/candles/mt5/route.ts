@@ -10,14 +10,6 @@ const QuerySchema = z.object({
   exit_time: z.string().min(1),
 });
 
-function toMt5Timeframe(tf: string): string {
-  const map: Record<string, string> = {
-    "1m": "M1", "2m": "M2", "3m": "M3", "5m": "M5",
-    "15m": "M15", "30m": "M30", "1h": "H1", "4h": "H4", "1d": "D1",
-  };
-  return map[tf] ?? "M1";
-}
-
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -42,15 +34,16 @@ export async function GET(request: NextRequest) {
   }
 
   const { symbol, timeframe, entry_time, exit_time } = parsed.data;
-  const mt5Timeframe = toMt5Timeframe(timeframe);
 
-  // Find the dataset for this user / asset / timeframe
+  // mt5_datasets stores timeframe in the lowercase form ("1m", "5m", ...) — same
+  // contract as the upload route + Python loader. Don't translate to "M1"/"M5"
+  // here or the lookup misses every dataset.
   const { data: dataset, error: dsError } = await supabase
     .from("mt5_datasets")
     .select("id")
     .eq("user_id", user.id)
     .eq("asset", symbol)
-    .eq("timeframe", mt5Timeframe)
+    .eq("timeframe", timeframe)
     .maybeSingle();
 
   if (dsError) {
@@ -59,7 +52,7 @@ export async function GET(request: NextRequest) {
 
   if (!dataset) {
     return NextResponse.json(
-      { error: `No MT5 data found for ${symbol} ${mt5Timeframe}` },
+      { error: `No MT5 data found for ${symbol} ${timeframe}` },
       { status: 404 }
     );
   }
