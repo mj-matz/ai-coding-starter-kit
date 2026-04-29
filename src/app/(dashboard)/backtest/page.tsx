@@ -242,6 +242,8 @@ function BacktestPageInner() {
             isSaving={isSaving}
             defaultRunName={defaultRunName}
             strategyParams={lastConfig?.strategyParams}
+            mt5Mode={lastConfig?.mt5Mode}
+            symbol={lastConfig?.symbol}
           />
         </div>
       </div>

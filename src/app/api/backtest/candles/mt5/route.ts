@@ -64,6 +64,8 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // 1500 covers a full 24h day at 1m resolution (1440 bars) plus a small buffer
+  // for trade modals that span the whole instrument-tz day.
   const { data: rows, error: candleError } = await supabase
     .from("mt5_candles")
     .select("ts, open, high, low, close")
@@ -71,7 +73,7 @@ export async function GET(request: NextRequest) {
     .gte("ts", entry_time)
     .lte("ts", exit_time)
     .order("ts")
-    .limit(700);
+    .limit(1500);
 
   if (candleError) {
     return NextResponse.json({ error: "Failed to load candles" }, { status: 500 });

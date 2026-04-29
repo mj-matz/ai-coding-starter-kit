@@ -40,6 +40,12 @@ interface ResultsPanelProps {
   isSaving?: boolean;
   defaultRunName?: string;
   strategyParams?: Record<string, unknown>;
+  /** When true, the trade-chart modal queries mt5_candles instead of the Dukascopy cache. */
+  mt5Mode?: boolean;
+  /** Falls back to result.symbol when omitted (kept for callers that pass it explicitly). */
+  symbol?: string;
+  /** IANA timezone for the trade-chart fetch window + range-box rendering. */
+  instrumentTimezone?: string;
 }
 
 function EmptyState() {
@@ -142,6 +148,9 @@ export function ResultsPanel({
   isSaving = false,
   defaultRunName = "",
   strategyParams,
+  mt5Mode,
+  symbol,
+  instrumentTimezone,
 }: ResultsPanelProps) {
   if (status === "loading") {
     return <LoadingState isTimedOut={isTimedOut} onCancel={onCancel} />;
@@ -197,11 +206,14 @@ export function ResultsPanel({
             trades={result.trades}
             skippedDays={result.skipped_days ?? []}
             cacheId={result.cache_id}
+            symbol={symbol ?? result.symbol}
             timeframe={result.timeframe}
             rangeStart={rangeStart}
             rangeEnd={rangeEnd}
             triggerDeadline={triggerDeadline}
             newsDates={newsDates}
+            mt5Mode={mt5Mode}
+            instrumentTimezone={instrumentTimezone}
           />
         </TabsContent>
       </Tabs>

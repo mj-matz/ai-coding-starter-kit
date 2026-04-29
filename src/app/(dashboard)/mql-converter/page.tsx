@@ -462,6 +462,8 @@ export default function MqlConverterPage() {
                   initialCapital={lastInputValues?.initialCapital ?? 10000}
                   rangeStart=""
                   rangeEnd=""
+                  mt5Mode
+                  symbol={lastInputValues?.symbol}
                 />
               )}
 
