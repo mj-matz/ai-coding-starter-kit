@@ -24,12 +24,12 @@ logger = logging.getLogger(__name__)
 
 # ── Configuration ───────────────────────────────────────────────────────────
 
-MT5_BRIDGE_URL: str = os.environ.get("MT5_BRIDGE_URL", "").rstrip("/")
-MT5_BRIDGE_TOKEN: str = os.environ.get("MT5_BRIDGE_TOKEN", "")
+MT5_BRIDGE_URL: str = os.environ.get("MT5_BRIDGE_URL", "").strip().rstrip("/")
+MT5_BRIDGE_TOKEN: str = os.environ.get("MT5_BRIDGE_TOKEN", "").strip()
 # Optional outbound proxy — set on Railway to the Tailscale userspace HTTP/SOCKS5
 # proxy (e.g. http://localhost:1055) so bridge calls reach the Windows host
 # through the tailnet without exposing the bridge to the public internet.
-MT5_BRIDGE_PROXY: Optional[str] = os.environ.get("TS_HTTP_PROXY") or None
+MT5_BRIDGE_PROXY: Optional[str] = (os.environ.get("TS_HTTP_PROXY") or "").strip() or None
 
 # Per the spec: 60s for health checks, up to 1h for run submissions.
 HEALTH_TIMEOUT_SECONDS: float = 60.0
