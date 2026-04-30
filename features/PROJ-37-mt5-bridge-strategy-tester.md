@@ -1,8 +1,8 @@
 # PROJ-37: MT5 Bridge Worker — Strategy Tester Run
 
-## Status: Planned
+## Status: In Progress
 **Created:** 2026-04-28
-**Last Updated:** 2026-04-30
+**Last Updated:** 2026-04-30 (backend scaffolding landed — see "Backend Implementation Notes" below)
 
 ## Dependencies
 - Requires: PROJ-8 (Authentication) — admin-only access via Supabase Auth
@@ -355,6 +355,45 @@ RLS policies on all three tables mirror `optimization_runs` — users see only t
 - **Bridge Worker (new repo):** `fastapi`, `uvicorn`, `MetaTrader5` (Windows Python package), `lxml`, `nssm` (or `pywin32`) for the Windows Service install
 - **Python backend:** `httpx` (already available on Railway, also used for Telegram Bot API calls), `apscheduler` (new, for the 5-min stale-run sweeper)
 - **Frontend:** no new npm packages — reuses existing shadcn/ui components and Optimizer polling pattern
+
+## Backend Implementation Notes (2026-04-30)
+
+Scope of this `/backend` pass — Bridge Worker repo and frontend UI integration intentionally remain out of scope.
+
+**Migration** — `supabase/migrations/20260430_mt5_tester_runs.sql`
+- `mt5_tester_runs`, `mt5_tester_metrics`, `mt5_tester_trades` (table created; XML→row persistence deferred per plan), `user_settings`
+- All four tables have RLS enabled, owner-only policies (admin SELECT mirrored from `optimization_runs`); `user_settings` is owner-only with no admin SELECT (Telegram tokens are sensitive).
+- `last_status_at` trigger fires only on status transitions: `BEFORE UPDATE OF status ... WHEN NEW.status IS DISTINCT FROM OLD.status`.
+- Indexes: `(user_id, started_at DESC)`, partial `(status, last_status_at)` for the 5-min sweeper, partial `(bridge_job_id) WHERE NOT NULL`, `(run_id)` on trades.
+
+**Python backend** (Railway)
+- `python/services/mt5_bridge.py` — async httpx client, 3× retry with exponential backoff, 60 s health / 30 s submit / 1 h run timeouts, structured errors (`BridgeAuthError` → 502, `BridgeOfflineError` → 502, `BridgeConfigError` → 503).
+- `python/services/notifications.py` — `send_telegram()` performs a real httpx POST to `https://api.telegram.org/bot{token}/sendMessage`. Documented Telegram error shapes are mapped to fixed user-facing strings: 401 → `"Invalid Telegram bot token (401)"`, 403 → `"Bot blocked or chat not found (403)"`, 400 → `"Telegram rejected request (400): {description}"` (description relayed verbatim). 200 with `ok=false` (e.g. retry_after) is also surfaced as a failure. Rate-limit (10/hour/user, in-memory deque) and per-run-type opt-in gate unchanged. `force=True` flag bypasses the run-type gate for the Settings test button.
+- `python/jobs/stale_run_cleanup.py` — APScheduler cron, every 5 min, transitions runs older than 4 h in `running`/`queued` to `failed` with the stale-run error message. Notifications fire per cleared run. Adds `cleanup_orphans_after_bridge_restart()` for the fast-path event-driven cleanup: per row in `running`/`queued`, calls `bridge.run_status(bridge_job_id)` and transitions rows the bridge has no record of (404 / `unknown` / missing `bridge_job_id`) to `failed` with `ORPHAN_AFTER_RESTART_ERROR_MESSAGE`.
+- `python/main.py` — added `POST /mt5/tester/run`, `GET /mt5/tester/status/{job_id}`, `GET /mt5/health` (10 s in-memory cache + bridge-restart auto-detection on cache-miss), `GET /mt5/tester/pending-jobs` (bridge boot-time seed), `POST /mt5/orphan-cleanup` (bridge boot-time orphan flag), `POST /notifications/test`. Startup hook starts the stale-run scheduler. Bridge-restart detection: `_maybe_handle_bridge_restart` tracks the previously observed `last_started_at`; when it changes, `cleanup_orphans_after_bridge_restart` is scheduled exactly once (lock-protected) as a background task. First-ever observation seeds the cache without firing.
+- `python/requirements.txt` — `apscheduler==3.10.4`.
+- `python/.env.example` — `MT5_BRIDGE_URL`, `MT5_BRIDGE_TOKEN`.
+
+**Next.js API routes**
+- `src/app/api/mt5/health/route.ts` (GET, 10 s cache)
+- `src/app/api/mt5/tester/run/route.ts` (POST, Zod-validated)
+- `src/app/api/mt5/tester/status/[jobId]/route.ts` (GET, UUID-validated)
+- `src/app/api/mt5/tester/runs/route.ts` (GET history with metrics join)
+- `src/app/api/mt5/tester/runs/[id]/route.ts` (GET single + DELETE)
+- `src/app/api/settings/notifications/route.ts` (GET + PUT — `telegram_bot_token` write-only, GET returns `telegram_bot_token_set` boolean)
+- `src/app/api/settings/notifications/test/route.ts` (POST proxies `/notifications/test`)
+
+**Deferred per approved plan**
+- Bridge Worker repo (`mt5-bridge`) — separate Windows-only project
+- Frontend UI (MQL Converter "Test in MT5" button, Settings cards)
+
+**Trade persistence (added 2026-04-30 follow-up)**
+- `_replace_run_trades` in `python/main.py` (next to `_upsert_run_metrics`) maps the bridge's parsed XML trade list 1:1 to the `mt5_tester_trades` columns. Idempotent: each completion poll deletes prior rows for the run and re-inserts the current set.
+- MT5 timestamps (`YYYY.MM.DD HH:MM:SS`) normalised to ISO 8601 via `_normalise_mt5_timestamp`; trade types coerced to the CHECK-constrained `buy`/`sell` via `_normalise_direction` (older builds emit `Buy`/`buy stop`/etc.).
+- Wired into `GET /mt5/tester/status/{job_id}` alongside `_upsert_run_metrics` on transition to `done`.
+- Test coverage: `python/tests/test_mt5_tester_trades_persistence.py` — fixture-driven, runs the bridge's own XML parser against `mt5-bridge/tests/fixtures/sample_report.xml` and asserts the inserted Supabase rows match the parser output 1:1.
+
+**Next step:** `/frontend` to wire the MQL Converter button + Settings cards, then `/qa`.
 
 ## QA Test Results
 _To be added by /qa_

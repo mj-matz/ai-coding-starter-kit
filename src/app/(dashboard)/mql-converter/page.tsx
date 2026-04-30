@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import Link from "next/link";
 import { AlertCircle, RefreshCw } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -35,8 +36,14 @@ import { useMqlConverter } from "@/hooks/use-mql-converter";
 import type { MqlVersion, MappingEntry } from "@/hooks/use-mql-converter";
 import { useUserStrategies } from "@/hooks/use-user-strategies";
 import { useToast } from "@/hooks/use-toast";
+import { useMt5Health } from "@/hooks/use-mt5-health";
+import { useMt5TesterRun } from "@/hooks/use-mt5-tester-run";
 import type { UserStrategy } from "@/lib/strategy-types";
 import { USER_STRATEGY_LIMIT } from "@/lib/strategy-types";
+
+import { Mt5TesterButton } from "@/components/mql-converter/mt5-tester-button";
+import { Mt5ResultPanel } from "@/components/mql-converter/mt5-result-panel";
+import { Mt5HistorySection } from "@/components/mql-converter/mt5-history-section";
 
 export default function MqlConverterPage() {
   const {
@@ -101,6 +108,11 @@ export default function MqlConverterPage() {
   const [strategyParameters, setStrategyParameters] = useState<StrategyParameter[]>([]);
   const [parameterValues, setParameterValues] = useState<Record<string, ParamValue>>({});
 
+  // PROJ-37: Bridge health (auto-polled, paused when tab hidden) + tester run state
+  const bridgeHealth = useMt5Health();
+  const mt5Run = useMt5TesterRun();
+  const [mt5HistoryRefreshKey, setMt5HistoryRefreshKey] = useState(0);
+
   const isRunning =
     status === "converting" ||
     status === "fetching_data" ||
@@ -127,6 +139,86 @@ export default function MqlConverterPage() {
 
   const hasParameters = strategyParameters.length > 0;
   const parametersValid = !hasParameters || areParametersValid(strategyParameters, parameterValues);
+
+  // PROJ-37: When an MT5 run reaches a terminal state, refresh the history tab and toast.
+  useEffect(() => {
+    if (mt5Run.phase === "done") {
+      toast({
+        title: "MT5 Tester run completed",
+        description: "Switch to the MT5 Tester History tab to review past runs.",
+      });
+      setMt5HistoryRefreshKey((k) => k + 1);
+    } else if (mt5Run.phase === "failed") {
+      toast({
+        title: "MT5 Tester run failed",
+        description: mt5Run.errorMessage ?? "The Bridge Worker reported an error. See the result panel for details.",
+        variant: "destructive",
+      });
+      setMt5HistoryRefreshKey((k) => k + 1);
+    } else if (mt5Run.phase === "cancelled") {
+      setMt5HistoryRefreshKey((k) => k + 1);
+    }
+  }, [mt5Run.phase, mt5Run.errorMessage, toast]);
+
+  // PROJ-37: Submit a Strategy Tester run to the bridge with the current
+  // converter context. The button is rendered (and gated) further down — by
+  // the time `handleTestInMt5` runs we already know lastInputValues + a
+  // converted strategy exist.
+  const handleTestInMt5 = useCallback(() => {
+    if (!lastInputValues) {
+      toast({
+        title: "Run a backtest first",
+        description: "Convert and run the strategy in Python before testing it in MT5.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!bridgeHealth.online) {
+      toast({
+        title: "MT5 Bridge offline",
+        description: "Open Settings → MT5 Bridge to diagnose the worker.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const expertName = `${lastInputValues.symbol}_${lastInputValues.timeframe}_strategy`;
+    // Bridge-side convention — the worker resolves this against its
+    // MQL5/Experts directory. Keep in sync with mt5-bridge README.
+    const expertPath = `Experts/AdvisorTesting/${expertName}.ex5`;
+
+    const params = hasParameters
+      ? buildParamsDict(strategyParameters, parameterValues)
+      : {};
+
+    void mt5Run.startRun({
+      expert_path: expertPath,
+      expert_name: expertName,
+      symbol: lastInputValues.symbol,
+      timeframe: lastInputValues.timeframe,
+      from_date: lastInputValues.startDate,
+      to_date: lastInputValues.endDate,
+      parameters: params,
+      mql_conversion_id: savedConversionId,
+    });
+
+    toast({
+      title: "MT5 run started",
+      description: "Tracking progress in the comparison panel below.",
+    });
+  }, [
+    lastInputValues,
+    bridgeHealth.online,
+    hasParameters,
+    strategyParameters,
+    parameterValues,
+    savedConversionId,
+    mt5Run,
+    toast,
+  ]);
+
+  const showMt5Panel =
+    mt5Run.phase !== "idle" || mt5Run.status != null || !!mt5Run.metrics;
 
   // ── Handle Convert & Backtest ─────────────────────────────────────────────
 
@@ -380,6 +472,12 @@ export default function MqlConverterPage() {
           >
             Strategy Library
           </TabsTrigger>
+          <TabsTrigger
+            value="mt5-history"
+            className="text-slate-400 data-[state=active]:bg-white/10 data-[state=active]:text-slate-100"
+          >
+            MT5 Tester History
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Tab: Converter ───────────────────────────────────────────────── */}
@@ -464,6 +562,61 @@ export default function MqlConverterPage() {
                   rangeEnd=""
                   mt5Mode
                   symbol={lastInputValues?.symbol}
+                />
+              )}
+
+              {/* PROJ-37: MT5 Tester action bar — page-level, never coupled to
+                  the code-review panel. Shown only after a successful conversion
+                  exists so we have lastInputValues + python_code to submit. */}
+              {convertResult && lastInputValues && !isRunning && (
+                <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-md">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-semibold text-white">MT5 Strategy Tester</h3>
+                      <p className="mt-1 max-w-prose text-xs text-slate-400">
+                        Run the converted strategy on the connected Bridge Worker (real-tick
+                        mode) to verify parity with the Python engine.
+                      </p>
+                      {!bridgeHealth.online && !bridgeHealth.isLoading && (
+                        <p className="mt-2 text-[11px] text-amber-300/80">
+                          Bridge Worker is offline — open{" "}
+                          <Link
+                            href="/settings"
+                            className="text-blue-400 underline underline-offset-2"
+                          >
+                            Settings → MT5 Bridge
+                          </Link>{" "}
+                          to diagnose.
+                        </p>
+                      )}
+                    </div>
+                    <Mt5TesterButton
+                      bridgeOnline={bridgeHealth.online}
+                      bridgeChecking={bridgeHealth.isLoading}
+                      phase={mt5Run.phase}
+                      status={mt5Run.status}
+                      queuePosition={mt5Run.queuePosition}
+                      runningElapsedSec={mt5Run.runningElapsedSec}
+                      disabled={!parametersValid}
+                      onClick={handleTestInMt5}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* PROJ-37: Side-by-side comparison of Python vs MT5. Rendered only
+                  while there is some MT5 activity to report on. */}
+              {showMt5Panel && (
+                <Mt5ResultPanel
+                  pythonResult={backtestResult}
+                  mt5Status={mt5Run.status}
+                  mt5Phase={mt5Run.phase}
+                  mt5Metrics={mt5Run.metrics}
+                  mt5ErrorMessage={mt5Run.errorMessage}
+                  mt5QueuePosition={mt5Run.queuePosition}
+                  mt5RunningElapsedSec={mt5Run.runningElapsedSec}
+                  pythonConversionId={savedConversionId}
+                  mt5ConversionId={mt5Run.mqlConversionId}
                 />
               )}
 
@@ -552,6 +705,11 @@ export default function MqlConverterPage() {
           <div className="max-w-3xl">
             <UserStrategyList onOpenInConverter={handleOpenUserStrategyInConverter} />
           </div>
+        </TabsContent>
+
+        {/* ── Tab: MT5 Tester History (PROJ-37) ────────────────────────────── */}
+        <TabsContent value="mt5-history" className="mt-6">
+          <Mt5HistorySection refreshKey={mt5HistoryRefreshKey} />
         </TabsContent>
       </Tabs>
 

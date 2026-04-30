@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import queue
+import re
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,19 @@ from analytics.trade_metrics import r_multiple as compute_r_multiple
 from strategies.breakout import BreakoutStrategy, BreakoutParams, SkippedDay
 from strategies.registry import get_registry, get_strategy, list_strategies
 from services.one_second_provider import create_1s_data_provider
+from services import mt5_bridge as mt5_bridge_client
+from services.mt5_bridge import (
+    BridgeAuthError,
+    BridgeConfigError,
+    BridgeError,
+    BridgeOfflineError,
+)
+from services.notifications import format_run_summary, send_telegram
+from jobs.stale_run_cleanup import (
+    cleanup_orphans_after_bridge_restart,
+    cleanup_stale_runs,
+    start_stale_run_scheduler,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -80,6 +94,15 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def _startup_jobs() -> None:
+    """Start background schedulers (PROJ-37 stale-run sweeper)."""
+    try:
+        start_stale_run_scheduler()
+    except Exception as exc:
+        logger.exception("Failed to start stale-run scheduler: %s", exc)
 
 
 def _timeframe_to_minutes(tf: str) -> int:
@@ -2555,6 +2578,605 @@ async def optimizer_cancel(
         status="cancelling",
         message="Cancel signal sent. Job will stop after the current combination finishes.",
     )
+
+
+# ── /mt5/* endpoints (PROJ-37: MT5 Bridge Worker) ───────────────────────────
+
+# Health-check cache: 10s TTL so the frontend can poll the Settings card every
+# 30s without hammering the bridge if multiple browser tabs open.
+_MT5_HEALTH_CACHE: dict = {"value": None, "expires_at": 0.0}
+_MT5_HEALTH_TTL_SECONDS = 10.0
+
+# Bridge-restart auto-detection (event-driven from /mt5/health).
+# Tracks the last `last_started_at` value the bridge advertised. When it
+# increases vs. this value, we fire `cleanup_orphans_after_bridge_restart`
+# once as a background task. This is a faster path than the 5-min
+# APScheduler sweeper for the case where the Windows host reboots and the
+# bridge resumes from scratch — runs that were `running` in the DB but no
+# longer exist in the bridge's freshly-empty in-memory queue are flagged
+# `failed` immediately rather than after up to 5 minutes.
+_MT5_BRIDGE_LAST_STARTED_AT: dict = {"value": None}
+_MT5_BRIDGE_RESTART_LOCK = threading.Lock()
+
+
+def _maybe_handle_bridge_restart(new_last_started_at: Optional[str]) -> bool:
+    """Compare the new `last_started_at` against the cached value.
+
+    Returns True when a restart was detected and a cleanup was scheduled.
+    Mutates `_MT5_BRIDGE_LAST_STARTED_AT` in-place under a lock so concurrent
+    health probes don't fan out into multiple cleanups.
+    """
+    if not new_last_started_at:
+        return False
+
+    with _MT5_BRIDGE_RESTART_LOCK:
+        previous = _MT5_BRIDGE_LAST_STARTED_AT["value"]
+        # First-ever observation: just remember the timestamp, don't fire
+        # cleanup. The 5-min sweeper handles whatever was orphaned before
+        # this process started.
+        if previous is None:
+            _MT5_BRIDGE_LAST_STARTED_AT["value"] = new_last_started_at
+            return False
+        # No change → no restart.
+        if new_last_started_at == previous:
+            return False
+        # `last_started_at` is an ISO-8601 string from the bridge. String
+        # compare is correct for ISO-8601 with the same UTC offset; we still
+        # accept any change as a restart signal (clocks can move backward
+        # too in odd environments — what matters is "different value"
+        # implies the bridge process restarted).
+        _MT5_BRIDGE_LAST_STARTED_AT["value"] = new_last_started_at
+
+    logger.info(
+        "Bridge restart detected (last_started_at: %s → %s) — scheduling orphan cleanup.",
+        previous, new_last_started_at,
+    )
+
+    async def _run_cleanup() -> None:
+        try:
+            await cleanup_orphans_after_bridge_restart()
+        except Exception as exc:
+            logger.exception(
+                "Bridge-restart orphan cleanup failed: %s", exc
+            )
+
+    try:
+        asyncio.create_task(_run_cleanup())
+    except RuntimeError:
+        # No running loop (test/sync context). Caller can run it directly.
+        logger.debug("No running event loop — skipping orphan-cleanup task scheduling.")
+        return False
+    return True
+
+
+def _supabase_for_user_token():
+    """Return the cache_service supabase client (service role)."""
+    from services.cache_service import _get_supabase_client
+    return _get_supabase_client()
+
+
+class MT5TesterRunRequest(BaseModel):
+    """Payload to launch a MT5 Strategy Tester run via the Bridge Worker."""
+    expert_path: str = Field(min_length=1)
+    expert_name: str = Field(min_length=1)
+    symbol: str = Field(min_length=1)
+    timeframe: str = Field(min_length=1)
+    from_date: str = Field(min_length=1)  # ISO date YYYY-MM-DD
+    to_date: str = Field(min_length=1)
+    parameters: dict = Field(default_factory=dict)
+    model: str = Field(default="EveryTickRealistic")
+    mql_conversion_id: Optional[str] = None
+
+
+class MT5TesterRunResponse(BaseModel):
+    job_id: str
+    status: str
+    queue_position: Optional[int] = None
+    bridge_job_id: Optional[str] = None
+
+
+class MT5TesterStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    queue_position: Optional[int] = None
+    error_message: Optional[str] = None
+    metrics: Optional[dict] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
+class MT5HealthResponse(BaseModel):
+    online: bool
+    status: Optional[str] = None
+    terminal_logged_in: Optional[bool] = None
+    broker: Optional[str] = None
+    build: Optional[int] = None
+    queue_length: Optional[int] = None
+    current_run: Optional[str] = None
+    last_started_at: Optional[str] = None
+    error: Optional[str] = None
+
+
+class MT5OrphanCleanupRequest(BaseModel):
+    user_id: Optional[str] = None
+    bridge_started_at: Optional[str] = None
+
+
+@app.post("/mt5/tester/run", response_model=MT5TesterRunResponse)
+async def mt5_tester_run(
+    request: MT5TesterRunRequest,
+    token: dict = Depends(verify_jwt),
+):
+    """Persist a tester-run row, then forward the job to the Bridge Worker.
+
+    Creates a `mt5_tester_runs` row in Supabase before talking to the bridge so
+    that even if the bridge is temporarily offline, the run is recoverable on
+    reconnect (DB is the source of truth — bridge in-memory FIFO is a cache).
+    """
+    user_id: str = token["sub"]
+
+    # ── Validate dates (ISO YYYY-MM-DD) ─────────────────────────────────
+    try:
+        from_d = date.fromisoformat(request.from_date)
+        to_d = date.fromisoformat(request.to_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="from_date / to_date must be ISO YYYY-MM-DD")
+
+    if from_d >= to_d:
+        raise HTTPException(status_code=400, detail="from_date must be before to_date")
+
+    client = _supabase_for_user_token()
+
+    # ── Persist run row (status=pending) ────────────────────────────────
+    try:
+        insert_resp = (
+            client.table("mt5_tester_runs")
+            .insert(
+                {
+                    "user_id": user_id,
+                    "mql_conversion_id": request.mql_conversion_id,
+                    "expert_name": request.expert_name,
+                    "symbol": request.symbol,
+                    "timeframe": request.timeframe,
+                    "from_date": request.from_date,
+                    "to_date": request.to_date,
+                    "parameters": request.parameters,
+                    "model": request.model,
+                    "status": "pending",
+                }
+            )
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Failed to persist mt5_tester_runs row: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to record run.")
+
+    if not insert_resp.data:
+        raise HTTPException(status_code=500, detail="Insert returned no row.")
+
+    run_row = insert_resp.data[0]
+    run_id = run_row["id"]
+
+    # ── Forward to bridge ───────────────────────────────────────────────
+    bridge_payload = {
+        "expert_path": request.expert_path,
+        "symbol": request.symbol,
+        "timeframe": request.timeframe,
+        "from_date": request.from_date,
+        "to_date": request.to_date,
+        "parameters": request.parameters,
+        "model": request.model,
+        # Pass our run_id so the bridge can echo it on completion callbacks.
+        "callback_run_id": run_id,
+    }
+
+    try:
+        bridge_resp = await mt5_bridge_client.submit_run(bridge_payload)
+    except BridgeConfigError as exc:
+        client.table("mt5_tester_runs").update(
+            {"status": "failed", "error_message": str(exc)}
+        ).eq("id", run_id).execute()
+        raise HTTPException(status_code=503, detail=str(exc))
+    except BridgeAuthError as exc:
+        client.table("mt5_tester_runs").update(
+            {"status": "failed", "error_message": str(exc)}
+        ).eq("id", run_id).execute()
+        raise HTTPException(status_code=502, detail=str(exc))
+    except BridgeOfflineError as exc:
+        client.table("mt5_tester_runs").update(
+            {
+                "status": "failed",
+                "error_message": f"Bridge Worker offline: {exc}",
+            }
+        ).eq("id", run_id).execute()
+        raise HTTPException(status_code=502, detail=f"Bridge Worker offline: {exc}")
+    except BridgeError as exc:
+        client.table("mt5_tester_runs").update(
+            {"status": "failed", "error_message": str(exc)}
+        ).eq("id", run_id).execute()
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    bridge_job_id = bridge_resp.get("job_id")
+    queue_position = bridge_resp.get("queue_position")
+    new_status = bridge_resp.get("status", "queued")
+
+    # ── Persist bridge_job_id + queued status ───────────────────────────
+    update_payload = {
+        "status": new_status if new_status in ("queued", "running") else "queued",
+        "bridge_job_id": bridge_job_id,
+        "queue_position": queue_position,
+    }
+    client.table("mt5_tester_runs").update(update_payload).eq("id", run_id).execute()
+
+    return MT5TesterRunResponse(
+        job_id=run_id,
+        status=update_payload["status"],
+        queue_position=queue_position,
+        bridge_job_id=bridge_job_id,
+    )
+
+
+@app.get("/mt5/tester/status/{job_id}", response_model=MT5TesterStatusResponse)
+async def mt5_tester_status(
+    job_id: str,
+    token: dict = Depends(verify_jwt),
+):
+    """Poll the bridge for status, sync the DB, and return the merged view."""
+    user_id: str = token["sub"]
+
+    client = _supabase_for_user_token()
+    run_resp = (
+        client.table("mt5_tester_runs")
+        .select(
+            "id, user_id, status, bridge_job_id, started_at, finished_at, "
+            "error_message, expert_name, symbol, timeframe, queue_position"
+        )
+        .eq("id", job_id)
+        .limit(1)
+        .execute()
+    )
+    if not run_resp.data:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    run_row = run_resp.data[0]
+    if run_row["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Not your run.")
+
+    # Terminal states — return DB snapshot, no bridge call needed.
+    if run_row["status"] in ("done", "failed", "cancelled"):
+        metrics = _load_run_metrics(client, job_id)
+        return MT5TesterStatusResponse(
+            job_id=job_id,
+            status=run_row["status"],
+            error_message=run_row.get("error_message"),
+            metrics=metrics,
+            started_at=run_row.get("started_at"),
+            finished_at=run_row.get("finished_at"),
+        )
+
+    bridge_job_id = run_row.get("bridge_job_id")
+    if not bridge_job_id:
+        # Run was inserted but bridge handoff didn't complete — surface as-is.
+        return MT5TesterStatusResponse(
+            job_id=job_id,
+            status=run_row["status"],
+            queue_position=run_row.get("queue_position"),
+            error_message=run_row.get("error_message"),
+            started_at=run_row.get("started_at"),
+        )
+
+    # Live status from bridge.
+    try:
+        bridge_data = await mt5_bridge_client.run_status(bridge_job_id)
+    except (BridgeOfflineError, BridgeError) as exc:
+        # Don't flip the row to failed yet — the stale-run sweeper handles long
+        # outages. Just surface the current DB snapshot.
+        logger.warning("Bridge status lookup failed for run %s: %s", job_id, exc)
+        return MT5TesterStatusResponse(
+            job_id=job_id,
+            status=run_row["status"],
+            queue_position=run_row.get("queue_position"),
+            error_message=run_row.get("error_message"),
+            started_at=run_row.get("started_at"),
+        )
+
+    new_status = bridge_data.get("status", run_row["status"])
+    queue_position = bridge_data.get("queue_position")
+
+    update_payload: dict = {}
+    if new_status != run_row["status"]:
+        update_payload["status"] = new_status
+    if queue_position is not None and queue_position != run_row.get("queue_position"):
+        update_payload["queue_position"] = queue_position
+
+    metrics_payload: Optional[dict] = None
+
+    if new_status == "done":
+        update_payload["finished_at"] = datetime.now(timezone.utc).isoformat()
+        metrics_payload = bridge_data.get("metrics")
+        if metrics_payload:
+            _upsert_run_metrics(client, job_id, metrics_payload)
+        # Persist the parsed trade list 1:1 from the bridge's XML parser.
+        # Same shape as bridge.models.TesterTrade; mapping lives in
+        # _replace_run_trades.
+        _replace_run_trades(client, job_id, bridge_data.get("trades"))
+    elif new_status in ("failed", "cancelled"):
+        update_payload["finished_at"] = datetime.now(timezone.utc).isoformat()
+        update_payload["error_message"] = bridge_data.get("error_message")
+
+    if update_payload:
+        client.table("mt5_tester_runs").update(update_payload).eq("id", job_id).execute()
+
+    # Send notification on terminal transitions.
+    if new_status in ("done", "failed", "cancelled") and new_status != run_row["status"]:
+        try:
+            await send_telegram(
+                user_id=user_id,
+                message=format_run_summary(
+                    run_id=job_id,
+                    expert_name=run_row.get("expert_name", "?"),
+                    symbol=run_row.get("symbol", "?"),
+                    timeframe=run_row.get("timeframe", "?"),
+                    status=new_status,
+                    metrics=metrics_payload,
+                    error_message=update_payload.get("error_message"),
+                ),
+                run_type="single_run",
+            )
+        except Exception as notif_exc:
+            logger.warning("Notification failed for run %s: %s", job_id, notif_exc)
+
+    return MT5TesterStatusResponse(
+        job_id=job_id,
+        status=new_status,
+        queue_position=queue_position,
+        error_message=update_payload.get("error_message") or run_row.get("error_message"),
+        metrics=metrics_payload or _load_run_metrics(client, job_id),
+        started_at=run_row.get("started_at"),
+        finished_at=update_payload.get("finished_at") or run_row.get("finished_at"),
+    )
+
+
+def _load_run_metrics(client, run_id: str) -> Optional[dict]:
+    """Fetch the mt5_tester_metrics row for a run, if present."""
+    try:
+        resp = (
+            client.table("mt5_tester_metrics")
+            .select(
+                "total_net_profit, sharpe_ratio, profit_factor, max_drawdown_abs, "
+                "max_drawdown_pct, total_trades, won_trades, lost_trades, average_trade"
+            )
+            .eq("run_id", run_id)
+            .limit(1)
+            .execute()
+        )
+        return resp.data[0] if resp.data else None
+    except Exception as exc:
+        logger.warning("Failed to load metrics for run %s: %s", run_id, exc)
+        return None
+
+
+def _upsert_run_metrics(client, run_id: str, metrics: dict) -> None:
+    """Insert or update the mt5_tester_metrics row for a completed run."""
+    payload = {
+        "run_id": run_id,
+        "total_net_profit": metrics.get("total_net_profit"),
+        "sharpe_ratio": metrics.get("sharpe_ratio"),
+        "profit_factor": metrics.get("profit_factor"),
+        "max_drawdown_abs": metrics.get("max_drawdown_abs"),
+        "max_drawdown_pct": metrics.get("max_drawdown_pct"),
+        "total_trades": metrics.get("total_trades"),
+        "won_trades": metrics.get("won_trades"),
+        "lost_trades": metrics.get("lost_trades"),
+        "average_trade": metrics.get("average_trade"),
+        "raw_xml": metrics.get("raw_xml"),
+    }
+    try:
+        client.table("mt5_tester_metrics").upsert(payload, on_conflict="run_id").execute()
+    except Exception as exc:
+        logger.exception("Failed to upsert metrics for run %s: %s", run_id, exc)
+
+
+# MT5 emits trade timestamps as "YYYY.MM.DD HH:MM:SS" (dot-separated date).
+# Postgres' TIMESTAMPTZ accepts ISO 8601, so we normalise on the way in. The
+# bridge passes the XML cell text through unchanged (see TesterTrade in
+# bridge/models.py), so the conversion lives here on the persistence side.
+_MT5_TS_RE = re.compile(
+    r"^\s*(?P<y>\d{4})[.\-/](?P<m>\d{2})[.\-/](?P<d>\d{2})[ T]"
+    r"(?P<H>\d{2}):(?P<M>\d{2})(?::(?P<S>\d{2}))?\s*$"
+)
+
+
+def _normalise_mt5_timestamp(value) -> Optional[str]:
+    """Convert an MT5 tester timestamp into ISO 8601 (UTC-naive)."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    text = str(value).strip()
+    if not text:
+        return None
+    m = _MT5_TS_RE.match(text)
+    if m:
+        seconds = m.group("S") or "00"
+        return f"{m.group('y')}-{m.group('m')}-{m.group('d')}T{m.group('H')}:{m.group('M')}:{seconds}"
+    # Fall back to ISO parsing — handles already-normalised payloads from the
+    # bridge or test fixtures that pre-convert.
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        logger.warning("Unrecognised MT5 timestamp format: %r", text)
+        return None
+
+
+def _normalise_direction(value) -> Optional[str]:
+    """Map MT5 trade types to the CHECK-constrained 'buy'/'sell' values.
+
+    MT5 emits 'buy'/'sell' in modern builds but older builds use 'Buy'/'Sell'
+    or numeric op codes — we handle the common variants and drop anything
+    else (e.g. 'balance' deposit rows) with a None so the CHECK accepts it.
+    """
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in ("buy", "sell"):
+        return text
+    if text in ("0", "buy stop", "buy limit", "buy_stop", "buy_limit"):
+        return "buy"
+    if text in ("1", "sell stop", "sell limit", "sell_stop", "sell_limit"):
+        return "sell"
+    return None
+
+
+def _replace_run_trades(client, run_id: str, trades: Optional[list]) -> None:
+    """Replace the mt5_tester_trades rows for a run with the bridge's parsed list.
+
+    Idempotent: each completion poll deletes any prior rows for the run and
+    re-inserts the current set. The bridge passes through the XML parser
+    output 1:1; we map each dict to the column set defined in the
+    20260430_mt5_tester_runs migration and skip rows whose required
+    `open_time` is missing (e.g. summary rows the parser couldn't classify).
+    """
+    if not trades:
+        return
+
+    rows: list[dict] = []
+    for raw in trades:
+        if not isinstance(raw, dict):
+            continue
+        open_time = _normalise_mt5_timestamp(raw.get("open_time"))
+        if not open_time:
+            # `open_time` is NOT NULL in the schema — skip rather than fail.
+            continue
+        rows.append(
+            {
+                "run_id": run_id,
+                "open_time": open_time,
+                "close_time": _normalise_mt5_timestamp(raw.get("close_time")),
+                "direction": _normalise_direction(raw.get("direction")),
+                "volume": raw.get("volume"),
+                "open_price": raw.get("open_price"),
+                "close_price": raw.get("close_price"),
+                "profit": raw.get("profit"),
+                "comment": raw.get("comment"),
+            }
+        )
+
+    if not rows:
+        return
+
+    try:
+        # Replace, don't append: re-polling a 'done' run must not duplicate.
+        client.table("mt5_tester_trades").delete().eq("run_id", run_id).execute()
+        client.table("mt5_tester_trades").insert(rows).execute()
+    except Exception as exc:
+        logger.exception("Failed to persist trades for run %s: %s", run_id, exc)
+
+
+@app.get("/mt5/health", response_model=MT5HealthResponse)
+async def mt5_health(token: dict = Depends(verify_jwt)):
+    """Proxy the bridge's /mt5/health, cached for 10s."""
+    import time as _time
+
+    now = _time.monotonic()
+    if _MT5_HEALTH_CACHE["value"] is not None and now < _MT5_HEALTH_CACHE["expires_at"]:
+        return _MT5_HEALTH_CACHE["value"]
+
+    try:
+        body = await mt5_bridge_client.health()
+        result = MT5HealthResponse(
+            online=True,
+            status=body.get("status"),
+            terminal_logged_in=body.get("terminal_logged_in"),
+            broker=body.get("broker"),
+            build=body.get("build"),
+            queue_length=body.get("queue_length"),
+            current_run=body.get("current_run"),
+            last_started_at=body.get("last_started_at"),
+        )
+        # Bridge-restart auto-detection (PROJ-37 fast-path orphan cleanup).
+        # Fires only on cache-miss + successful health response — i.e. event-
+        # driven from the actual bridge probe, never on cache hits.
+        _maybe_handle_bridge_restart(body.get("last_started_at"))
+    except BridgeConfigError as exc:
+        result = MT5HealthResponse(online=False, error=str(exc))
+    except (BridgeAuthError, BridgeOfflineError, BridgeError) as exc:
+        result = MT5HealthResponse(online=False, error=str(exc))
+
+    _MT5_HEALTH_CACHE["value"] = result
+    _MT5_HEALTH_CACHE["expires_at"] = now + _MT5_HEALTH_TTL_SECONDS
+    return result
+
+
+@app.get("/mt5/tester/pending-jobs")
+async def mt5_pending_jobs(token: dict = Depends(verify_jwt)):
+    """Return all `pending` / `queued` runs the bridge should seed into its FIFO on boot.
+
+    The bridge calls this on startup. The token here is the user's JWT (the
+    bridge runs under the admin user), which is sufficient to scope the response
+    to that user's pending runs.
+    """
+    user_id: str = token["sub"]
+    client = _supabase_for_user_token()
+
+    resp = (
+        client.table("mt5_tester_runs")
+        .select(
+            "id, expert_name, symbol, timeframe, from_date, to_date, "
+            "parameters, model, status, started_at"
+        )
+        .eq("user_id", user_id)
+        .in_("status", ["pending", "queued"])
+        .order("started_at")
+        .limit(500)
+        .execute()
+    )
+    return {"runs": resp.data or []}
+
+
+@app.post("/mt5/orphan-cleanup")
+async def mt5_orphan_cleanup(
+    request: MT5OrphanCleanupRequest,
+    token: dict = Depends(verify_jwt),
+):
+    """Bridge calls this on boot to flag in-flight runs lost in a host reboot.
+
+    Two complementary triggers run the same underlying sweeper:
+      • This explicit callback (when the bridge reaches the backend on boot).
+      • The /mt5/health proxy (when it observes `last_started_at` change).
+    Both paths converge on `cleanup_stale_runs` / `cleanup_orphans_after_bridge_restart`.
+    The 5-min APScheduler sweep is the catch-all fallback if neither
+    fast-path fires (e.g. a hard power loss where the bridge never reaches
+    the backend afterwards).
+    """
+    user_id: str = token["sub"]
+    scope_user = request.user_id or user_id
+
+    if scope_user != user_id and (token.get("app_metadata", {}) or {}).get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Cannot clean up other users' runs.")
+
+    cleared = await cleanup_stale_runs(scope_user_id=scope_user)
+    return {"cleared": cleared}
+
+
+# ── /notifications/test endpoint (PROJ-37) ─────────────────────────────────
+
+@app.post("/notifications/test")
+async def notifications_test(token: dict = Depends(verify_jwt)):
+    """Send a test Telegram message to the calling user.
+
+    Telegram delivery is currently stubbed (see services/notifications.py); the
+    endpoint still exercises the gating logic (settings lookup + rate limit +
+    last_notification_* persistence) so the Settings UI can verify config end
+    to end before real delivery lands.
+    """
+    user_id: str = token["sub"]
+    sent = await send_telegram(
+        user_id=user_id,
+        message="Test message from MT5 Backtester. If you see this, your Telegram bridge is configured.",
+        run_type="single_run",
+        force=True,
+    )
+    return {"sent": sent}
 
 
 # ── /sandbox/run endpoint (PROJ-22: MQL Converter) ──────────────────────────

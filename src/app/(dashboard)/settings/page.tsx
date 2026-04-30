@@ -13,6 +13,8 @@ import { Mt5DataTable } from "@/components/settings/mt5-data-table";
 import { Mt5UploadDialog } from "@/components/settings/mt5-upload-dialog";
 import { CacheManagementTable } from "@/components/settings/cache-management-table";
 import { AdminUserStrategiesTable } from "@/components/settings/admin-user-strategies-table";
+import { Mt5BridgeStatusCard } from "@/components/settings/mt5-bridge-status-card";
+import { NotificationsCard } from "@/components/settings/notifications-card";
 
 import type { Mt5Timeframe, Mt5UploadRequest } from "@/lib/mt5-data-types";
 
@@ -88,6 +90,28 @@ export default function SettingsPage() {
           Manage application settings and imported broker data.
         </p>
       </div>
+
+      {/* Section: MT5 Bridge (PROJ-37) */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-white">MT5 Bridge</h2>
+          <p className="mt-1 text-sm text-gray-400">
+            Live status of the Windows host running the MT5 Strategy Tester worker.
+          </p>
+        </div>
+        <Mt5BridgeStatusCard />
+      </section>
+
+      {/* Section: Notifications (PROJ-37) */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Notifications</h2>
+          <p className="mt-1 text-sm text-gray-400">
+            Configure Telegram alerts for long-running optimisation and walk-forward jobs.
+          </p>
+        </div>
+        <NotificationsCard />
+      </section>
 
       {/* Section: Cache Management */}
       <section className="space-y-4">
