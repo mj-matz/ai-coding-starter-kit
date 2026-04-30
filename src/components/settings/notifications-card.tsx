@@ -108,10 +108,17 @@ export function NotificationsCard() {
     }
   }
 
+  // BUG-4: The test endpoint reads the saved token from the DB, so we must
+  // refuse to test against an unsaved (dirty) token — the toast would
+  // otherwise reflect the previously-saved value, not the one the user just
+  // typed.  The hint below ("Save your changes first…") tells the user to
+  // save before testing.
   const canSendTest =
     form.telegramEnabled &&
-    (settings?.telegram_bot_token_set || tokenDirty) &&
-    form.chatId.trim().length > 0;
+    Boolean(settings?.telegram_bot_token_set) &&
+    !tokenDirty &&
+    form.chatId.trim().length > 0 &&
+    form.chatId.trim() === (settings?.telegram_chat_id ?? "");
 
   if (isLoading && !settings) {
     return (
@@ -252,7 +259,10 @@ export function NotificationsCard() {
           </Button>
           {!canSendTest && form.telegramEnabled && (
             <p className="mt-1.5 text-[11px] text-slate-500">
-              Save a bot token and chat ID first.
+              {tokenDirty ||
+              form.chatId.trim() !== (settings?.telegram_chat_id ?? "")
+                ? "Save your changes first — the test uses the stored configuration."
+                : "Save a bot token and chat ID first."}
             </p>
           )}
         </div>

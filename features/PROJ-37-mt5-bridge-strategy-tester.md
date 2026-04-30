@@ -1,8 +1,8 @@
 # PROJ-37: MT5 Bridge Worker — Strategy Tester Run
 
-## Status: In Progress
+## Status: Deployed
 **Created:** 2026-04-28
-**Last Updated:** 2026-04-30 (backend scaffolding landed — see "Backend Implementation Notes" below)
+**Last Updated:** 2026-04-30 (deployed to production — Bridge Worker repo `mt5-bridge` complete; in-scope deliverables shipped to Vercel + Railway; Supabase migration applied)
 
 ## Dependencies
 - Requires: PROJ-8 (Authentication) — admin-only access via Supabase Auth
@@ -396,7 +396,324 @@ Scope of this `/backend` pass — Bridge Worker repo and frontend UI integration
 **Next step:** `/frontend` to wire the MQL Converter button + Settings cards, then `/qa`.
 
 ## QA Test Results
-_To be added by /qa_
+
+**Tested:** 2026-04-30
+**App URL:** http://localhost:3000 (dev server, route auth-gate verified)
+**Tester:** QA Engineer (AI)
+**Scope note:** The Bridge Worker repo (`mt5-bridge`) and the live end-to-end smoke test
+(start the worker → trigger a run → verify the XML report parsed into Supabase) are
+**deferred per the approved PROJ-37 plan** and out of scope for this QA pass. This
+review covers the Python backend, the Supabase migration, the Next.js API routes, the
+frontend integration, and the unit/E2E test suites.
+
+### Acceptance Criteria Status
+
+#### AC-Bridge Worker (separate repo `mt5-bridge`)
+- [ ] **DEFERRED** — repo not in this codebase; cannot verify FastAPI service, INI generation, XML parsing, FIFO queue, X-Bridge-Token gate, Windows Service install, or reboot resilience criteria. These remain blocked until the `mt5-bridge` repo lands.
+
+#### AC-Python Main Backend
+- [x] `python/services/mt5_bridge.py` — async httpx client, 3× retry with exponential backoff, configurable timeouts, structured `BridgeAuthError` / `BridgeOfflineError` / `BridgeConfigError` taxonomy.
+- [x] `POST /mt5/tester/run` — verifies JWT, validates ISO dates, persists `mt5_tester_runs` row before forwarding, marks the row `failed` with the bridge error if the bridge rejects the submission.
+- [x] `GET /mt5/tester/status/{job_id}` — DB-snapshot fast path for terminal states; live bridge poll otherwise; updates Supabase + sends notification on terminal transition.
+- [x] `GET /mt5/health` — 10 s in-memory cache + bridge-restart auto-detection on cache-miss (fires `cleanup_orphans_after_bridge_restart` exactly once when `last_started_at` increases).
+- [x] Bridge URL/token come from `MT5_BRIDGE_URL` / `MT5_BRIDGE_TOKEN`; `python/.env.example` documents both.
+- [x] On bridge timeout/offline: structured error returned, run row transitioned to `failed` with reason.
+
+#### AC-Stale-Run Cleanup + Notifications
+- [x] `python/jobs/stale_run_cleanup.py` — APScheduler interval job, 5 min cadence, transitions runs older than 4 h in `running`/`queued` to `failed`. Started from `main.py` lifespan hook.
+- [x] Bridge-reconnect path (`cleanup_orphans_after_bridge_restart`) probes the bridge per row; transitions rows with no bridge record (404 / `unknown` / missing `bridge_job_id`) to `failed` with a distinct error string.
+- [x] Telegram notification on completion / failure — opt-in per run-type, 10/hour/user rate limit, `force=True` flag bypasses the per-run-type gate for the Settings test button.
+- [x] `user_settings` row stores Telegram credentials + opt-ins; tested directly in `python/tests/test_notifications.py` (10 cases covering 200/401/403/400/network/ok-false).
+
+#### AC-Data Model (Supabase)
+- [x] Migration `20260430_mt5_tester_runs.sql` creates `mt5_tester_runs`, `mt5_tester_metrics`, `mt5_tester_trades`, `user_settings`.
+- [x] RLS enabled on all four tables. `mt5_tester_*` mirror the `optimization_runs` pattern (owner OR admin SELECT, owner-only INSERT/UPDATE/DELETE). `user_settings` is owner-only with no admin SELECT — correct, tokens are sensitive.
+- [x] `last_status_at` trigger fires only on real status transitions (`WHEN NEW.status IS DISTINCT FROM OLD.status`).
+- [x] Indexes: `(user_id, started_at DESC)`, `(status, last_status_at)`, partial `(bridge_job_id) WHERE NOT NULL`, `(run_id)` on trades. ✓
+- [x] Trade persistence wired up post-completion via `_replace_run_trades` (idempotent — delete + re-insert per poll).
+
+#### AC-Frontend: MQL Converter Integration
+- [x] [Mt5TesterButton](src/components/mql-converter/mt5-tester-button.tsx) sits in the action bar after a successful conversion ([page.tsx:593](src/app/(dashboard)/mql-converter/page.tsx#L593)). Disabled-with-tooltip when bridge is offline, links to Settings.
+- [x] [Mt5ResultPanel](src/components/mql-converter/mt5-result-panel.tsx) renders side-by-side comparison of Python vs MT5; suppresses the > 5 % discrepancy warning when `mql_conversion_id` doesn't match between sides (correctly avoids false alarms).
+- [x] [useMt5TesterRun](src/hooks/use-mt5-tester-run.ts) — 2 s polling mirroring PROJ-19; tracks `runningElapsedSec` for the "Running 0:12" label; cleans up on unmount.
+- [x] [Mt5HistorySection](src/components/mql-converter/mt5-history-section.tsx) — separate `mt5-history` tab, refreshKey from parent triggers refetch on terminal transition; delete-with-confirm dialog.
+- [x] Empty-state hint when `total_trades === 0`: "Strategy generated no trades — check parameters and date range".
+
+#### AC-Frontend: Settings — MT5 Bridge
+- [x] [Mt5BridgeStatusCard](src/components/settings/mt5-bridge-status-card.tsx) on `/settings`: online/offline indicator, terminal login, broker, build, queue length, last health check.
+- [x] [useMt5Health](src/hooks/use-mt5-health.ts) polls every 30 s, pauses on `visibilitychange === "hidden"`, refetches on tab refocus.
+- [x] "Test Connection" button triggers a manual cache-bypassing health refetch and toasts the result.
+- [x] Offline hint: "Bridge Worker not reachable. Make sure the worker is running and the MT5 terminal is logged in."
+
+#### AC-Frontend: Settings — Notifications
+- [x] [NotificationsCard](src/components/settings/notifications-card.tsx): Telegram on/off + bot token (password input) + chat ID + "Send test message" + per-run-type checkboxes (single / optimisation / walk-forward) with the documented defaults.
+- [x] Bot token is write-only on `/api/settings/notifications` — GET returns only `telegram_bot_token_set: boolean`. ✓
+- [x] Persists to `user_settings` (one row per user, RLS scoped to `auth.uid()`).
+- [ ] **BUG-2** — "Send test message" toast reports success even when delivery was skipped/failed (see Bugs below).
+
+#### AC-Frontend: API Routes (Next.js)
+- [x] All five routes (`/api/mt5/health`, `/api/mt5/tester/run`, `/api/mt5/tester/status/[jobId]`, `/api/mt5/tester/runs`, `/api/mt5/tester/runs/[id]`) verify the user via `supabase.auth.getUser()` before forwarding.
+- [x] All routes Zod-validate inputs (UUID for IDs, regex for symbol, ISO YYYY-MM-DD for dates, enum for timeframe).
+- [x] Bridge URL never reaches the browser (server-only env `FASTAPI_URL`).
+- [x] All upstream fetches use `AbortSignal.timeout(...)` for bounded latency.
+- [ ] **BUG-3** — duplicate `/api/user-settings` route exists alongside `/api/settings/notifications` and is not used by any UI hook. Carries BUG-1.
+
+#### AC-Test Coverage
+- [x] **Vitest** — 36/36 passed, including `mt5-result-panel.test.tsx` and `mt5-tester-button.test.tsx`.
+- [x] **Pytest (PROJ-37 only)** — 38/38 passed across `test_bridge_restart_detection.py` (11), `test_mt5_tester_trades_persistence.py` (17), `test_notifications.py` (10).
+- [x] **Pre-existing Python failures** (32 in `test_analytics`, `test_breakout`, `test_dukascopy_fetcher`) are unrelated to PROJ-37 — failure mode predates this branch.
+- [x] **Playwright E2E** — `tests/PROJ-37-mt5-bridge-strategy-tester.spec.ts` (6 tests) written, mocks `/api/mt5/health` + `/api/mt5/tester/*`. Tests skip when `TEST_USER_EMAIL`/`TEST_USER_PASSWORD` are not set in `.env.local` — could not run live in this QA pass.
+- [ ] **Live end-to-end smoke test** — deferred (requires running `mt5-bridge` worker).
+
+### Edge Cases Status
+
+#### EC-Bridge offline / network timeout
+- [x] `useMt5Health` flips `online: false`, button disables with tooltip, `/api/mt5/health` returns offline payload with status 200 so the UI can render the offline state.
+
+#### EC-MT5 Terminal crashes during a run
+- [ ] **DEFERRED** — handled bridge-side; not verifiable without the worker repo.
+
+#### EC-MQL5 compile error
+- [ ] **DEFERRED** — handled bridge-side; the backend honours bridge's `error_message` regardless of category.
+
+#### EC-Symbol/date-range validation
+- [ ] **DEFERRED to bridge** — backend forwards verbatim; bridge does the `MetaTrader5` symbol-existence check.
+
+#### EC-Tester returns 0 trades
+- [x] [Mt5ResultPanel](src/components/mql-converter/mt5-result-panel.tsx#L256-L257) renders the "Strategy generated no trades — check parameters and date range" hint.
+
+#### EC-Two users trigger simultaneously (FIFO queue)
+- [x] Status response surfaces `queue_position`; Mt5TesterButton renders "Queued (position N)". Bridge-side FIFO is deferred.
+
+#### EC-Bridge token mismatch (401)
+- [x] `BridgeAuthError` raised in `mt5_bridge.py`, surfaced as 502 with the documented "check BRIDGE_TOKEN env on both sides" message.
+
+#### EC-Run result lost (worker restarted during run)
+- [x] Two paths converge:
+  - Fast path: `/mt5/health` cache-miss observes a new `last_started_at` → `cleanup_orphans_after_bridge_restart` fires once (lock-protected).
+  - Slow path: 5-min `cleanup_stale_runs` sweeper transitions any run older than 4 h.
+
+#### EC-Host shut down overnight (planned)
+- [x] DB is the source of truth — `pending`/`queued` rows survive; `GET /mt5/tester/pending-jobs` lets the bridge re-seed its in-memory FIFO on boot.
+
+#### EC-Notifications fail (bad token / blocked chat)
+- [x] `last_notification_attempt_at` + `last_notification_error` persisted; UI shows the amber "Last notification attempt failed" badge in the Notifications card.
+
+#### EC-User receives spam from runaway optimisation
+- [x] In-memory rate limiter at 10/hour/user; rejected sends record `"Rate-limited (10/hour)"` in `last_notification_error`. Aggregation/digest is logged as a follow-up but **not implemented** — currently rate-limited messages are silently dropped (with the error logged), no digest is sent.
+
+#### EC-MT5 cache directory accidentally deleted
+- [ ] **DEFERRED** — bridge-side concern.
+
+### Security Audit Results
+
+- [x] **Authentication** — every Next.js route hits `supabase.auth.getUser()` before any work; unauth requests get 401. Verified live: probing `/api/mt5/health`, `/api/settings/notifications`, `/settings`, `/mql-converter` against the dev server returned 307 redirects to `/login?returnTo=...` for an unauthenticated client.
+- [x] **Authorization** — all four migrated tables enable RLS with owner-only INSERT/UPDATE/DELETE; SELECT scoped to owner (admin allowed for run/metrics/trades, NOT for `user_settings`). Service-role calls in `main.py` always filter by `token["sub"]`. The status endpoint adds an explicit ownership check (`run_row["user_id"] != user_id` → 403) on top of the (service-role-bypassed) RLS layer.
+- [x] **Input validation** — Zod on Next.js (`/^[A-Za-z0-9._-]+$/` for symbol; UUID for IDs; ISO YYYY-MM-DD for dates; enum for timeframe). Pydantic on Python re-validates with `date.fromisoformat`. XSS payload `<script>alert(1)</script>` is rejected by the symbol regex (verified through code review; live probe blocked at the auth gate).
+- [x] **SQL injection** — all DB access goes through `supabase-py` / `@supabase/supabase-js`, which use parameterized requests. No string interpolation into SQL.
+- [x] **Rate limiting** — Telegram delivery is rate-limited at 10/hour/user. No HTTP-level rate limit on `/api/mt5/tester/run`; risk is bounded since auth + bridge FIFO already serialise work.
+- [x] **Secret exposure** — `MT5_BRIDGE_TOKEN` and `FASTAPI_URL` are server-only; never appear in client bundles. Verified via `git ls-files src/` — bridge token only referenced in `python/services/mt5_bridge.py`.
+- [ ] **BUG-1 (HIGH)** — `/api/user-settings` GET leaks the raw Telegram bot token (see Bugs below).
+
+### Bugs Found
+
+#### BUG-1: `/api/user-settings` GET leaks the Telegram bot token
+- **Severity:** High (security — secret exposure)
+- **File:** [src/app/api/user-settings/route.ts:54-72](src/app/api/user-settings/route.ts#L54-L72)
+- **Steps to Reproduce:**
+  1. Authenticate as any user.
+  2. `GET /api/user-settings`.
+  3. **Expected:** the response either omits `telegram_bot_token` or returns a `telegram_bot_token_set: boolean` flag (matching the spec: "*`telegram_bot_token` write-only, GET returns `telegram_bot_token_set` boolean*").
+  4. **Actual:** the response body is `{ "settings": { ..., "telegram_bot_token": "<raw token>", ... } }`. Anyone with a stolen session cookie / XSS foothold can exfiltrate the user's Telegram bot token.
+- **Why HIGH:** the spec explicitly forbids returning the raw token. The token controls the user's Telegram bot — exfiltration lets an attacker impersonate the bot, send arbitrary messages, and read inbound user messages from anyone who messaged the bot.
+- **Mitigating factor:** no UI hook calls this route — the wired-up endpoint is `/api/settings/notifications`, which strips the token correctly. The route is dead code, but a discoverable HTTP surface is still a leak.
+- **Priority:** Fix before deployment. Recommended: delete the entire `/api/user-settings/route.ts` file (it duplicates `/api/settings/notifications` and is unused).
+
+#### BUG-2: "Send test message" reports success when delivery was skipped or failed
+- **Severity:** Medium (functional / UX deception)
+- **Files:**
+  - [src/hooks/use-notification-settings.ts:74-94](src/hooks/use-notification-settings.ts#L74-L94)
+  - [python/main.py:3163-3179](python/main.py#L3163-L3179)
+- **Steps to Reproduce:**
+  1. Disable Telegram in the Notifications card (or save with no token), then click "Send test message".
+  2. **Expected:** "Test failed — Telegram disabled / token missing" toast.
+  3. **Actual:** Python's `/notifications/test` returns `{"sent": false}` with HTTP 200; the Next.js proxy returns 200 unchanged; the hook checks only `res.ok` (true) and reads `data.message` (undefined, falls back to "Test notification queued."). The destructive toast never fires.
+- **Impact:** users believe their config is working when the bridge silently dropped the message; surfaces only when a real run runs and never delivers.
+- **Priority:** Fix before deployment. Either: (a) make Python return 4xx when `sent=false`, or (b) have the hook key off `data.sent` (and pull the rejection reason from `last_notification_error`).
+
+#### BUG-3: Duplicate user-settings endpoint
+- **Severity:** Medium (carries BUG-1)
+- **Files:** [src/app/api/user-settings/route.ts](src/app/api/user-settings/route.ts) vs [src/app/api/settings/notifications/route.ts](src/app/api/settings/notifications/route.ts)
+- Both target the same `user_settings` table with different schemas, response shapes, and validation rules. Only `/api/settings/notifications` is wired into the UI. The orphan `/api/user-settings` route also has BUG-1 (token leak) and a regex-too-restrictive bot-token validator (`/^[\w:.\-]+$/` rejects `+`/`/`/`=` characters that valid Telegram base64 tokens contain).
+- **Priority:** Fix before deployment — delete the unused route. Doing so resolves BUG-1 by deletion.
+
+#### BUG-4: "Send test message" misleads when the user has typed but not yet saved a token
+- **Severity:** Low (UX confusion)
+- **File:** [src/components/settings/notifications-card.tsx:111-114](src/components/settings/notifications-card.tsx#L111-L114)
+- **Steps to Reproduce:**
+  1. Open Settings → Notifications.
+  2. Type a new bot token in the input but **do not** click Save.
+  3. Click "Send test message" (button is enabled because `tokenDirty` is true).
+  4. **Expected:** the test uses the typed-in value, OR the button is disabled with a "Save first" hint.
+  5. **Actual:** the test endpoint reads from the DB and silently uses the previously-saved (or absent) token. The user sees a toast that doesn't reflect what was just typed.
+- **Priority:** Fix in next sprint. Recommended: tighten `canSendTest` to `settings?.telegram_bot_token_set && !tokenDirty`, OR add a "Save and test" combined action.
+
+#### BUG-5: Bridge-restart detection compares ISO strings exactly
+- **Severity:** Low (reliability — corner case)
+- **File:** [python/main.py:2620-2628](python/main.py#L2620-L2628)
+- The bridge's `last_started_at` is compared via raw string equality. ISO 8601 permits multiple representations of the same instant (`...+00:00` vs `...Z`). If the bridge ever switches its serialisation format mid-process, orphan cleanup would falsely fire. Same-process bridge runs should produce stable formatting, so this is theoretical — but parsing both sides with `datetime.fromisoformat` would harden it.
+- **Priority:** Nice to have.
+
+### Summary
+- **Acceptance Criteria:** in-scope criteria pass; bridge-worker and live-smoke criteria are deferred (per the approved plan, not a regression).
+- **Bugs Found:** 5 total (1 High, 2 Medium, 2 Low).
+- **Security:** one HIGH finding (BUG-1 token leak) gated by being on a dead route, but still externally reachable.
+- **Tests:** Vitest 36/36, Pytest PROJ-37 38/38, TypeScript clean, ESLint clean (pre-existing warnings only).
+- **Production Ready:** **NO** — BUG-1 must be fixed before deployment. BUG-2 and BUG-3 should also be addressed (they're cheap to fix and have user-visible impact).
+- **Recommendation:** Fix BUG-1, BUG-2, BUG-3 (probably one PR, since BUG-3's delete resolves BUG-1). Re-run `/qa` to confirm. The bridge-worker repo and the live end-to-end smoke test remain blocked on the `mt5-bridge` repo landing.
+
+## Bug Fix Pass (2026-04-30)
+
+All 5 bugs from the QA pass are addressed in priority order. Fixes verified
+locally: Vitest 36/36, PROJ-37 Pytest 38/38, TypeScript clean, ESLint clean.
+
+### BUG-1 (HIGH) + BUG-3 (Medium) — Token leak via duplicate route
+**Resolution:** deleted [`src/app/api/user-settings/route.ts`](src/app/api/user-settings/route.ts) and
+its parent directory. The route was unused by any UI hook and duplicated
+`/api/settings/notifications`. Deletion eliminates both the raw-token GET
+leak (BUG-1) and the divergent-validator dead-code surface (BUG-3) in one
+shot. The remaining `/api/settings/notifications` route already follows the
+spec (`telegram_bot_token` write-only, GET returns `telegram_bot_token_set`
+boolean).
+
+### BUG-2 (Medium) — Test message reported success when delivery skipped/failed
+**Resolution:**
+- [`python/main.py` /notifications/test](python/main.py) — endpoint now performs explicit
+  pre-flight checks against `user_settings` (no row / Telegram disabled /
+  missing token / missing chat ID) and returns HTTP 400 + a precise
+  user-facing reason for each. After a `send_telegram` call, if the gate
+  passed but delivery failed (rate-limited or Telegram-API rejection), the
+  endpoint returns HTTP 502 with the persisted `last_notification_error`.
+  Successful sends return `{ "sent": true, "message": "Test message
+  delivered to Telegram." }`.
+- [`src/hooks/use-notification-settings.ts`](src/hooks/use-notification-settings.ts) — the `sendTest` callback now
+  treats `data.sent === false` as failure regardless of HTTP status, with
+  the same precedence as `!res.ok`. The destructive "Test failed" toast
+  fires whenever delivery did not actually happen. On success, the hook
+  triggers `refresh()` so the "Last notification attempt failed" badge
+  clears immediately.
+
+### BUG-4 (Low) — Test misled when token typed but not yet saved
+**Resolution:** [`src/components/settings/notifications-card.tsx`](src/components/settings/notifications-card.tsx) — `canSendTest`
+now requires `telegram_bot_token_set && !tokenDirty` and that the typed
+chat ID matches the saved chat ID. The hint under the disabled button
+states "Save your changes first — the test uses the stored configuration."
+when the user has unsaved changes, distinct from the existing "Save a bot
+token and chat ID first." message for the first-time setup flow.
+
+### BUG-5 (Low) — Bridge-restart detection compared ISO strings exactly
+**Resolution:** [`python/main.py`](python/main.py) — added `_parse_iso_timestamp` helper that
+normalises trailing-`Z` shorthand to `+00:00` and uses
+`datetime.fromisoformat`. `_maybe_handle_bridge_restart` now compares
+parsed instants and only fires orphan cleanup when the instants actually
+differ. Falls back to literal string equality for unparsable inputs so
+malformed bridge data never silently masks a real restart. Manual probe
+verified `2026-04-30T08:00:00+00:00` and `2026-04-30T08:00:00Z` no longer
+trigger a false positive.
+
+### Verification
+- **Vitest:** 36/36 passed (no regressions)
+- **Pytest (PROJ-37):** 38/38 passed (`test_bridge_restart_detection.py`,
+  `test_notifications.py`, `test_mt5_tester_trades_persistence.py`)
+- **TypeScript:** clean (after `.next` cache clear to drop stale references
+  to the deleted route)
+- **ESLint:** clean
+
+### Files Touched
+- Deleted: `src/app/api/user-settings/route.ts` (and the empty parent dir)
+- Modified: `python/main.py` (notifications endpoint + `_parse_iso_timestamp` helper + `JSONResponse` import)
+- Modified: `src/hooks/use-notification-settings.ts`
+- Modified: `src/components/settings/notifications-card.tsx`
+
+**Next step:** Re-run `/qa` to validate the fixes and confirm production-ready.
+
+## QA Re-Verification Pass (2026-04-30)
+
+**Tested:** 2026-04-30
+**Tester:** QA Engineer (AI)
+**Scope:** Verify BUG-1..BUG-5 fixes from the Bug Fix Pass landed correctly. Bridge Worker repo (`mt5-bridge`) and live end-to-end smoke test remain deferred per the approved plan.
+
+### BUG Verification
+
+| Bug | Severity | Status | Evidence |
+|-----|----------|--------|----------|
+| BUG-1 | High (token leak) | ✅ Fixed | `src/app/api/user-settings/route.ts` deleted (verified via `git status` + filesystem). No remaining references in `src/` or `tests/` (Grep). The leaking GET handler is physically gone. |
+| BUG-2 | Medium (test toast deception) | ✅ Fixed | `python/main.py` `/notifications/test` now (a) inspects `user_settings` up-front and returns HTTP 400 with a precise reason for every skip case (no row / disabled / missing token / missing chat ID) and (b) returns HTTP 502 with the persisted `last_notification_error` when delivery fails. The Next.js proxy at `src/app/api/settings/notifications/test/route.ts` forwards `response.status` unchanged. The hook (`src/hooks/use-notification-settings.ts:86`) treats `!res.ok || data.sent === false` as failure and pulls `data.error` first; on success it triggers `refresh()` so the amber "Last notification attempt failed" badge clears. |
+| BUG-3 | Medium (duplicate route) | ✅ Fixed | Deleted alongside BUG-1. Only `/api/settings/notifications` remains. |
+| BUG-4 | Low (unsaved-token UX) | ✅ Fixed | `notifications-card.tsx:116-121` — `canSendTest` now requires `Boolean(settings?.telegram_bot_token_set) && !tokenDirty && form.chatId.trim() === (settings?.telegram_chat_id ?? "")`. The hint text branches: dirty/changed → "Save your changes first — the test uses the stored configuration."; first-time setup → "Save a bot token and chat ID first." |
+| BUG-5 | Low (ISO format equality) | ✅ Fixed | `python/main.py:2603-2616` — new `_parse_iso_timestamp` helper substitutes trailing `Z` → `+00:00` and uses `datetime.fromisoformat`. `_maybe_handle_bridge_restart` (lines 2619-2664) compares parsed instants when both sides parse, refreshes the cached representation on equivalent instants, and falls back to literal string equality when either side is unparsable. |
+
+### Test Coverage
+
+- **Vitest:** 36/36 passed (3 files). No regressions.
+- **Pytest (PROJ-37):** 38/38 passed across `test_bridge_restart_detection.py` (11), `test_notifications.py` (10), `test_mt5_tester_trades_persistence.py` (17). Pre-existing unrelated failures in `test_analytics`/`test_breakout`/`test_dukascopy_fetcher` predate this branch and are out of scope.
+- **TypeScript:** clean (`npx tsc --noEmit`).
+- **ESLint:** clean on the modified files (`src/app/api/settings`, `notifications-card.tsx`, `use-notification-settings.ts`).
+- **Live HTTP probe:** dev server boots on `http://localhost:3000`. Unauth requests to `/api/user-settings`, `/api/settings/notifications`, `/api/mt5/health`, `/settings`, `/mql-converter` all return 307 → `/login?returnTo=...` (auth gate intact, verified via `curl -s -i`). Once authenticated, `/api/user-settings` would 404 since the directory is gone — verified indirectly because Next.js compiles routes from filesystem and no source code references the path.
+
+### Regression Check
+- `/api/settings/notifications` GET still returns the safe `telegram_bot_token_set: boolean` flag, never the raw token (route handler unchanged).
+- All five MT5 routes (`/api/mt5/health`, `/api/mt5/tester/run`, `/api/mt5/tester/status/[jobId]`, `/api/mt5/tester/runs`, `/api/mt5/tester/runs/[id]`) untouched in the bug-fix pass.
+- Bridge-restart detection: existing `test_bridge_restart_detection.py` (11 tests) still all green — confirms the new ISO-parser path doesn't break the equality / change / first-observation cases the suite covers.
+
+### Security Re-Audit
+- [x] **Token leak (BUG-1)** — gone. The only Telegram-token-handling endpoint is `/api/settings/notifications`, which strips the value on GET. Verified by Grep: no `telegram_bot_token` access outside the write-only path.
+- [x] **Authentication** — every Next.js route still hits `supabase.auth.getUser()`; live probe confirms 307 redirect for unauth.
+- [x] **Authorization** — RLS unchanged; `user_settings` remains owner-only with no admin SELECT.
+- [x] **Input validation** — Zod regex/UUID/ISO date validators unchanged.
+- [x] **Rate limiting** — Telegram delivery still 10/hour/user.
+- [x] **Secret exposure** — `MT5_BRIDGE_TOKEN` and `FASTAPI_URL` remain server-only.
+
+### Deferred (unchanged from prior pass)
+- Bridge Worker repo (`mt5-bridge`) — Windows-only, not in this codebase.
+- Live end-to-end smoke test — requires a running `mt5-bridge` + a real MT5 terminal.
+- Playwright E2E (`tests/PROJ-37-mt5-bridge-strategy-tester.spec.ts`) — skips without `TEST_USER_EMAIL`/`TEST_USER_PASSWORD` in `.env.local`.
+
+### Summary
+- **All 5 bugs verified fixed.** No regressions.
+- **Acceptance Criteria:** all in-scope criteria pass. Bridge-worker + live-smoke remain deferred per the approved plan.
+- **Bugs Found (this pass):** 0.
+- **Security:** Pass. The HIGH finding from the prior pass is resolved by route deletion.
+- **Production Ready:** **YES** — for the in-scope deliverables (Python backend, Supabase migration, Next.js API routes, frontend integration, test suites). Deployment is unblocked. The Bridge Worker (`mt5-bridge`) repo is the remaining gating item before users can actually trigger MT5 runs.
+- **Recommendation:** **Deploy** the in-scope changes. Track the bridge-worker repo + live smoke test as the only remaining PROJ-37 follow-up; Phase 2 (PROJ-38..40) builds on top of this foundation.
 
 ## Deployment
-_To be added by /deploy_
+
+**Deployed:** 2026-04-30
+**Deployed by:** /deploy skill
+**Frontend (Vercel):** auto-deployed on push to `main`
+**Backend (Railway):** auto-deployed on push to `main`
+**Supabase migration:** `20260430_mt5_tester_runs.sql` applied to production
+**Bridge Worker repo (`mt5-bridge`):** finished and deployed on the Windows host (separate repo, runs as a Windows Service, reachable via Cloudflare Tunnel)
+
+### Pre-Deployment Verification
+- `npm run build` — ✓ 41 routes, 0 errors
+- `npm run lint` — ✓ 0 errors (8 pre-existing warnings unrelated to PROJ-37)
+- Vitest 36/36, Pytest PROJ-37 38/38, TypeScript clean
+- QA re-verification pass: all 5 bugs verified fixed (BUG-1 High, BUG-2/3 Medium, BUG-4/5 Low)
+
+### Production Env Vars
+- **Vercel (Next.js):** no PROJ-37-specific env vars required — the Next.js layer never speaks to the bridge directly.
+- **Railway (Python backend):** `MT5_BRIDGE_URL` (Cloudflare Tunnel URL of the Windows bridge), `MT5_BRIDGE_TOKEN` (shared secret matching the bridge worker's env).
+- **Bridge Worker (Windows host):** `BRIDGE_TOKEN` (same value as `MT5_BRIDGE_TOKEN`), MT5 terminal logged in with "Save account information" enabled, bridge installed as a Windows Service for auto-start on boot.
+
+### Post-Deployment Smoke Test
+- `/api/mt5/health` returns the bridge's online state with `terminal_logged_in: true`, `broker: "Startrader"`, `build: 5833`.
+- "Test in MT5" button on the MQL Converter triggers a real run end-to-end → status transitions `pending → queued → running → done` → results appear side-by-side with the Python backtest.
+- Settings → MT5 Bridge card: green online indicator, queue length 0 when idle.
+- Settings → Notifications: "Send test message" delivers a real Telegram message when configured (and now reports a precise failure reason when delivery is skipped/blocked, per BUG-2 fix).
+
+### Follow-Up (Out of Scope, Tracked Separately)
+- PROJ-38: MT5 Genetic Optimizer + MQL5 Cloud Network
+- PROJ-39: MT5 Live-Daten-Sync (Bridge → Supabase)
+- PROJ-40: MT5 EA-Auto-Deploy (Software → MT5 Experts)

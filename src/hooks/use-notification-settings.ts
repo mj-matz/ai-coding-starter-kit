@@ -74,16 +74,31 @@ export function useNotificationSettings(): UseNotificationSettingsReturn {
   const sendTest = useCallback(async (): Promise<{ ok: boolean; message: string }> => {
     try {
       const res = await fetch("/api/settings/notifications/test", { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
+      const data: { sent?: boolean; message?: string; error?: string } = await res
+        .json()
+        .catch(() => ({}));
+
+      // BUG-2: success requires BOTH a 2xx response AND `sent === true`.
+      // Python returns `{ sent: false, error: "..." }` with HTTP 4xx/5xx when
+      // the message was skipped (Telegram disabled, missing token / chat ID)
+      // or rejected by Telegram (invalid token, blocked chat). Earlier the
+      // hook keyed off only `res.ok` and the destructive toast never fired.
+      if (!res.ok || data.sent === false) {
         return {
           ok: false,
-          message: data.error ?? `Test failed (${res.status})`,
+          message:
+            data.error ??
+            data.message ??
+            `Test failed (${res.status})`,
         };
       }
+
+      // Refresh persisted state so the "Last notification attempt failed"
+      // badge clears immediately on a successful test send.
+      void refresh();
       return {
         ok: true,
-        message: data.message ?? "Test notification queued.",
+        message: data.message ?? "Test message sent to Telegram.",
       };
     } catch (err) {
       return {
@@ -91,7 +106,7 @@ export function useNotificationSettings(): UseNotificationSettingsReturn {
         message: err instanceof Error ? err.message : "Test failed",
       };
     }
-  }, []);
+  }, [refresh]);
 
   useEffect(() => {
     void refresh();

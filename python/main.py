@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from models import FetchRequest, FetchResponse, ErrorResponse, SkippedDayOut
@@ -2599,12 +2600,34 @@ _MT5_BRIDGE_LAST_STARTED_AT: dict = {"value": None}
 _MT5_BRIDGE_RESTART_LOCK = threading.Lock()
 
 
+def _parse_iso_timestamp(value: Optional[str]) -> Optional[datetime]:
+    """Parse an ISO-8601 timestamp; tolerate the trailing-`Z` shorthand.
+
+    Returns `None` for unparsable input. BUG-5: the bridge-restart detector
+    needs `2026-04-30T08:00:00+00:00` and `2026-04-30T08:00:00Z` to compare
+    equal. Python <3.11 chokes on `Z`; we substitute it with `+00:00` first.
+    """
+    if not value:
+        return None
+    try:
+        normalised = value[:-1] + "+00:00" if value.endswith("Z") else value
+        return datetime.fromisoformat(normalised)
+    except (TypeError, ValueError):
+        return None
+
+
 def _maybe_handle_bridge_restart(new_last_started_at: Optional[str]) -> bool:
     """Compare the new `last_started_at` against the cached value.
 
     Returns True when a restart was detected and a cleanup was scheduled.
     Mutates `_MT5_BRIDGE_LAST_STARTED_AT` in-place under a lock so concurrent
     health probes don't fan out into multiple cleanups.
+
+    BUG-5: comparison is now instant-based via `datetime.fromisoformat` so
+    `...+00:00` and `...Z` (and other equivalent ISO renderings) don't
+    falsely trigger orphan-cleanup. Falls back to literal string equality
+    when either side is unparsable so we never mistake "garbage in" for
+    "no change".
     """
     if not new_last_started_at:
         return False
@@ -2617,14 +2640,22 @@ def _maybe_handle_bridge_restart(new_last_started_at: Optional[str]) -> bool:
         if previous is None:
             _MT5_BRIDGE_LAST_STARTED_AT["value"] = new_last_started_at
             return False
-        # No change → no restart.
-        if new_last_started_at == previous:
+        # No change → no restart. Compare as parsed instants; if either side
+        # fails to parse, fall through to string equality (paranoid guard
+        # against a future bridge changing serialisation format).
+        prev_dt = _parse_iso_timestamp(previous)
+        new_dt = _parse_iso_timestamp(new_last_started_at)
+        if prev_dt is not None and new_dt is not None:
+            if prev_dt == new_dt:
+                # Equivalent instant; refresh the stored representation so
+                # the cache stays in sync with the bridge's preferred form.
+                _MT5_BRIDGE_LAST_STARTED_AT["value"] = new_last_started_at
+                return False
+        elif new_last_started_at == previous:
             return False
-        # `last_started_at` is an ISO-8601 string from the bridge. String
-        # compare is correct for ISO-8601 with the same UTC offset; we still
-        # accept any change as a restart signal (clocks can move backward
-        # too in odd environments — what matters is "different value"
-        # implies the bridge process restarted).
+        # Different instant → bridge process restarted (we accept clock
+        # moving backward as a restart signal too — what matters is "this
+        # is a different bridge run" implies the in-memory queue is empty).
         _MT5_BRIDGE_LAST_STARTED_AT["value"] = new_last_started_at
 
     logger.info(
@@ -3164,19 +3195,92 @@ async def mt5_orphan_cleanup(
 async def notifications_test(token: dict = Depends(verify_jwt)):
     """Send a test Telegram message to the calling user.
 
-    Telegram delivery is currently stubbed (see services/notifications.py); the
-    endpoint still exercises the gating logic (settings lookup + rate limit +
-    last_notification_* persistence) so the Settings UI can verify config end
-    to end before real delivery lands.
+    Surfaces a precise reason whenever delivery was skipped (Telegram disabled,
+    no token / chat ID, no settings row) or rejected by Telegram (invalid
+    token, blocked chat, rate-limited). The Settings UI keys off
+    `sent` (boolean) and `error` (user-facing string) to render an honest
+    "Test failed" toast — fixing BUG-2 (test reported success even when
+    delivery was skipped or failed).
+
+    Skip reasons are determined locally before calling `send_telegram` so we
+    never have to ask the persisted `last_notification_error` "did this most
+    recent send fail?" — a noisy question across concurrent attempts. Real
+    Telegram-API rejections are read from `user_settings.last_notification_error`
+    after the send, which `send_telegram` writes synchronously.
     """
+    from services.cache_service import _get_supabase_client
+
     user_id: str = token["sub"]
+    client = _get_supabase_client()
+
+    # Inspect settings up-front so we can return a precise skip reason.
+    settings_resp = (
+        client.table("user_settings")
+        .select(
+            "telegram_enabled, telegram_bot_token, telegram_chat_id"
+        )
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+    settings_row = settings_resp.data[0] if settings_resp.data else None
+
+    if not settings_row:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "sent": False,
+                "error": "No notification settings configured. Save your Telegram bot token and chat ID first.",
+            },
+        )
+    if not settings_row.get("telegram_enabled"):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "sent": False,
+                "error": "Telegram is disabled. Toggle it on and save before testing.",
+            },
+        )
+    if not settings_row.get("telegram_bot_token") or not settings_row.get("telegram_chat_id"):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "sent": False,
+                "error": "Bot token and chat ID are both required. Fill them in and save before testing.",
+            },
+        )
+
     sent = await send_telegram(
         user_id=user_id,
         message="Test message from MT5 Backtester. If you see this, your Telegram bridge is configured.",
         run_type="single_run",
         force=True,
     )
-    return {"sent": sent}
+    if sent:
+        return {"sent": True, "message": "Test message delivered to Telegram."}
+
+    # send_telegram returned False after passing pre-flight gates → either
+    # rate-limited or Telegram itself rejected the request. The actual reason
+    # has just been persisted to user_settings.last_notification_error.
+    err_resp = (
+        client.table("user_settings")
+        .select("last_notification_error")
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+    persisted_error: Optional[str] = None
+    if err_resp.data:
+        persisted_error = err_resp.data[0].get("last_notification_error")
+
+    return JSONResponse(
+        status_code=502,
+        content={
+            "sent": False,
+            "error": persisted_error
+            or "Telegram delivery failed. Check the Notifications card for the latest error.",
+        },
+    )
 
 
 # ── /sandbox/run endpoint (PROJ-22: MQL Converter) ──────────────────────────

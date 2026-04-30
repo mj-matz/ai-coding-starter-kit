@@ -50,7 +50,7 @@
 | PROJ-34 | MT5 Broker Data Import | Deployed | [PROJ-34-mt5-broker-data-import.md](PROJ-34-mt5-broker-data-import.md) | 2026-04-14 |
 | PROJ-35 | Optimizer – Extended Target Metrics & Hard Constraint Filter | Deployed | [PROJ-35-optimizer-extended-metrics.md](PROJ-35-optimizer-extended-metrics.md) | 2026-04-17 |
 | PROJ-36 | Breakout – Continuous Trailing Stop & Partial Close Config | In Progress | [PROJ-36-breakout-continuous-trail-partial-close.md](PROJ-36-breakout-continuous-trail-partial-close.md) | 2026-04-20 |
-| PROJ-37 | MT5 Bridge Worker – Strategy Tester Run | In Progress | [PROJ-37-mt5-bridge-strategy-tester.md](PROJ-37-mt5-bridge-strategy-tester.md) | 2026-04-28 |
+| PROJ-37 | MT5 Bridge Worker – Strategy Tester Run | Deployed | [PROJ-37-mt5-bridge-strategy-tester.md](PROJ-37-mt5-bridge-strategy-tester.md) | 2026-04-28 |
 | PROJ-38 | MT5 Genetic Optimizer + MQL5 Cloud Network | Planned | [PROJ-38-mt5-genetic-optimizer.md](PROJ-38-mt5-genetic-optimizer.md) | 2026-04-28 |
 | PROJ-39 | MT5 Live-Daten-Sync (Bridge → Supabase) | Planned | [PROJ-39-mt5-live-data-sync.md](PROJ-39-mt5-live-data-sync.md) | 2026-04-28 |
 | PROJ-40 | MT5 EA-Auto-Deploy (Software → MT5 Experts) | Planned | [PROJ-40-mt5-ea-auto-deploy.md](PROJ-40-mt5-ea-auto-deploy.md) | 2026-04-28 |
