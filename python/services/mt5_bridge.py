@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 MT5_BRIDGE_URL: str = os.environ.get("MT5_BRIDGE_URL", "").rstrip("/")
 MT5_BRIDGE_TOKEN: str = os.environ.get("MT5_BRIDGE_TOKEN", "")
+# Optional outbound proxy — set on Railway to the Tailscale userspace HTTP/SOCKS5
+# proxy (e.g. http://localhost:1055) so bridge calls reach the Windows host
+# through the tailnet without exposing the bridge to the public internet.
+MT5_BRIDGE_PROXY: Optional[str] = os.environ.get("TS_HTTP_PROXY") or None
 
 # Per the spec: 60s for health checks, up to 1h for run submissions.
 HEALTH_TIMEOUT_SECONDS: float = 60.0
@@ -92,9 +96,13 @@ async def _request_with_retry(
     url = f"{MT5_BRIDGE_URL}{path}"
     last_exc: Optional[Exception] = None
 
+    client_kwargs: dict = {"timeout": timeout}
+    if MT5_BRIDGE_PROXY:
+        client_kwargs["proxy"] = MT5_BRIDGE_PROXY
+
     for attempt in range(retries):
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with httpx.AsyncClient(**client_kwargs) as client:
                 resp = await client.request(
                     method, url, json=json_body, headers=_headers()
                 )
