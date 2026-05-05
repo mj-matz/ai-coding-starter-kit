@@ -31,7 +31,10 @@ const TesterRunSchema = z.object({
     .string()
     .min(1)
     .max(32)
-    .regex(/^[A-Za-z0-9._-]+$/, "Symbol must be alphanumeric (with . _ -)"),
+    .regex(
+      /^[A-Za-z0-9._+\-]+$/,
+      "Symbol must be alphanumeric (with . _ - +)",
+    ),
   timeframe: z.enum(TIMEFRAMES),
   // ISO YYYY-MM-DD; refined for sanity but the Python side re-validates.
   from_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
