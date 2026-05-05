@@ -3142,25 +3142,27 @@ async def mt5_health(token: dict = Depends(verify_jwt)):
 async def mt5_pending_jobs(token: dict = Depends(verify_jwt)):
     """Return all `pending` / `queued` runs the bridge should seed into its FIFO on boot.
 
-    The bridge calls this on startup. The token here is the user's JWT (the
-    bridge runs under the admin user), which is sufficient to scope the response
-    to that user's pending runs.
+    The bridge calls this on startup with either a user JWT (`role=authenticated`)
+    or a Supabase service-role JWT (`role=service_role`). For user JWTs the
+    response is scoped to that user's pending runs; for service-role tokens
+    (single-admin bridge setup) the user filter is dropped.
     """
-    user_id: str = token["sub"]
     client = _supabase_for_user_token()
 
-    resp = (
+    query = (
         client.table("mt5_tester_runs")
         .select(
             "id, expert_name, symbol, timeframe, from_date, to_date, "
             "parameters, model, status, started_at"
         )
-        .eq("user_id", user_id)
         .in_("status", ["pending", "queued"])
         .order("started_at")
         .limit(500)
-        .execute()
     )
+    if token.get("role") != "service_role":
+        query = query.eq("user_id", token["sub"])
+
+    resp = query.execute()
     return {"runs": resp.data or []}
 
 
@@ -3179,11 +3181,15 @@ async def mt5_orphan_cleanup(
     fast-path fires (e.g. a hard power loss where the bridge never reaches
     the backend afterwards).
     """
+    is_service_role = token.get("role") == "service_role"
     user_id: str = token["sub"]
-    scope_user = request.user_id or user_id
 
-    if scope_user != user_id and (token.get("app_metadata", {}) or {}).get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Cannot clean up other users' runs.")
+    if is_service_role:
+        scope_user = request.user_id  # may be None → cleanup_stale_runs sweeps all users
+    else:
+        scope_user = request.user_id or user_id
+        if scope_user != user_id and (token.get("app_metadata", {}) or {}).get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Cannot clean up other users' runs.")
 
     cleared = await cleanup_stale_runs(scope_user_id=scope_user)
     return {"cleared": cleared}
