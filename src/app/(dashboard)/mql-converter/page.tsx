@@ -7,6 +7,7 @@ import { AlertCircle, RefreshCw } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 import { MqlInputPanel } from "@/components/mql-converter/mql-input-panel";
 import type { MqlInputValues } from "@/components/mql-converter/mql-input-panel";
@@ -113,6 +114,41 @@ export default function MqlConverterPage() {
   const mt5Run = useMt5TesterRun();
   const [mt5HistoryRefreshKey, setMt5HistoryRefreshKey] = useState(0);
 
+  // PROJ-37: Per-asset MT5 symbol override. Brokers like Startrader use suffixes
+  // (e.g. XAUUSD+) that the Dukascopy-backed Python backtest doesn't know about.
+  // We persist the mapping locally so the user only enters it once per asset.
+  const MT5_SYMBOL_MAP_KEY = "mt5_symbol_overrides";
+  const [mt5Symbol, setMt5Symbol] = useState<string>("");
+  useEffect(() => {
+    if (!lastInputValues?.symbol) {
+      setMt5Symbol("");
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(MT5_SYMBOL_MAP_KEY);
+      const map: Record<string, string> = raw ? JSON.parse(raw) : {};
+      setMt5Symbol(map[lastInputValues.symbol] ?? lastInputValues.symbol);
+    } catch {
+      setMt5Symbol(lastInputValues.symbol);
+    }
+  }, [lastInputValues?.symbol]);
+
+  const setAndPersistMt5Symbol = useCallback(
+    (value: string) => {
+      setMt5Symbol(value);
+      if (!lastInputValues?.symbol) return;
+      try {
+        const raw = localStorage.getItem(MT5_SYMBOL_MAP_KEY);
+        const map: Record<string, string> = raw ? JSON.parse(raw) : {};
+        map[lastInputValues.symbol] = value;
+        localStorage.setItem(MT5_SYMBOL_MAP_KEY, JSON.stringify(map));
+      } catch {
+        // private mode / quota exceeded — silently skip persistence
+      }
+    },
+    [lastInputValues?.symbol],
+  );
+
   const isRunning =
     status === "converting" ||
     status === "fetching_data" ||
@@ -191,10 +227,12 @@ export default function MqlConverterPage() {
       ? buildParamsDict(strategyParameters, parameterValues)
       : {};
 
+    const brokerSymbol = mt5Symbol.trim() || lastInputValues.symbol;
+
     void mt5Run.startRun({
       expert_path: expertPath,
       expert_name: expertName,
-      symbol: lastInputValues.symbol,
+      symbol: brokerSymbol,
       timeframe: lastInputValues.timeframe,
       from_date: lastInputValues.startDate,
       to_date: lastInputValues.endDate,
@@ -213,6 +251,7 @@ export default function MqlConverterPage() {
     strategyParameters,
     parameterValues,
     savedConversionId,
+    mt5Symbol,
     mt5Run,
     toast,
   ]);
@@ -590,16 +629,36 @@ export default function MqlConverterPage() {
                         </p>
                       )}
                     </div>
-                    <Mt5TesterButton
-                      bridgeOnline={bridgeHealth.online}
-                      bridgeChecking={bridgeHealth.isLoading}
-                      phase={mt5Run.phase}
-                      status={mt5Run.status}
-                      queuePosition={mt5Run.queuePosition}
-                      runningElapsedSec={mt5Run.runningElapsedSec}
-                      disabled={!parametersValid}
-                      onClick={handleTestInMt5}
-                    />
+                    <div className="flex flex-wrap items-end gap-3">
+                      <div className="flex flex-col gap-1">
+                        <label
+                          htmlFor="mt5-symbol-override"
+                          className="text-[11px] font-medium text-slate-300"
+                        >
+                          MT5 Symbol (Broker)
+                        </label>
+                        <Input
+                          id="mt5-symbol-override"
+                          value={mt5Symbol}
+                          onChange={(e) => setAndPersistMt5Symbol(e.target.value)}
+                          placeholder={lastInputValues.symbol}
+                          className="h-9 w-36 text-xs"
+                        />
+                        <p className="text-[10px] text-slate-500">
+                          Override for broker suffixes (e.g. <code>XAUUSD+</code>).
+                        </p>
+                      </div>
+                      <Mt5TesterButton
+                        bridgeOnline={bridgeHealth.online}
+                        bridgeChecking={bridgeHealth.isLoading}
+                        phase={mt5Run.phase}
+                        status={mt5Run.status}
+                        queuePosition={mt5Run.queuePosition}
+                        runningElapsedSec={mt5Run.runningElapsedSec}
+                        disabled={!parametersValid}
+                        onClick={handleTestInMt5}
+                      />
+                    </div>
                   </div>
                 </div>
               )}
