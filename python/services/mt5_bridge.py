@@ -174,6 +174,22 @@ async def health() -> dict:
     return resp.json_body
 
 
+# Map our internal timeframe strings ("1m", "5m", "1h", …) to the MT5
+# INI format the bridge expects ("M1", "M5", "H1", …). Already-normalised
+# values (e.g. "M5", "D1") pass through unchanged so a re-submission never
+# gets double-translated.
+_TIMEFRAME_TO_MT5 = {
+    "1m": "M1",  "2m": "M2",  "3m": "M3",  "5m": "M5",
+    "15m": "M15", "30m": "M30",
+    "1h": "H1",  "4h": "H4",
+    "1d": "D1",
+}
+
+
+def _normalise_timeframe(tf: str) -> str:
+    return _TIMEFRAME_TO_MT5.get(tf, tf)
+
+
 async def submit_run(payload: dict) -> dict:
     """Submit a tester run to the bridge.
 
@@ -181,6 +197,9 @@ async def submit_run(payload: dict) -> dict:
                   parameters (dict), model.
     Returns the bridge's JSON body, typically `{"job_id": "...", "queue_position": N}`.
     """
+    if "timeframe" in payload:
+        payload = {**payload, "timeframe": _normalise_timeframe(payload["timeframe"])}
+
     resp = await _request_with_retry(
         "POST",
         "/mt5/tester/run",
