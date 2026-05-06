@@ -138,7 +138,95 @@ A **deploy history** in the Settings page under "MT5 Bridge" shows all previous 
 <!-- Sections below are added by subsequent skills -->
 
 ## Tech Design (Solution Architect)
-_To be added by /architecture_
+
+### Overview
+
+One-click deploy pipeline from the app to the MT5 Experts folder. Extends the existing Bridge Worker (PROJ-37) with a compilation endpoint. Entry points in the MQL Converter and MT5 Genetic Optimizer results table. Deploy history in Settings under MT5 Bridge.
+
+### Component Structure
+
+```
+MQL Converter Page (existing)
++-- mt5-result-panel (existing)
+    +-- [NEW] DeployToMT5Button          ← "Deploy to MT5" next to "Export .mq5"
+        +-- [NEW] DeployConfirmDialog    ← EA name input + confirm/cancel
+        +-- [NEW] CompileErrorDialog     ← expanded error log (replaces toast)
+
+MT5 Genetic Optimizer Page (PROJ-38)
++-- Optimizer Result Table
+    +-- [NEW] DeployAsEAButton (per row)
+        +-- [REUSE] DeployConfirmDialog  ← same dialog, with param summary added
+        +-- [REUSE] CompileErrorDialog
+
+Settings Page (/settings, existing)
++-- MT5 Bridge section (existing)
+    +-- mt5-bridge-status-card (existing)
+    +-- [NEW] EaDeploymentsSection
+        +-- [NEW] EaDeploymentsTable    ← Date / EA Name / Source / Status
+            +-- [NEW] CompileLogExpandedRow
+        +-- [NEW] DeploymentsPaginationLink ← "Show All"
+```
+
+### Request Flow
+
+```
+User clicks "Deploy to MT5"
+  → DeployConfirmDialog (EA name editable; param summary for optimizer flow)
+  → Next.js POST /api/mt5/ea/deploy
+  → Python Backend POST /mt5/ea/deploy
+      → Creates pending row in mt5_ea_deployments
+      → [optimizer only] applies parameter replacement (PROJ-33 logic)
+      → Proxies to Bridge Worker POST /mt5/ea/deploy
+          → Writes {ea_name}.mq5 to MT5_EXPERTS_PATH
+          → Runs metaeditor64.exe /compile, waits (timeout 60s)
+          → Parses compile log → { status, errors[], warnings[], log_excerpt }
+      → Updates mt5_ea_deployments row with final status
+  → Frontend: toast on success, CompileErrorDialog on compile_error, toast on timeout/failed
+```
+
+### Data Model
+
+**`mt5_ea_deployments`** table:
+- `id` (uuid PK), `user_id` (FK → auth.users)
+- `ea_name` — filename without `.mq5`
+- `source` — `"mql_converter"` | `"mt5_optimizer"`
+- `mql_conversion_id` (nullable FK), `optimizer_run_id` (nullable FK), `optimizer_result_rank` (nullable int)
+- `status` — `"pending"` | `"compiled"` | `"compile_error"` | `"failed"`
+- `error_message` (nullable text), `warnings` (jsonb nullable), `deployed_at` (timestamptz)
+- RLS: users see only their own records
+- Index: `(user_id, deployed_at DESC)`
+
+### New API Routes
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/mt5/ea/deploy` | POST | Proxies deploy request to Python backend |
+| `/api/mt5/ea/deployments` | GET | Returns paginated deploy history for current user |
+
+### Tech Decisions
+
+| Decision | Choice | Reason |
+|----------|--------|--------|
+| Bridge auth | `X-Bridge-Token` | Same as PROJ-37 — no new mechanism |
+| Parameter replacement location | Python backend | Keeps bridge simple; reuses PROJ-33 regex without duplication |
+| Compile error UI | Dialog (not toast) | Multi-line error output would be truncated in a toast |
+| Overwrite behavior | Silent | Versioning out of scope; warning shown in confirm dialog |
+| History location | Settings → MT5 Bridge | Logical grouping with existing bridge status card |
+| EA content logging | Suppressed | EA code is proprietary |
+
+### Reuse
+
+| Existing artifact | How reused |
+|---|---|
+| Bridge Worker infrastructure (PROJ-37) | Auth, health check, process-runner pattern |
+| Parameter-replacement regex (PROJ-33) | Extracted to Python backend shared utility |
+| `mt5-bridge-status-card` | Deploy button disabled state from same health check |
+| `DeployConfirmDialog` | Shared between MQL Converter and Optimizer entry points |
+
+### Dependencies
+
+No new npm packages — Dialog, Toast, Table, Badge, Button already installed via shadcn/ui.
+No new Python packages — `subprocess` and `re` are standard library.
 
 ## QA Test Results
 _To be added by /qa_

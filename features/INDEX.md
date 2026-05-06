@@ -53,7 +53,7 @@
 | PROJ-37 | MT5 Bridge Worker – Strategy Tester Run | Deployed | [PROJ-37-mt5-bridge-strategy-tester.md](PROJ-37-mt5-bridge-strategy-tester.md) | 2026-04-28 |
 | PROJ-38 | MT5 Genetic Optimizer + MQL5 Cloud Network | Planned | [PROJ-38-mt5-genetic-optimizer.md](PROJ-38-mt5-genetic-optimizer.md) | 2026-04-28 |
 | PROJ-39 | MT5 Live-Daten-Sync (Bridge → Supabase) | Planned | [PROJ-39-mt5-live-data-sync.md](PROJ-39-mt5-live-data-sync.md) | 2026-04-28 |
-| PROJ-40 | MT5 EA-Auto-Deploy (Software → MT5 Experts) | Planned | [PROJ-40-mt5-ea-auto-deploy.md](PROJ-40-mt5-ea-auto-deploy.md) | 2026-04-28 |
+| PROJ-40 | MT5 EA-Auto-Deploy (Software → MT5 Experts) | In Progress | [PROJ-40-mt5-ea-auto-deploy.md](PROJ-40-mt5-ea-auto-deploy.md) | 2026-04-28 |
 
 <!-- Add features above this line -->
 
