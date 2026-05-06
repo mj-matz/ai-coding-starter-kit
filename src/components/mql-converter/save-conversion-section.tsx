@@ -14,7 +14,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+import { DeployToMt5Button } from "@/components/mql-converter/deploy-to-mt5-button";
 import type { StrategyParameter, ParamValue } from "@/components/mql-converter/parameters-panel";
+import type { EaDeployRequest } from "@/lib/mt5-bridge-types";
 
 interface SaveConversionSectionProps {
   onSave: (name: string) => Promise<boolean>;
@@ -31,6 +33,12 @@ interface SaveConversionSectionProps {
   dateFrom?: string;
   /** End date of the backtest */
   dateTo?: string;
+  /** PROJ-40: Bridge online state — gates the Deploy button. */
+  bridgeOnline?: boolean;
+  /** PROJ-40: Loader flag for the bridge health check. */
+  bridgeChecking?: boolean;
+  /** PROJ-40: Bumped when a deploy completes so deploy history can refresh. */
+  onDeployed?: () => void;
 }
 
 export function SaveConversionSection({
@@ -42,6 +50,9 @@ export function SaveConversionSection({
   symbol,
   dateFrom,
   dateTo,
+  bridgeOnline = false,
+  bridgeChecking = false,
+  onDeployed,
 }: SaveConversionSectionProps) {
   const { toast } = useToast();
   const [prevDefaultName, setPrevDefaultName] = useState(defaultName);
@@ -58,6 +69,17 @@ export function SaveConversionSection({
   }
 
   const canExport = !!originalMqlCode;
+  const canDeploy = !!originalMqlCode;
+
+  // PROJ-40: Sanitize the conversion name to a valid EA filename so the
+  // confirm dialog opens with a sensible default. Whitespace → underscore,
+  // strip everything outside [A-Za-z0-9_-], and fall back to a generic name
+  // when the user hasn't typed anything yet.
+  function deriveDefaultEaName(): string {
+    const base = (name.trim() || symbol || "Strategy").replace(/\s+/g, "_");
+    const sanitized = base.replace(/[^A-Za-z0-9_\-]/g, "").slice(0, 64);
+    return sanitized || "Strategy";
+  }
 
   async function handleSave() {
     if (!name.trim() || isSaving) return;
@@ -71,48 +93,53 @@ export function SaveConversionSection({
     }
   }
 
+  // PROJ-33: Render the .mq5 content with current parameters baked in.
+  // Returns the full code string and the suggested filename.
+  async function renderMt5EaContent(): Promise<{ code: string; filename: string }> {
+    // Build parameter entries for the API
+    const paramEntries =
+      parameters && parameterValues
+        ? parameters
+            .filter((p) => p.mql_input_name)
+            .map((p) => ({
+              mql_input_name: p.mql_input_name as string,
+              current_value: parameterValues[p.name] ?? p.default,
+              type: p.type,
+            }))
+        : [];
+
+    const response = await fetch("/api/mql-converter/export-mt5", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        original_mql_code: originalMqlCode,
+        parameters: paramEntries,
+        symbol: symbol || "Unknown",
+        date_from: dateFrom || "",
+        date_to: dateTo || "",
+        conversion_name: name.trim() || undefined,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => null);
+      throw new Error(err?.error || `Export failed (${response.status})`);
+    }
+
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+    const filename = filenameMatch?.[1] || "export.mq5";
+    const code = await response.text();
+    return { code, filename };
+  }
+
   async function handleExport() {
     if (!canExport || isExporting) return;
     setIsExporting(true);
 
     try {
-      // Build parameter entries for the API
-      const paramEntries =
-        parameters && parameterValues
-          ? parameters
-              .filter((p) => p.mql_input_name)
-              .map((p) => ({
-                mql_input_name: p.mql_input_name,
-                current_value: parameterValues[p.name] ?? p.default,
-                type: p.type,
-              }))
-          : [];
-
-      const response = await fetch("/api/mql-converter/export-mt5", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          original_mql_code: originalMqlCode,
-          parameters: paramEntries,
-          symbol: symbol || "Unknown",
-          date_from: dateFrom || "",
-          date_to: dateTo || "",
-          conversion_name: name.trim() || undefined,
-        }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => null);
-        throw new Error(err?.error || `Export failed (${response.status})`);
-      }
-
-      // Extract filename from Content-Disposition header
-      const disposition = response.headers.get("Content-Disposition") || "";
-      const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
-      const filename = filenameMatch?.[1] || "export.mq5";
-
-      // Download via Blob + programmatic <a> click
-      const blob = await response.blob();
+      const { code, filename } = await renderMt5EaContent();
+      const blob = new Blob([code], { type: "application/octet-stream" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -133,22 +160,49 @@ export function SaveConversionSection({
     }
   }
 
+  // PROJ-40: Build the deploy payload by re-using the export endpoint to
+  // render the .mq5 content with the current parameter values, then forward
+  // to /api/mt5/ea/deploy via the DeployToMt5Button.
+  async function buildDeployRequest(eaName: string): Promise<EaDeployRequest> {
+    const { code } = await renderMt5EaContent();
+    return {
+      ea_name: eaName,
+      source: "mql_converter",
+      mq5_content: code,
+      symbol: symbol,
+      date_from: dateFrom,
+      date_to: dateTo,
+      conversion_name: name.trim() || undefined,
+    };
+  }
+
   if (saved) {
     return (
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-green-900/50 bg-green-950/20 px-5 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-green-900/50 bg-green-950/20 px-5 py-3">
         <div className="flex items-center gap-2">
           <Check className="h-4 w-4 text-green-400" />
           <span className="text-sm text-green-300">
             Conversion saved successfully.
           </span>
         </div>
-        {canExport && (
-          <ExportButton
-            onClick={handleExport}
-            isExporting={isExporting}
-            disabled={false}
-          />
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {canExport && (
+            <ExportButton
+              onClick={handleExport}
+              isExporting={isExporting}
+              disabled={false}
+            />
+          )}
+          {canDeploy && (
+            <DeployToMt5Button
+              defaultEaName={deriveDefaultEaName()}
+              bridgeOnline={bridgeOnline}
+              bridgeChecking={bridgeChecking}
+              buildRequest={buildDeployRequest}
+              onDeployed={onDeployed}
+            />
+          )}
+        </div>
       </div>
     );
   }
@@ -206,6 +260,16 @@ export function SaveConversionSection({
                 : undefined
             }
           />
+          {canDeploy && (
+            <DeployToMt5Button
+              defaultEaName={deriveDefaultEaName()}
+              bridgeOnline={bridgeOnline}
+              bridgeChecking={bridgeChecking}
+              disabled={isSaving || isExporting}
+              buildRequest={buildDeployRequest}
+              onDeployed={onDeployed}
+            />
+          )}
         </div>
       </div>
     </div>

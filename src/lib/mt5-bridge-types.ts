@@ -75,6 +75,77 @@ export interface Mt5RunStatusResponse {
   finished_at?: string | null;
 }
 
+// ── EA Deployments (PROJ-40) ────────────────────────────────────────────────
+
+export type EaDeploymentSource = "mql_converter" | "mt5_optimizer";
+
+export type EaDeploymentStatus =
+  | "pending"
+  | "compiled"
+  | "compile_error"
+  | "timeout"
+  | "failed";
+
+export interface EaDeployment {
+  id: string;
+  ea_name: string;
+  source: EaDeploymentSource;
+  mql_conversion_id: string | null;
+  optimizer_run_id: string | null;
+  optimizer_result_rank: number | null;
+  status: EaDeploymentStatus;
+  error_message: string | null;
+  warnings: string[] | null;
+  errors: string[] | null;
+  log_excerpt: string | null;
+  deployed_at: string;
+}
+
+export interface EaDeploymentsListResponse {
+  deployments: EaDeployment[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface EaDeployRequestParameter {
+  mql_input_name: string;
+  current_value: number | string | boolean;
+  type: "number" | "integer" | "string" | "boolean";
+}
+
+export interface EaDeployRequest {
+  ea_name: string;
+  source: EaDeploymentSource;
+  /** Required for the mql_converter flow — pre-rendered .mq5 content. */
+  mq5_content?: string;
+  /** Required for the mt5_optimizer flow — used to look up the original MQL. */
+  mql_conversion_id?: string;
+  optimizer_run_id?: string;
+  optimizer_result_rank?: number;
+  parameters?: EaDeployRequestParameter[];
+  symbol?: string;
+  date_from?: string;
+  date_to?: string;
+  conversion_name?: string;
+}
+
+/** Outcome reported by the bridge. `timeout` is now persisted directly as
+ * a first-class status — see `EaDeploymentStatus`. The alias is kept for
+ * backwards compatibility within this module. */
+export type EaDeployOutcome = EaDeploymentStatus;
+
+export interface EaDeployResponse {
+  status: EaDeployOutcome;
+  ea_name: string;
+  deployment_id?: string;
+  errors?: string[];
+  warnings?: string[];
+  log_excerpt?: string;
+  error?: string;
+  error_message?: string;
+}
+
 // ── Notification settings ───────────────────────────────────────────────────
 
 export interface NotificationSettings {

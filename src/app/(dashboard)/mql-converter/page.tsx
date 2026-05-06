@@ -728,6 +728,8 @@ export default function MqlConverterPage() {
                   symbol={lastInputValues?.symbol}
                   dateFrom={lastInputValues?.startDate}
                   dateTo={lastInputValues?.endDate}
+                  bridgeOnline={bridgeHealth.online}
+                  bridgeChecking={bridgeHealth.isLoading}
                 />
               )}
             </div>

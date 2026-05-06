@@ -14,6 +14,7 @@ import { Mt5UploadDialog } from "@/components/settings/mt5-upload-dialog";
 import { CacheManagementTable } from "@/components/settings/cache-management-table";
 import { AdminUserStrategiesTable } from "@/components/settings/admin-user-strategies-table";
 import { Mt5BridgeStatusCard } from "@/components/settings/mt5-bridge-status-card";
+import { EaDeploymentsSection } from "@/components/settings/ea-deployments-section";
 import { NotificationsCard } from "@/components/settings/notifications-card";
 
 import type { Mt5Timeframe, Mt5UploadRequest } from "@/lib/mt5-data-types";
@@ -91,7 +92,7 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      {/* Section: MT5 Bridge (PROJ-37) */}
+      {/* Section: MT5 Bridge (PROJ-37 + PROJ-40) */}
       <section className="space-y-4">
         <div>
           <h2 className="text-lg font-semibold text-white">MT5 Bridge</h2>
@@ -100,6 +101,7 @@ export default function SettingsPage() {
           </p>
         </div>
         <Mt5BridgeStatusCard />
+        <EaDeploymentsSection />
       </section>
 
       {/* Section: Notifications (PROJ-37) */}

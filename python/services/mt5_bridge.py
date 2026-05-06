@@ -35,6 +35,11 @@ MT5_BRIDGE_PROXY: Optional[str] = (os.environ.get("TS_HTTP_PROXY") or "").strip(
 HEALTH_TIMEOUT_SECONDS: float = 60.0
 RUN_TIMEOUT_SECONDS: float = 3600.0
 DEFAULT_TIMEOUT_SECONDS: float = 30.0
+# PROJ-40: deploy = write .mq5 + run metaeditor64.exe /compile.
+# 120s upper bound covers the slowest realistic compile (large EA, cold start).
+# Spec says compile is typically 1-5s; we still pad generously to avoid spurious
+# timeout failures bubbling up to the user.
+DEPLOY_TIMEOUT_SECONDS: float = 120.0
 
 DEFAULT_RETRY_COUNT: int = 3
 RETRY_BACKOFF_BASE: float = 0.5  # seconds; doubled per attempt
@@ -108,6 +113,18 @@ async def _request_with_retry(
                 )
 
             # 401 is non-retryable — token mismatch must be surfaced immediately.
+            #
+            # NOTE (PROJ-40 contract exception): the bridge's 401 body is
+            # `{"detail": "..."}` rather than the `{"error": "..."}` shape the
+            # rest of its 4xx/5xx responses use. The bridge re-uses
+            # `make_token_dependency` for auth and that raises FastAPI's
+            # `HTTPException`, which serialises as `detail`. We deliberately
+            # only check `status_code` here and never read the 401 body, so
+            # the shape divergence is invisible to callers. If this client
+            # ever needs to surface the 401 body, wrap it as below to keep
+            # callers contract-compatible:
+            #     body = resp.json()
+            #     msg = body.get("error") or body.get("detail")
             if resp.status_code == 401:
                 raise BridgeAuthError(
                     "Bridge authentication failed — check BRIDGE_TOKEN env on both sides."
@@ -231,4 +248,48 @@ async def run_status(bridge_job_id: str) -> dict:
         return {"status": "unknown", "error_message": "Bridge has no record of this job."}
     if resp.status_code != 200:
         raise BridgeError(f"Bridge status returned {resp.status_code}: {resp.json_body}")
+    return resp.json_body
+
+
+# ── PROJ-40: EA deploy + compile ────────────────────────────────────────────
+#
+# Contract documented in `docs/BRIDGE-CONTRACT.md` (PROJ-40 section).
+#
+# Request:  POST /mt5/ea/deploy   { ea_name, mq5_content }
+# Response: 200 OK
+#   - { "status": "compiled",     "ea_name", "warnings": [...], "log_excerpt": "..." }
+#   - { "status": "compile_error","ea_name", "errors":   [...], "log_excerpt": "..." }
+#   - { "status": "timeout",      "ea_name", "error":    "MetaEditor did not complete within Ns" }
+# Authentication via X-Bridge-Token (same shared secret as the tester endpoints).
+# Compile is *synchronous* — the bridge holds the request open until done.
+
+async def deploy_ea(payload: dict) -> dict:
+    """Deploy + compile an EA on the Bridge Worker (synchronous).
+
+    Payload keys (validated upstream):
+        ea_name      — filename without ``.mq5``
+        mq5_content  — full MQL5 source as a string
+    Returns the bridge JSON body. Caller is expected to inspect ``status``.
+
+    Retries are disabled on this endpoint: a partial write on the bridge would
+    overwrite an EA with potentially-different code, and compile is expensive
+    enough that a silent retry hides the actual failure mode from the user.
+    """
+    # We pass the bridge's full deploy timeout to the HTTP client so a slow
+    # compile never gets cut off by httpx.
+    resp = await _request_with_retry(
+        "POST",
+        "/mt5/ea/deploy",
+        json_body=payload,
+        timeout=DEPLOY_TIMEOUT_SECONDS,
+        retries=1,
+    )
+
+    # 4xx → surface verbatim so the API layer can map specific cases
+    # (e.g. 413 payload too large). 2xx → return the bridge body.
+    if resp.status_code != 200:
+        raise BridgeError(
+            f"Bridge rejected deploy (HTTP {resp.status_code}): "
+            f"{resp.json_body.get('error') if isinstance(resp.json_body, dict) else resp.json_body}"
+        )
     return resp.json_body

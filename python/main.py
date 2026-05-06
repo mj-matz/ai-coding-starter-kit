@@ -59,6 +59,10 @@ from services.mt5_bridge import (
     BridgeError,
     BridgeOfflineError,
 )
+from services.mql_param_replace import (
+    MqlParameter,
+    render_ea,
+)
 from services.notifications import format_run_summary, send_telegram
 from jobs.stale_run_cleanup import (
     cleanup_orphans_after_bridge_restart,
@@ -3193,6 +3197,370 @@ async def mt5_orphan_cleanup(
 
     cleared = await cleanup_stale_runs(scope_user_id=scope_user)
     return {"cleared": cleared}
+
+
+# ── PROJ-40: MT5 EA Auto-Deploy ────────────────────────────────────────────
+
+# Strict EA-name validation (defence in depth — frontend coerces whitespace,
+# backend strictly rejects). Also enforced by a Postgres CHECK constraint.
+_EA_NAME_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+# 2 MB ceiling on rendered .mq5 content. The bridge applies its own ceiling
+# (5 MB per the spec) — ours is tighter so the API rejects oversized payloads
+# before they cross the network.
+_MAX_MQ5_BYTES: int = 2_000_000
+
+
+class EaDeployParameter(BaseModel):
+    """One parameter override sent by the optimizer flow.
+
+    `current_value` is a heterogeneous union — JSON `true` / `false` MUST
+    deserialize to Python `bool`, not be coerced into `1.0` / `0.0` by smart
+    union resolution. Pydantic v2 picks the first union member that fully
+    accepts the input under strict-mode rules, so `bool` is listed first.
+    `_format_value` in `mql_param_replace` is also defensive against
+    non-bool values arriving on a `boolean` field.
+    """
+    mql_input_name: str = Field(min_length=1, max_length=128)
+    current_value: Union[bool, int, float, str]
+    type: Literal["number", "integer", "string", "boolean"]
+
+
+class EaDeployRequest(BaseModel):
+    """Payload for POST /mt5/ea/deploy.
+
+    Two flows:
+    1. **MQL Converter flow** — `mq5_content` is sent ready-to-use. The
+       backend forwards it verbatim to the bridge. `parameters` is ignored.
+    2. **MT5 Optimizer flow (PROJ-38)** — `mql_conversion_id` + `parameters`
+       is sent. The backend loads the saved MQL source, applies the parameter
+       overrides via `mql_param_replace.render_ea`, and ships the result.
+    """
+    ea_name: str = Field(min_length=1, max_length=64)
+    source: Literal["mql_converter", "mt5_optimizer"]
+    mq5_content: Optional[str] = Field(default=None, max_length=_MAX_MQ5_BYTES)
+    mql_conversion_id: Optional[str] = None
+    optimizer_run_id: Optional[str] = None
+    optimizer_result_rank: Optional[int] = None
+    parameters: Optional[List[EaDeployParameter]] = None
+    # Echoed into the rendered comment header for the optimizer flow.
+    symbol: Optional[str] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    conversion_name: Optional[str] = None
+
+    @field_validator("ea_name")
+    @classmethod
+    def _validate_ea_name(cls, v: str) -> str:
+        if not _EA_NAME_RE.match(v):
+            raise ValueError(
+                "ea_name must match ^[A-Za-z0-9_\\-]+$ (no spaces or special chars)"
+            )
+        return v
+
+
+class EaDeployResponse(BaseModel):
+    deployment_id: str
+    status: Literal["compiled", "compile_error", "timeout", "failed"]
+    ea_name: str
+    errors: Optional[List[str]] = None
+    warnings: Optional[List[str]] = None
+    log_excerpt: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+@app.post("/mt5/ea/deploy", response_model=EaDeployResponse)
+async def mt5_ea_deploy(
+    request: EaDeployRequest,
+    token: dict = Depends(verify_jwt),
+):
+    """Persist a deploy row, render .mq5 if needed, then proxy to the bridge.
+
+    Order of operations:
+    1. Validate the request shape + EA-name regex (Pydantic).
+    2. Resolve mq5_content:
+         • mql_converter flow → use the request's `mq5_content` directly.
+         • mt5_optimizer flow → load saved MQL source from `mql_conversions`,
+           apply parameter overrides via `render_ea`. 404 on missing conversion.
+    3. Insert a `mt5_ea_deployments` row with status=`pending`.
+    4. POST to bridge. Map bridge response back to one of:
+         compiled / compile_error / failed (timeout, offline, write error).
+    5. Update the row with the final state and return.
+
+    The .mq5 content is *never* logged.
+    """
+    user_id: str = token["sub"]
+    client = _supabase_for_user_token()
+
+    # ── Resolve mq5_content ────────────────────────────────────────────
+    mq5_content: Optional[str] = None
+
+    if request.source == "mql_converter":
+        # Frontend already rendered the file via the PROJ-33 export path.
+        if not request.mq5_content:
+            raise HTTPException(
+                status_code=400,
+                detail="mq5_content is required for the mql_converter flow.",
+            )
+        mq5_content = request.mq5_content
+
+    elif request.source == "mt5_optimizer":
+        # Backend renders by re-applying parameters to the saved EA source.
+        # PROJ-38 has not shipped yet — the endpoint accepts the request shape
+        # so the contract is stable, but resolution requires the user to have
+        # a matching mql_conversion_id we can render from.
+        if not request.mql_conversion_id:
+            raise HTTPException(
+                status_code=400,
+                detail="mql_conversion_id is required for the mt5_optimizer flow.",
+            )
+        if not request.parameters:
+            raise HTTPException(
+                status_code=400,
+                detail="parameters[] is required for the mt5_optimizer flow.",
+            )
+
+        try:
+            conv_resp = (
+                client.table("mql_conversions")
+                .select("id, user_id, name, mql_code")
+                .eq("id", request.mql_conversion_id)
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:
+            logger.exception("Failed to load mql_conversions row: %s", exc)
+            raise HTTPException(status_code=500, detail="Failed to load saved EA source.")
+
+        if not conv_resp.data:
+            # Spec edge case: "Optimizer run no longer has the original EA code".
+            raise HTTPException(
+                status_code=404,
+                detail="Original EA code no longer available — please re-upload.",
+            )
+        conv = conv_resp.data[0]
+        if conv["user_id"] != user_id:
+            raise HTTPException(status_code=403, detail="Not your EA source.")
+
+        params = [
+            MqlParameter(
+                mql_input_name=p.mql_input_name,
+                current_value=p.current_value,
+                type=p.type,
+            )
+            for p in (request.parameters or [])
+        ]
+        rendered, _replacement = render_ea(
+            mql_code=conv["mql_code"],
+            parameters=params,
+            conversion_name=request.conversion_name or conv.get("name"),
+            symbol=request.symbol or "Unknown",
+            date_from=request.date_from or "",
+            date_to=request.date_to or "",
+            source="MT5 Optimizer",
+        )
+        mq5_content = rendered
+
+    if mq5_content is None or len(mq5_content) == 0:
+        raise HTTPException(status_code=400, detail="Empty mq5_content after render.")
+    if len(mq5_content.encode("utf-8")) > _MAX_MQ5_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"mq5_content exceeds {_MAX_MQ5_BYTES} bytes after render.",
+        )
+
+    # ── Insert pending row ─────────────────────────────────────────────
+    try:
+        insert_resp = (
+            client.table("mt5_ea_deployments")
+            .insert(
+                {
+                    "user_id": user_id,
+                    "ea_name": request.ea_name,
+                    "source": request.source,
+                    "mql_conversion_id": request.mql_conversion_id,
+                    "optimizer_run_id": request.optimizer_run_id,
+                    "optimizer_result_rank": request.optimizer_result_rank,
+                    "status": "pending",
+                }
+            )
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Failed to persist mt5_ea_deployments row: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to record deploy.")
+
+    if not insert_resp.data:
+        raise HTTPException(status_code=500, detail="Insert returned no row.")
+    deployment_id: str = insert_resp.data[0]["id"]
+
+    # ── Forward to bridge ──────────────────────────────────────────────
+    bridge_payload = {
+        "ea_name": request.ea_name,
+        "mq5_content": mq5_content,
+    }
+
+    try:
+        bridge_resp = await mt5_bridge_client.deploy_ea(bridge_payload)
+    except BridgeConfigError as exc:
+        _finalize_deploy(client, deployment_id, status="failed", error=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc))
+    except BridgeAuthError as exc:
+        _finalize_deploy(client, deployment_id, status="failed", error=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc))
+    except BridgeOfflineError as exc:
+        _finalize_deploy(
+            client,
+            deployment_id,
+            status="failed",
+            error=f"Bridge Worker offline: {exc}",
+        )
+        raise HTTPException(status_code=502, detail=f"Bridge Worker offline: {exc}")
+    except BridgeError as exc:
+        _finalize_deploy(client, deployment_id, status="failed", error=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    bridge_status = bridge_resp.get("status")
+
+    if bridge_status == "compiled":
+        warnings_list = bridge_resp.get("warnings") or []
+        log_excerpt = bridge_resp.get("log_excerpt")
+        _finalize_deploy(
+            client,
+            deployment_id,
+            status="compiled",
+            warnings=warnings_list,
+            log_excerpt=log_excerpt,
+        )
+        return EaDeployResponse(
+            deployment_id=deployment_id,
+            status="compiled",
+            ea_name=request.ea_name,
+            warnings=warnings_list,
+            log_excerpt=log_excerpt,
+        )
+
+    if bridge_status == "compile_error":
+        errors_list = bridge_resp.get("errors") or []
+        log_excerpt = bridge_resp.get("log_excerpt")
+        # Persist a short summary in error_message; the full list lives in
+        # the dedicated `errors` JSONB column (split from `warnings` so each
+        # column carries exactly one type of payload).
+        summary = "; ".join(errors_list[:3]) if errors_list else "Compile failed"
+        _finalize_deploy(
+            client,
+            deployment_id,
+            status="compile_error",
+            error=summary,
+            errors=errors_list,
+            log_excerpt=log_excerpt,
+        )
+        return EaDeployResponse(
+            deployment_id=deployment_id,
+            status="compile_error",
+            ea_name=request.ea_name,
+            errors=errors_list,
+            log_excerpt=log_excerpt,
+            error_message=summary,
+        )
+
+    if bridge_status == "timeout":
+        # Persist `timeout` directly so the history row can distinguish
+        # "compile took too long, .mq5 was written, can be compiled manually"
+        # from a generic transport `failed`.
+        msg = bridge_resp.get("error") or "MetaEditor compile timed out."
+        _finalize_deploy(client, deployment_id, status="timeout", error=msg)
+        return EaDeployResponse(
+            deployment_id=deployment_id,
+            status="timeout",
+            ea_name=request.ea_name,
+            error_message=msg,
+        )
+
+    # Unknown status — treat as failure but surface what we got.
+    msg = f"Unexpected bridge status: {bridge_status!r}"
+    _finalize_deploy(client, deployment_id, status="failed", error=msg)
+    return EaDeployResponse(
+        deployment_id=deployment_id,
+        status="failed",
+        ea_name=request.ea_name,
+        error_message=msg,
+    )
+
+
+def _finalize_deploy(
+    client,
+    deployment_id: str,
+    *,
+    status: str,
+    error: Optional[str] = None,
+    warnings: Optional[list] = None,
+    errors: Optional[list] = None,
+    log_excerpt: Optional[str] = None,
+) -> None:
+    """Update the deployment row's terminal state. Logs but never raises."""
+    payload: dict = {"status": status}
+    if error is not None:
+        payload["error_message"] = error
+    if warnings is not None:
+        payload["warnings"] = warnings
+    if errors is not None:
+        payload["errors"] = errors
+    if log_excerpt is not None:
+        payload["log_excerpt"] = log_excerpt
+    try:
+        client.table("mt5_ea_deployments").update(payload).eq(
+            "id", deployment_id
+        ).execute()
+    except Exception as exc:
+        logger.exception(
+            "Failed to update mt5_ea_deployments %s: %s", deployment_id, exc
+        )
+
+
+@app.get("/mt5/ea/deployments")
+async def mt5_ea_deployments_list(
+    limit: int = 20,
+    offset: int = 0,
+    token: dict = Depends(verify_jwt),
+):
+    """Paginated history of the calling user's EA deploys (newest first).
+
+    Pagination is offset-based to match the existing PROJ-9 history shape.
+    `limit` is hard-capped at 100 to avoid accidentally pulling thousands of
+    rows from the UI.
+    """
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="limit must be in [1, 100]")
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="offset must be >= 0")
+
+    user_id: str = token["sub"]
+    client = _supabase_for_user_token()
+
+    try:
+        resp = (
+            client.table("mt5_ea_deployments")
+            .select(
+                "id, ea_name, source, mql_conversion_id, optimizer_run_id, "
+                "optimizer_result_rank, status, error_message, warnings, "
+                "errors, log_excerpt, deployed_at",
+                count="exact",
+            )
+            .eq("user_id", user_id)
+            .order("deployed_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Failed to load mt5_ea_deployments: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to load deployments.")
+
+    return {
+        "deployments": resp.data or [],
+        "total": resp.count if resp.count is not None else len(resp.data or []),
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 # ── /notifications/test endpoint (PROJ-37) ─────────────────────────────────
