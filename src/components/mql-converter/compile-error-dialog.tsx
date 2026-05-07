@@ -63,7 +63,7 @@ export function CompileErrorDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[80vh] border-white/10 bg-[#0d0f14] text-white sm:max-w-2xl">
+      <DialogContent className="max-h-[85vh] border-white/10 bg-[#0d0f14] text-white sm:max-w-5xl">
         <DialogHeader>
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/30">
@@ -122,7 +122,7 @@ export function CompileErrorDialog({
                 Compile Log
               </h4>
               <div className="overflow-hidden rounded-lg border border-white/10 bg-black/40">
-                <ScrollArea className="max-h-56">
+                <ScrollArea className="max-h-96">
                   <pre className="whitespace-pre-wrap break-words px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-300">
                     {logExcerpt}
                   </pre>
