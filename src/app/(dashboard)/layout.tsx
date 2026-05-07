@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/auth/app-sidebar";
+import { Toaster } from "@/components/ui/toaster";
+import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 
 export default async function DashboardLayout({
   children,
@@ -29,6 +31,8 @@ export default async function DashboardLayout({
         </header>
         <div className="flex-1 p-6">{children}</div>
       </main>
+      <Toaster />
+      <SonnerToaster />
     </SidebarProvider>
   );
 }
