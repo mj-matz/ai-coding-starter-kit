@@ -1,7 +1,7 @@
 ---
 name: backend
 description: Build APIs, database schemas, and server-side logic with Supabase. Use after frontend is built.
-argument-hint: [feature-spec-path]
+argument-hint: "feature-spec-path"
 user-invocable: true
 context: fork
 agent: Backend Developer
@@ -53,8 +53,17 @@ Use `AskUserQuestion` for:
 - Replace any mock data or localStorage with API calls
 - Handle loading and error states
 
-### 6. User Review
+### 6. Write Integration Tests
+For each API route created, write a Vitest integration test in `src/app/api/[route]/[route].test.ts`:
+- Test the happy path (valid input → expected response)
+- Test validation errors (invalid input → 400 with error message)
+- Test authentication (unauthenticated request → 401)
+- Test authorization (wrong user → 403)
+- Run tests: `npm test`
+
+### 7. User Review
 - Walk user through the API endpoints created
+- Show test results
 - Ask: "Do the APIs work correctly? Any edge cases to test?"
 
 ## Context Recovery
@@ -87,11 +96,15 @@ CREATE INDEX idx_tasks_status ON tasks(status);
 ```
 
 ## Production References
-- See [database-optimization.md](../../docs/production/database-optimization.md) for query optimization
-- See [rate-limiting.md](../../docs/production/rate-limiting.md) for rate limiting setup
+- See [database-optimization.md](../../../docs/production/database-optimization.md) for query optimization
+- See [rate-limiting.md](../../../docs/production/rate-limiting.md) for rate limiting setup
 
 ## Checklist
 See [checklist.md](checklist.md) for the full implementation checklist.
+
+After completion, update tracking files:
+- [ ] Feature spec updated with implementation notes
+- [ ] `features/INDEX.md` status updated to "In Progress"
 
 ## Handoff
 After completion:

@@ -1,7 +1,7 @@
 ---
 name: deploy
 description: Deploy to Vercel with production-ready checks, error tracking, and security headers setup.
-argument-hint: [feature-spec-path or "to Vercel"]
+argument-hint: "feature-spec-path or 'to Vercel'"
 user-invocable: true
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
 model: sonnet

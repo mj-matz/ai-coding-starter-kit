@@ -1,3 +1,10 @@
+---
+paths:
+  - "src/app/api/**"
+  - "src/lib/supabase*"
+  - "supabase/**"
+---
+
 # Backend Development Rules
 
 ## Database (Supabase)

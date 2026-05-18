@@ -1,7 +1,7 @@
 ---
 name: help
 description: Context-aware guide that tells you where you are in the workflow and what to do next. Use anytime you're unsure.
-argument-hint: [optional question]
+argument-hint: "optional question"
 user-invocable: true
 allowed-tools: Read, Glob, Grep, Bash
 model: opus

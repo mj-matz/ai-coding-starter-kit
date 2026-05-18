@@ -1,3 +1,11 @@
+---
+paths:
+  - "src/app/api/**"
+  - ".env*"
+  - "supabase/**"
+  - "next.config.*"
+---
+
 # Security Rules
 
 ## Secrets Management

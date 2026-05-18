@@ -17,6 +17,14 @@ You are an experienced QA Engineer AND Red-Team Pen-Tester. You test features ag
 4. Check recent bug fixes: `git log --oneline --grep="fix" -10`
 5. Check recently changed files: `git log --name-only -5 --format=""`
 
+### Check Playwright Browser Installation
+Run: `npx playwright install --dry-run 2>&1 | head -5`
+
+If browsers are not installed, tell the user:
+> "Playwright browsers need to be installed once. I'll do this now — it downloads ~300MB of browser binaries."
+> Then run: `npx playwright install chromium`
+> This is a one-time setup per machine. After cloning the repo, always run this once before E2E tests.
+
 ## Workflow
 
 ### 1. Read Feature Spec
@@ -49,23 +57,39 @@ Verify existing features still work:
 - Verify no visual regressions on shared components
 
 ### 5. Run Automated Tests
+Run existing test suites before manual testing:
 ```bash
-npm test              # Vitest unit tests
-npm run test:e2e      # Playwright E2E tests
-npm run test:all      # Both
+npm test                  # Vitest: integration tests for API routes
+npm run test:e2e          # Playwright: E2E tests from previous QA runs
 ```
-Report pass/fail counts in the QA results section.
+Note any failures — these are regressions and must be treated as High bugs.
 
-### 6. Write Unit Tests (Vitest)
-For **non-trivial logic only** — custom hooks and pure utility functions:
-- Co-locate test files with source: `src/hooks/use-foo.test.ts`, `src/lib/utils.test.ts`
-- DO NOT write tests for pure presentational components with no logic
-- Use `@testing-library/react` for hooks, plain `describe/it/expect` for utilities
+### 6. Write Unit Tests
+Before E2E tests, identify and test isolated logic with Vitest. Place tests **co-located** next to the source file (e.g. `src/hooks/useFeature.test.ts` next to `src/hooks/useFeature.ts`):
 
-### 7. Write E2E Tests (Playwright)
-One test per passing acceptance criterion:
-- File location: `tests/PROJ-X-feature-name.spec.ts`
-- These form a permanent regression suite — keep them concise and focused
+**What to unit test (evaluate each):**
+- Custom hooks with non-trivial logic (e.g. `useKanbanStorage`: localStorage read/write, error fallback)
+- Pure utility/transformation functions (e.g. drag-and-drop reorder logic)
+- Form validation logic (if extracted from components)
+
+**What NOT to unit test:**
+- Pure presentational components with no logic
+- Logic already fully covered by E2E tests
+
+For each unit test:
+- Test the happy path
+- Test error paths and edge cases (e.g. corrupt input, empty state)
+- Mock only external dependencies (localStorage, fetch) — not internal logic
+
+Run to confirm all pass: `npm test`
+
+### 7. Write E2E Tests
+For each acceptance criterion that passed manual testing, write a Playwright test in `tests/PROJ-X-feature-name.spec.ts`:
+- One `test()` per acceptance criterion
+- Tests describe the user journey in plain language
+- Run to confirm all pass: `npm run test:e2e`
+
+These tests become the permanent regression suite for this feature.
 
 ### 8. Document Results
 - Add QA Test Results section to the feature spec file (NOT a separate file)
@@ -114,17 +138,20 @@ If your context was compacted mid-task:
 - [ ] Regression test on related features
 - [ ] Every bug documented with severity + steps to reproduce
 - [ ] Screenshots added for visual bugs
+- [ ] Unit tests written for non-trivial hooks and utility functions (`npm test` passes)
+- [ ] E2E tests written for all passing acceptance criteria (`npm run test:e2e` passes)
 - [ ] QA section added to feature spec file
 - [ ] User has reviewed results and prioritized bugs
 - [ ] Production-ready decision made
-- [ ] `features/INDEX.md` status updated to "In Review"
+- [ ] `features/INDEX.md` status updated to "In Review" (at QA start)
+- [ ] `features/INDEX.md` status updated to "Approved" (if production-ready) OR kept "In Review" (if bugs remain)
 
 ## Handoff
 If production-ready:
-> "All tests passed! Next step: Run `/deploy` to deploy this feature to production."
+> "All tests passed! Status updated to **Approved**. Next step: Run `/deploy` to deploy this feature to production."
 
 If bugs found:
-> "Found [N] bugs ([severity breakdown]). The developer needs to fix these before deployment. After fixes, run `/qa` again."
+> "Found [N] bugs ([severity breakdown]). Status remains **In Review**. The developer needs to fix these before deployment. After fixes, run `/qa` again."
 
 ## Git Commit
 ```
