@@ -717,3 +717,375 @@ trigger a false positive.
 - PROJ-38: MT5 Genetic Optimizer + MQL5 Cloud Network
 - PROJ-39: MT5 Live-Daten-Sync (Bridge → Supabase)
 - PROJ-40: MT5 EA-Auto-Deploy (Software → MT5 Experts)
+
+---
+
+## Result Capture Redesign (2026-05-19)
+
+### Root Cause: MT5 Build 5833 Ignores `Report=` for Single-Test Runs
+
+The original design wrote `Report=<path>` into `[Tester]` and polled for the resulting XML file. MT5 build 5833 silently ignores this directive when `Optimization=0` (single-test mode). MT5 runs the EA to completion, logs "successfully finished" and the final balance, then exits — but writes no XML or HTML report anywhere on disk. The `Report=` directive is honoured only in optimisation mode (`Optimization=1`). This cannot be worked around via INI configuration alone.
+
+**Confirmed evidence:** tester log shows "successfully finished" + final balance, but `MQL5/Tester/Reports/` stays empty and no file matching the configured report path is created.
+
+---
+
+### Adopted Approach: EA-Side JSON Report via OnTester()
+
+MT5 always calls the EA's `OnTester()` function at the end of every single-test run (and at the end of every optimisation pass). This hook runs inside the tester process with full access to both `TesterStatistics()` and `HistoryDealGet*()`. The EA writes its own JSON result file to MT5's `Common\Files` folder — a shared filesystem location that the bridge process on the same Windows machine can read directly.
+
+**Data flow:**
+
+```
+Bridge Worker
+  ├── generates job UUID (already the job.id)
+  ├── injects report_uuid into [TesterInputs] in tester.ini
+  └── spawns MT5
+
+MT5 Terminal
+  └── runs EA → OnTester() fires at end of run
+       ├── reads its own `report_uuid` input
+       ├── calls TesterStatistics() for metrics
+       ├── calls HistoryDealGet*() for trade list
+       └── writes JSON to:
+           %APPDATA%\MetaQuotes\Terminal\Common\Files\bridge_report_{uuid}.json
+
+Bridge Worker
+  └── polls for JSON at the Common\Files path (same Windows machine)
+       ├── parse_report_json_file() maps JSON → ParsedReport
+       └── returns metrics + trades to Python backend (unchanged API shape)
+```
+
+No changes to the Python backend, Supabase schema, or frontend are required — the bridge absorbs the entire change.
+
+---
+
+### JSON Output Contract
+
+The EA writes this JSON schema to `Common\Files\bridge_report_{uuid}.json`:
+
+```json
+{
+  "schema_version": 1,
+  "job_uuid": "<string — UUID v4 passed in via TesterInputs>",
+  "ea_name": "<string>",
+  "symbol": "<string>",
+  "timeframe": "<string>",
+  "generated_at": "<string — ISO 8601 UTC, e.g. 2024-12-31T23:59:59Z>",
+  "metrics": {
+    "total_net_profit":  "<float>",
+    "gross_profit":      "<float>",
+    "gross_loss":        "<float>",
+    "max_drawdown_abs":  "<float>",
+    "max_drawdown_pct":  "<float — percent, e.g. 5.68 for 5.68%>",
+    "sharpe_ratio":      "<float>",
+    "profit_factor":     "<float>",
+    "expected_payoff":   "<float — equals average_trade>",
+    "recovery_factor":   "<float>",
+    "total_trades":      "<int>",
+    "won_trades":        "<int>",
+    "lost_trades":       "<int>"
+  },
+  "trades": [
+    {
+      "ticket":       "<int>",
+      "open_time":    "<string — ISO 8601 UTC>",
+      "close_time":   "<string — ISO 8601 UTC>",
+      "direction":    "<string — 'buy' | 'sell'>",
+      "volume":       "<float>",
+      "open_price":   "<float>",
+      "close_price":  "<float>",
+      "profit":       "<float>",
+      "comment":      "<string | null>"
+    }
+  ]
+}
+```
+
+**Field mapping to existing Supabase columns:**
+
+| JSON field | `mt5_tester_metrics` column | Notes |
+|---|---|---|
+| `metrics.total_net_profit` | `total_net_profit` | direct |
+| `metrics.sharpe_ratio` | `sharpe_ratio` | direct |
+| `metrics.profit_factor` | `profit_factor` | direct |
+| `metrics.max_drawdown_abs` | `max_drawdown_abs` | direct |
+| `metrics.max_drawdown_pct` | `max_drawdown_pct` | direct |
+| `metrics.total_trades` | `total_trades` | direct |
+| `metrics.won_trades` | `won_trades` | direct |
+| `metrics.lost_trades` | `lost_trades` | direct |
+| `metrics.expected_payoff` | `average_trade` | renamed; same semantics |
+| *(JSON body as string)* | `raw_xml` | column repurposed; rename to `raw_report` is a future nice-to-have |
+
+---
+
+### TesterStatistics() Codes to Collect
+
+All values use MQL5's `ENUM_STATISTICS` symbolic names — the integer is resolved at compile time and safe from build-to-build renumbering.
+
+| ENUM_STATISTICS symbol | JSON metrics field | Return type |
+|---|---|---|
+| `STAT_PROFIT` | `total_net_profit` | `double` |
+| `STAT_GROSS_PROFIT` | `gross_profit` | `double` |
+| `STAT_GROSS_LOSS` | `gross_loss` | `double` |
+| `STAT_MAX_DRAWDOWN` | `max_drawdown_abs` | `double` (absolute currency) |
+| `STAT_MAX_DRAWDOWN_PERCENT` | `max_drawdown_pct` | `double` (percent) |
+| `STAT_SHARPE_RATIO` | `sharpe_ratio` | `double` |
+| `STAT_PROFIT_FACTOR` | `profit_factor` | `double` |
+| `STAT_EXPECTED_PAYOFF` | `expected_payoff` | `double` |
+| `STAT_RECOVERY_FACTOR` | `recovery_factor` | `double` |
+| `STAT_TRADES` | `total_trades` | `double` → cast to `int` |
+| `STAT_PROFIT_TRADES` | `won_trades` | `double` → cast to `int` |
+| `STAT_LOSS_TRADES` | `lost_trades` | `double` → cast to `int` |
+
+`TesterStatistics()` always returns `double`; integer fields (trade counts) must be cast.
+
+---
+
+### MQL5 OnTester() Boilerplate (Inject into PROJ-33 EA Template)
+
+This block is injected by the PROJ-33 export route ([src/app/api/mql-converter/export-mt5/route.ts](src/app/api/mql-converter/export-mt5/route.ts)) into the EA's global scope after the existing `input` declarations.
+
+**New input declaration added at the top of the EA (before OnInit):**
+```mql5
+// Bridge result capture — injected by the export pipeline
+input string report_uuid = "";  // Do not edit — set by tester.ini [TesterInputs]
+```
+
+**OnTester() function injected before the closing `#property` block or at end of file:**
+```mql5
+double OnTester()
+{
+   // Skip silently when run outside the bridge (e.g. manual tester launch).
+   if(StringLen(report_uuid) == 0) return 0.0;
+
+   // ── Metrics via TesterStatistics() ────────────────────────────────
+   double net_profit     = TesterStatistics(STAT_PROFIT);
+   double gross_profit   = TesterStatistics(STAT_GROSS_PROFIT);
+   double gross_loss     = TesterStatistics(STAT_GROSS_LOSS);
+   double dd_abs         = TesterStatistics(STAT_MAX_DRAWDOWN);
+   double dd_pct         = TesterStatistics(STAT_MAX_DRAWDOWN_PERCENT);
+   double sharpe         = TesterStatistics(STAT_SHARPE_RATIO);
+   double pf             = TesterStatistics(STAT_PROFIT_FACTOR);
+   double ep             = TesterStatistics(STAT_EXPECTED_PAYOFF);
+   double rf             = TesterStatistics(STAT_RECOVERY_FACTOR);
+   int    total_trades   = (int)TesterStatistics(STAT_TRADES);
+   int    won_trades     = (int)TesterStatistics(STAT_PROFIT_TRADES);
+   int    lost_trades    = (int)TesterStatistics(STAT_LOSS_TRADES);
+
+   // ── Trade list via HistoryDealGet*() ──────────────────────────────
+   HistorySelect(0, TimeCurrent());
+   int deal_count = HistoryDealsTotal();
+   string trades_json = "[";
+   bool first_trade = true;
+
+   for(int i = 0; i < deal_count; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0) continue;
+
+      // Skip balance/deposit/withdrawal entries.
+      long deal_type = HistoryDealGetInteger(ticket, DEAL_TYPE);
+      if(deal_type != DEAL_TYPE_BUY && deal_type != DEAL_TYPE_SELL) continue;
+
+      datetime open_time  = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+      datetime close_time = open_time;  // single-leg deal; bridge pairs by comment
+      double   volume     = HistoryDealGetDouble(ticket, DEAL_VOLUME);
+      double   open_price = HistoryDealGetDouble(ticket, DEAL_PRICE);
+      double   profit     = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+      string   comment    = HistoryDealGetString(ticket, DEAL_COMMENT);
+      string   direction  = (deal_type == DEAL_TYPE_BUY) ? "buy" : "sell";
+
+      if(!first_trade) trades_json += ",";
+      first_trade = false;
+
+      trades_json += StringFormat(
+         "{\"ticket\":%llu,\"open_time\":\"%s\",\"close_time\":\"%s\","
+         "\"direction\":\"%s\",\"volume\":%.5f,\"open_price\":%.5f,"
+         "\"close_price\":%.5f,\"profit\":%.2f,\"comment\":\"%s\"}",
+         ticket,
+         TimeToString(open_time, TIME_DATE|TIME_SECONDS),
+         TimeToString(close_time, TIME_DATE|TIME_SECONDS),
+         direction, volume, open_price, open_price, profit, comment
+      );
+   }
+   trades_json += "]";
+
+   // ── Assemble and write JSON ───────────────────────────────────────
+   string ea_name = MQLInfoString(MQL_PROGRAM_NAME);
+   string sym     = Symbol();
+   string tf      = EnumToString(Period());
+
+   string json = StringFormat(
+      "{\"schema_version\":1,\"job_uuid\":\"%s\",\"ea_name\":\"%s\","
+      "\"symbol\":\"%s\",\"timeframe\":\"%s\",\"generated_at\":\"%s\","
+      "\"metrics\":{"
+         "\"total_net_profit\":%.2f,\"gross_profit\":%.2f,\"gross_loss\":%.2f,"
+         "\"max_drawdown_abs\":%.2f,\"max_drawdown_pct\":%.4f,"
+         "\"sharpe_ratio\":%.4f,\"profit_factor\":%.4f,\"expected_payoff\":%.4f,"
+         "\"recovery_factor\":%.4f,\"total_trades\":%d,"
+         "\"won_trades\":%d,\"lost_trades\":%d"
+      "},\"trades\":%s}",
+      report_uuid, ea_name, sym, tf,
+      TimeToString(TimeGMT(), TIME_DATE|TIME_SECONDS),
+      net_profit, gross_profit, gross_loss, dd_abs, dd_pct,
+      sharpe, pf, ep, rf, total_trades, won_trades, lost_trades,
+      trades_json
+   );
+
+   string filename = "bridge_report_" + report_uuid + ".json";
+   int fh = FileOpen(filename, FILE_WRITE|FILE_COMMON|FILE_TXT|FILE_ANSI);
+   if(fh == INVALID_HANDLE)
+   {
+      Print("[Bridge] OnTester: failed to open ", filename, " — error ", GetLastError());
+      return 0.0;
+   }
+   FileWriteString(fh, json);
+   FileClose(fh);
+   Print("[Bridge] OnTester: wrote result to Common\\Files\\", filename);
+
+   return 0.0;  // return value ignored in single-test mode
+}
+```
+
+**Injection point in [route.ts](src/app/api/mql-converter/export-mt5/route.ts):** append this block to `finalCode` after the existing `replaceInputDefaults` + `buildCommentBlock` pipeline. The `input string report_uuid = "";` line must be placed with the other `input` declarations (before `OnInit`). A regex or a sentinel comment (`// === Bridge injection point ===`) in the template locates the correct insert position.
+
+---
+
+### Bridge Code Changes
+
+#### 1. `bridge/ini_generator.py` — Pass the job UUID to the EA
+
+`TesterRunSpec` gets one new field:
+```
+report_uuid: str   # the job's UUID; injected into [TesterInputs]
+```
+
+In `render_tester_ini`, the `[TesterInputs]` block always emits `report_uuid=<value>` as the first entry, even when a `.set` file is used (the `.set` file controls optimisation ranges — a single fixed parameter alongside it is fine). The existing `Report=` directive in `[Tester]` is **left in place** (harmless; ignored by build 5833; may work in future builds or optimisation mode).
+
+#### 2. `bridge/queue.py` — Poll JSON file, not XML
+
+In `_execute`:
+
+- **Report path:** replace `report_abs = settings.reports_dir / f"bridge-{job.id}.xml"` with:
+  ```
+  report_abs = settings.mt5_common_files_dir / f"bridge_report_{job.id}.json"
+  ```
+- **Spec construction:** pass `report_uuid=job.id` into `TesterRunSpec`.
+- **Parser import:** replace `from .xml_parser import parse_report_file` with `from .json_parser import parse_report_json_file`, and call `parse_report_json_file(result.report_path)` in the parse block.
+- **Stale-file cleanup:** `report_abs.unlink()` at the top of `_execute` already handles clearing a stale file — no change needed.
+
+#### 3. `bridge/mt5_runner.py` — No structural changes
+
+`wait_for_report` polls a `Path` for existence + size > 0. That path is now a `.json` in `Common\Files` instead of `.xml` in `Tester/Reports/` — the function doesn't care about extension or location. The compile-error fallback (parse `MQL5/Logs/` when nothing appears before `compile_timeout_sec`) is also unchanged. The existing "Terminal exited without producing an XML report" message becomes reachable again for EAs without `OnTester()` — see Migration Plan below.
+
+#### 4. `bridge/xml_parser.py` — Keep as-is
+
+The XML parser remains for reference and for any future optimisation pass where MT5 does write an XML. No deletion or modification.
+
+#### 5. New: `bridge/json_parser.py`
+
+A new parser alongside `xml_parser.py`:
+
+```
+parse_report_json_file(path: Path) -> ParsedReport
+```
+
+Maps JSON fields to the same `ParsedReport` dataclass the queue already consumes:
+
+| JSON path | ParsedReport.metrics key |
+|---|---|
+| `metrics.total_net_profit` | `total_net_profit` |
+| `metrics.sharpe_ratio` | `sharpe_ratio` |
+| `metrics.profit_factor` | `profit_factor` |
+| `metrics.max_drawdown_abs` | `max_drawdown_abs` |
+| `metrics.max_drawdown_pct` | `max_drawdown_pct` |
+| `metrics.total_trades` | `total_trades` |
+| `metrics.won_trades` | `won_trades` |
+| `metrics.lost_trades` | `lost_trades` |
+| `metrics.expected_payoff` | `average_trade` |
+| *(full JSON string)* | `raw_xml` |
+
+Trade list maps directly; `open_time`/`close_time` strings are passed through (backend already normalises with `_normalise_mt5_timestamp`).
+
+#### 6. New: `bridge/config.py` — Add `mt5_common_files_dir`
+
+```
+mt5_common_files_dir: Path
+  # Default: Path(os.environ["APPDATA"]) / "MetaQuotes" / "Terminal" / "Common" / "Files"
+  # Overridable via env var MT5_COMMON_FILES_DIR for non-standard installs.
+```
+
+The bridge process (running as the same Windows user as MT5) can read `Common\Files` directly. No impersonation or elevated permissions needed.
+
+---
+
+### INI Directives — What Changes
+
+**`[Tester]` section:** unchanged. `Report=` left in. `Optimization=0` unchanged.
+
+**`[TesterInputs]` section:** add one line regardless of whether other parameters are present:
+
+```ini
+[TesterInputs]
+report_uuid=3f7a1c2d-8b4e-4f9a-b6e1-2c3d4e5f6a7b
+StopLoss=50
+TakeProfit=100
+; ... other EA inputs ...
+```
+
+`report_uuid` must appear in `[TesterInputs]` even when a `.set` file is specified (the `.set` file only controls range/optimisation settings; fixed single-value inputs in `[TesterInputs]` take precedence for single-test runs).
+
+---
+
+### Migration Plan: Existing Deployed EAs
+
+Existing EAs exported via PROJ-33 before this change have no `report_uuid` input declaration and no `OnTester()` function.
+
+**Behaviour when run via the bridge after this change:**
+
+1. `[TesterInputs]` contains `report_uuid=<uuid>` — MT5 silently ignores unknown input parameters. The EA runs normally with no error.
+2. The EA completes. MT5 exits (`ShutdownTerminal=1`).
+3. No JSON file is written to `Common\Files` (the EA has no `OnTester()` hook).
+4. `wait_for_report` reaches the "Terminal exited without producing a report" branch.
+5. The run is marked `failed` with `error_message`: `"EA did not produce a JSON report. Re-export the EA from the MQL Converter to enable the OnTester() hook."`.
+
+**Result: graceful degradation.** No silent hang, no data corruption. The user sees a clear, actionable error pointing to the re-export step. No INI changes or bridge config changes are needed to handle old EAs.
+
+**Recovery path for a user with an old EA:**
+1. Open MQL Converter → load the conversion.
+2. Click "Export to MT5" (PROJ-33) — the updated template now includes `OnTester()`.
+3. PROJ-40 auto-deploys the new `.ex5` to the MT5 Experts folder.
+4. Retry "Test in MT5" → run succeeds.
+
+---
+
+### PROJ-38 (Genetic Optimizer) Compatibility
+
+`OnTester()` is also the mechanism MT5 uses to collect the **fitness criterion** for each optimisation pass. The return value of `OnTester()` is the score MT5 maximises during genetic optimisation.
+
+The same boilerplate is forward-compatible:
+
+- In single-test mode (`Optimization=0`): `OnTester()` return value is ignored; JSON is written once at run end.
+- In optimisation mode (`Optimization=1`, PROJ-38): MT5 calls `OnTester()` after every pass. Two options for PROJ-38 to choose from:
+  - **Option A — Aggregate only:** `OnTester()` returns the fitness criterion and writes nothing to disk per-pass (low I/O, bridge reads final XML when optimisation ends — and in opt mode MT5 *does* write an XML).
+  - **Option B — Per-pass JSON:** `OnTester()` writes `bridge_report_{uuid}_pass_{pass_num}.json` per pass; the bridge streams per-pass progress. Higher I/O, richer UX.
+
+The current boilerplate is Option-A-compatible without modification. PROJ-38 makes that decision; no changes to the single-test JSON mechanism are needed.
+
+---
+
+### Summary of Files Changed
+
+| File | Change type | Description |
+|---|---|---|
+| `src/app/api/mql-converter/export-mt5/route.ts` | Modified | Inject `report_uuid` input + `OnTester()` block into exported MQL5 code |
+| `bridge/ini_generator.py` | Modified | Add `report_uuid` field to `TesterRunSpec`; emit it in `[TesterInputs]` |
+| `bridge/queue.py` | Modified | Use JSON path for report polling; pass `report_uuid=job.id` to spec; call `json_parser` |
+| `bridge/config.py` | Modified | Add `mt5_common_files_dir` setting |
+| `bridge/json_parser.py` | New | Parse EA-written JSON into `ParsedReport`; replace XML parser for single-test runs |
+| `bridge/xml_parser.py` | Unchanged | Kept for reference + future optimisation-mode use |
+| `bridge/mt5_runner.py` | Unchanged | Extension-agnostic; no change needed |
+| Python backend | Unchanged | JSON field mapping identical to XML parser output shape |
+| Supabase schema | Unchanged | Column names unchanged; `raw_xml` column repurposed for JSON string |
+| Frontend | Unchanged | API contract unchanged |
