@@ -1,6 +1,6 @@
 # PROJ-41: MT5 Hub — Standalone Tester, Trade Drill-Down & Metrics Fix
 
-## Status: In Review
+## Status: Deployed
 **Created:** 2026-05-20
 **Last Updated:** 2026-05-20
 
@@ -293,4 +293,8 @@ All required packages are already installed:
 **READY** — All 4 bugs fixed. Build clean, 59 unit tests pass. No Critical or High bugs remaining.
 
 ## Deployment
-_To be added by /deploy_
+
+**Deployed:** 2026-05-20
+**Commit:** e0875b7
+**Branch:** main → Vercel auto-deploy
+**Route:** `/mt5` (new top-level page)
