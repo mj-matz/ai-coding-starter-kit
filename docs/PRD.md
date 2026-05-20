@@ -47,6 +47,7 @@ A personal web-based backtesting platform for systematic trading strategies. The
 | P1 | MT5 Genetic Optimizer + MQL5 Cloud Network | Planned |
 | P1 | MT5 Live-Daten-Sync (Bridge → Supabase) | Planned |
 | P1 | MT5 EA-Auto-Deploy (Software → MT5 Experts) | Planned |
+| P1 | MT5 Hub (Standalone Tester, Trade Drill-Down & Metrics Fix) | Planned |
 
 ## Success Metrics
 - Backtesting engine produces identical results on repeated runs (deterministic)

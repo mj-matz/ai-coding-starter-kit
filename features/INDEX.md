@@ -54,7 +54,8 @@
 | PROJ-38 | MT5 Genetic Optimizer + MQL5 Cloud Network | Planned | [PROJ-38-mt5-genetic-optimizer.md](PROJ-38-mt5-genetic-optimizer.md) | 2026-04-28 |
 | PROJ-39 | MT5 Live-Daten-Sync (Bridge → Supabase) | Planned | [PROJ-39-mt5-live-data-sync.md](PROJ-39-mt5-live-data-sync.md) | 2026-04-28 |
 | PROJ-40 | MT5 EA-Auto-Deploy (Software → MT5 Experts) | Deployed | [PROJ-40-mt5-ea-auto-deploy.md](PROJ-40-mt5-ea-auto-deploy.md) | 2026-04-28 |
+| PROJ-41 | MT5 Hub (Standalone Tester, Trade Drill-Down & Metrics Fix) | Approved | [PROJ-41-mt5-hub.md](PROJ-41-mt5-hub.md) | 2026-05-20 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-41
+## Next Available ID: PROJ-42

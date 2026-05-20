@@ -264,7 +264,9 @@ export function Mt5ResultPanel(props: Mt5ResultPanelProps) {
             <Server className="h-4 w-4" aria-hidden />
           </div>
           <div>
-            <h3 className="text-base font-semibold text-white">Comparison: Python vs MT5</h3>
+            <h3 className="text-base font-semibold text-white">
+              {pythonResult ? "Comparison: Python vs MT5" : "MT5 Results"}
+            </h3>
             <p className="text-xs text-slate-400">
               Strategy Tester run on the connected Bridge Worker (real-tick mode).
             </p>

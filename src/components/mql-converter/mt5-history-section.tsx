@@ -36,43 +36,12 @@ import {
 
 import { useToast } from "@/hooks/use-toast";
 import type { Mt5RunStatus, Mt5TesterRun } from "@/lib/mt5-bridge-types";
+import { formatDate, formatInt, formatPct, formatProfit } from "@/lib/mt5-format";
 
 // PROJ-37: MT5 Tester history list — analogous to PROJ-9 Backtest History.
 // Shows the user's MT5 Strategy Tester runs with key metrics, status, and a
 // delete action. Self-loading (fetches on mount); a manual Refresh button is
 // provided so the user can pull new runs without leaving the tab.
-
-function formatDate(value: string | null): string {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatProfit(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return "—";
-  const abs = Math.abs(value).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  return value < 0 ? `-$${abs}` : `$${abs}`;
-}
-
-function formatPct(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return "—";
-  return `${Math.abs(value).toFixed(2)}%`;
-}
-
-function formatInt(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return "—";
-  return Math.round(value).toLocaleString();
-}
 
 function StatusBadge({ status }: { status: Mt5RunStatus }) {
   if (status === "done") {

@@ -14,6 +14,7 @@ import {
   SlidersHorizontal,
   FileCode,
   Settings,
+  Monitor,
 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
@@ -49,6 +50,7 @@ const navigationItems = [
   { title: "History", href: "/history", icon: History },
   { title: "Data", href: "/data", icon: Database },
   { title: "Strategies", href: "/strategies", icon: Zap },
+  { title: "MT5", href: "/mt5", icon: Monitor },
   { title: "MQL Converter", href: "/mql-converter", icon: FileCode },
   { title: "Journal", href: "/journal", icon: BookOpen },
   { title: "Settings", href: "/settings", icon: Settings },

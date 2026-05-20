@@ -50,11 +50,17 @@ export interface Mt5TesterRun {
   timeframe: string;
   from_date: string;
   to_date: string;
+  /** Present in single-run detail (/api/mt5/tester/runs/[id]); absent in list view. */
+  parameters?: Record<string, unknown> | null;
+  /** Present in single-run detail; absent in list view. */
+  model?: string | null;
   status: Mt5RunStatus;
   error_message: string | null;
   queue_position: number | null;
+  bridge_job_id?: string | null;
   started_at: string | null;
   finished_at: string | null;
+  last_status_at?: string | null;
   /** Joined via Supabase select; one-element array becomes the metrics row, [] means none yet. */
   metrics?: Mt5TesterMetrics[] | null;
 }
@@ -65,12 +71,27 @@ export interface Mt5RunStartResponse {
   queue_position?: number | null;
 }
 
+export interface Mt5TesterTrade {
+  id: number;
+  run_id: string;
+  open_time: string | null;
+  close_time: string | null;
+  direction: string | null;
+  volume: number | null;
+  open_price: number | null;
+  close_price: number | null;
+  profit: number | null;
+  comment: string | null;
+}
+
 export interface Mt5RunStatusResponse {
   job_id: string;
   status: Mt5RunStatus;
   queue_position?: number | null;
   error_message?: string | null;
   metrics?: Mt5TesterMetrics | null;
+  /** Trade list returned by the bridge on completion. Not persisted to DB in PROJ-37; persisted in PROJ-41. */
+  trades?: Array<Omit<Mt5TesterTrade, "id" | "run_id">> | null;
   started_at?: string | null;
   finished_at?: string | null;
 }
