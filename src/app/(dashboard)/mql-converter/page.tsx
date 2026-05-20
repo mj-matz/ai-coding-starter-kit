@@ -614,6 +614,61 @@ export default function MqlConverterPage() {
                 />
               )}
 
+              {/* Parameters Panel */}
+              {convertResult && !isRunning && hasParameters && (
+                <ParametersPanel
+                  parameters={strategyParameters}
+                  values={parameterValues}
+                  onChange={setParameterValues}
+                  disabled={isRunning}
+                />
+              )}
+
+              {/* Empty parameters hint */}
+              {convertResult && !isRunning && convertResult.parameters && convertResult.parameters.length === 0 && (
+                <ParametersPanel
+                  parameters={[]}
+                  values={{}}
+                  onChange={() => {}}
+                />
+              )}
+
+              {/* Code Review Panel */}
+              {convertResult && !isRunning && (
+                <CodeReviewPanel
+                  pythonCode={convertResult.python_code}
+                  mappingReport={convertResult.mapping_report}
+                  isRunning={isRunning}
+                  onRerun={handleRerun}
+                  parametersValid={parametersValid}
+                  canRerun={!!lastInputValues}
+                  onAddToLibrary={() => setAddToLibraryOpen(true)}
+                  canAddToLibrary={!!backtestResult}
+                  isAtLibraryLimit={userStrategies.strategies.length >= USER_STRATEGY_LIMIT}
+                  onEditedCodeChange={(code, isEdited) => {
+                    setLiveEditedCode(code);
+                    setLiveCodeEdited(isEdited);
+                  }}
+                />
+              )}
+
+              {/* Save & Export Section */}
+              {backtestResult && convertResult && !isRunning && (
+                <SaveConversionSection
+                  onSave={handleSave}
+                  defaultName={`${lastInputValues?.symbol ?? "Conversion"} ${new Date().toLocaleDateString()}`}
+                  originalMqlCode={lastInputValues?.mqlCode}
+                  parameters={hasParameters ? strategyParameters : undefined}
+                  parameterValues={hasParameters ? parameterValues : undefined}
+                  symbol={lastInputValues?.symbol}
+                  dateFrom={lastInputValues?.startDate}
+                  dateTo={lastInputValues?.endDate}
+                  bridgeOnline={bridgeHealth.online}
+                  bridgeChecking={bridgeHealth.isLoading}
+                  onDeployed={(eaName) => setSavedConversionName(eaName)}
+                />
+              )}
+
               {/* PROJ-37: MT5 Tester action bar — page-level, never coupled to
                   the code-review panel. Shown only after a successful conversion
                   exists so we have lastInputValues + python_code to submit. */}
@@ -686,61 +741,6 @@ export default function MqlConverterPage() {
                   mt5RunningElapsedSec={mt5Run.runningElapsedSec}
                   pythonConversionId={savedConversionId}
                   mt5ConversionId={mt5Run.mqlConversionId}
-                />
-              )}
-
-              {/* Parameters Panel */}
-              {convertResult && !isRunning && hasParameters && (
-                <ParametersPanel
-                  parameters={strategyParameters}
-                  values={parameterValues}
-                  onChange={setParameterValues}
-                  disabled={isRunning}
-                />
-              )}
-
-              {/* Empty parameters hint */}
-              {convertResult && !isRunning && convertResult.parameters && convertResult.parameters.length === 0 && (
-                <ParametersPanel
-                  parameters={[]}
-                  values={{}}
-                  onChange={() => {}}
-                />
-              )}
-
-              {/* Code Review Panel */}
-              {convertResult && !isRunning && (
-                <CodeReviewPanel
-                  pythonCode={convertResult.python_code}
-                  mappingReport={convertResult.mapping_report}
-                  isRunning={isRunning}
-                  onRerun={handleRerun}
-                  parametersValid={parametersValid}
-                  canRerun={!!lastInputValues}
-                  onAddToLibrary={() => setAddToLibraryOpen(true)}
-                  canAddToLibrary={!!backtestResult}
-                  isAtLibraryLimit={userStrategies.strategies.length >= USER_STRATEGY_LIMIT}
-                  onEditedCodeChange={(code, isEdited) => {
-                    setLiveEditedCode(code);
-                    setLiveCodeEdited(isEdited);
-                  }}
-                />
-              )}
-
-              {/* Save & Export Section */}
-              {backtestResult && convertResult && !isRunning && (
-                <SaveConversionSection
-                  onSave={handleSave}
-                  defaultName={`${lastInputValues?.symbol ?? "Conversion"} ${new Date().toLocaleDateString()}`}
-                  originalMqlCode={lastInputValues?.mqlCode}
-                  parameters={hasParameters ? strategyParameters : undefined}
-                  parameterValues={hasParameters ? parameterValues : undefined}
-                  symbol={lastInputValues?.symbol}
-                  dateFrom={lastInputValues?.startDate}
-                  dateTo={lastInputValues?.endDate}
-                  bridgeOnline={bridgeHealth.online}
-                  bridgeChecking={bridgeHealth.isLoading}
-                  onDeployed={(eaName) => setSavedConversionName(eaName)}
                 />
               )}
             </div>
