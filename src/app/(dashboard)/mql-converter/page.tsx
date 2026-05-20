@@ -227,8 +227,9 @@ export default function MqlConverterPage() {
         .replace(/\s+/g, "_")
         .replace(/[^A-Za-z0-9_\-]/g, "")
         .slice(0, 64) || "Strategy";
-    // MT5 Expert= path is relative to MQL5/ — Deploy writes to Experts/ root.
-    const expertPath = `Experts/${expertName}.ex5`;
+    // MT5 Expert= in tester.ini is relative to MQL5\Experts\ — do NOT include
+    // the Experts\ prefix or MT5 resolves it as Experts\Experts\<name>.ex5.
+    const expertPath = `${expertName}.ex5`;
 
     const params = hasParameters
       ? buildParamsDict(strategyParameters, parameterValues)
