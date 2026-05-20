@@ -740,6 +740,7 @@ export default function MqlConverterPage() {
                   dateTo={lastInputValues?.endDate}
                   bridgeOnline={bridgeHealth.online}
                   bridgeChecking={bridgeHealth.isLoading}
+                  onDeployed={(eaName) => setSavedConversionName(eaName)}
                 />
               )}
             </div>

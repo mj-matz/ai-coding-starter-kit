@@ -49,8 +49,8 @@ export interface DeployToMt5ButtonProps {
   parameters?: DeployConfirmParameterSummary[] | null;
   /** Show the overwrite warning — defaults to true since the bridge silently overwrites. */
   showOverwriteWarning?: boolean;
-  /** Bumped by the parent when a deploy completes so the history can refetch. */
-  onDeployed?: () => void;
+  /** Called when a deploy completes; receives the ea_name that was deployed. */
+  onDeployed?: (eaName: string) => void;
   /** Override the confirm-dialog title. Defaults to "Deploy to MT5". */
   dialogTitle?: string;
   /** Override the button label. Defaults to "Deploy to MT5". */
@@ -107,7 +107,7 @@ export function DeployToMt5Button({
         description: `EA "${result.ea_name}" compiled and ready in MT5.`,
       });
       setConfirmOpen(false);
-      onDeployed?.();
+      onDeployed?.(eaName);
       return;
     }
 
@@ -115,7 +115,7 @@ export function DeployToMt5Button({
       // Keep the confirm dialog state, surface the structured errors instead.
       setConfirmOpen(false);
       setErrorDialogOpen(true);
-      onDeployed?.(); // history table updates regardless of outcome
+      onDeployed?.(eaName); // history table updates regardless of outcome
       return;
     }
 
@@ -137,7 +137,7 @@ export function DeployToMt5Button({
         variant: "destructive",
       });
     }
-    onDeployed?.();
+    onDeployed?.(eaName);
   }
 
   function handleErrorDialogChange(open: boolean) {

@@ -37,8 +37,8 @@ interface SaveConversionSectionProps {
   bridgeOnline?: boolean;
   /** PROJ-40: Loader flag for the bridge health check. */
   bridgeChecking?: boolean;
-  /** PROJ-40: Bumped when a deploy completes so deploy history can refresh. */
-  onDeployed?: () => void;
+  /** PROJ-40: Called when a deploy completes; receives the deployed ea_name. */
+  onDeployed?: (eaName: string) => void;
 }
 
 export function SaveConversionSection({
