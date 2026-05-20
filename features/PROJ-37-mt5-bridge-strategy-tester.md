@@ -2,7 +2,7 @@
 
 ## Status: Deployed
 **Created:** 2026-04-28
-**Last Updated:** 2026-04-30 (deployed to production — Bridge Worker repo `mt5-bridge` complete; in-scope deliverables shipped to Vercel + Railway; Supabase migration applied)
+**Last Updated:** 2026-05-20 (end-to-end pipeline verified with real MT5 run — net profit $5617.38, 56 trades, Sharpe 75.635; OnTester JSON hook, bridge path fixes, and frontend EA-path alignment all confirmed working)
 
 ## Dependencies
 - Requires: PROJ-8 (Authentication) — admin-only access via Supabase Auth
@@ -1089,3 +1089,32 @@ The current boilerplate is Option-A-compatible without modification. PROJ-38 mak
 | Python backend | Unchanged | JSON field mapping identical to XML parser output shape |
 | Supabase schema | Unchanged | Column names unchanged; `raw_xml` column repurposed for JSON string |
 | Frontend | Unchanged | API contract unchanged |
+
+---
+
+## End-to-End Completion (2026-05-20)
+
+All above changes implemented and verified with a real MT5 Strategy Tester run.
+
+### Additional Fixes Applied
+
+Beyond the architecture design, the following issues were discovered and fixed during hands-on testing:
+
+| Fix | File | Description |
+|---|---|---|
+| `portable=True` in mt5.initialize() | `bridge/mt5_preflight.py` | Python module was connecting to the AppData MT5 install; tester uses the portable dir. Mismatched data directories caused different M1 caches. |
+| Kill terminal64.exe before tester spawn | `bridge/mt5_preflight.py` | `mt5.shutdown()` only closes the IPC channel, does not kill the process. The persistent MT5 instance held the portable data folder lock — tester subprocess crashed after ~3s. Added `shutdown_terminal()` which calls `mt5.shutdown()` then kills terminal64.exe via PowerShell CimInstance with a 2s wait. |
+| INI path backslashes | `bridge/ini_generator.py` | MT5 silently ignores `Expert=` paths with forward slashes and falls back to the Moving Average EA without logging an error. Fixed by converting all paths to backslashes via `.replace("/", "\\")`. Tests updated accordingly. |
+| `mt5_common_files_dir` default | `bridge/config.py` | Made `Path()` default so existing tests don't break; `load_settings()` always resolves the real path. |
+| EA-path alignment on "Test in MT5" | `src/app/(dashboard)/mql-converter/page.tsx` | "Test in MT5" was sending `Experts/AdvisorTesting/<symbol>_<tf>_strategy.ex5` but Deploy writes to `Experts/<ea-name>.ex5`. Fixed by tracking `savedConversionName` and using the same `deriveDefaultEaName()` sanitization, dropping the `AdvisorTesting/` subdirectory prefix. |
+
+### Confirmed Working Run
+
+Real MT5 Strategy Tester run via the full pipeline (Deploy → Test in MT5 → JSON parsed):
+- **Net Profit:** $5617.38
+- **Total Trades:** 56
+- **Sharpe Ratio:** 75.635
+- **Profit Factor:** 2.8393
+- **Max Drawdown:** $932.94 (6.09%)
+- **Won / Lost:** 21 / 35
+- **Average Trade:** $100.31

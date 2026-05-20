@@ -24,6 +24,9 @@
       "Read(//d/Projekte/**)",
       "Bash(cmd /c \"dir D:\\\\Projekte\\\\trading\")",
       "Bash(cmd /c \"dir D:\\\\Projekte\")"
+    ],
+    "additionalDirectories": [
+      "D:\\Projekte\\mt5-bridge\\bridge"
     ]
   }
 }

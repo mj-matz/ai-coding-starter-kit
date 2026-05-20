@@ -70,6 +70,7 @@ export default function MqlConverterPage() {
   const [liveEditedCode, setLiveEditedCode] = useState<string | null>(null);
   const [liveCodeEdited, setLiveCodeEdited] = useState(false);
   const [savedConversionId, setSavedConversionId] = useState<string | null>(null);
+  const [savedConversionName, setSavedConversionName] = useState<string>("");
 
   // PROJ-34: MT5 data state
   const { findDataset, upload: uploadMt5Data } = useMt5Data();
@@ -159,6 +160,7 @@ export default function MqlConverterPage() {
     setLiveEditedCode(null);
     setLiveCodeEdited(false);
     setSavedConversionId(null);
+    setSavedConversionName("");
   }, [convertResult?.python_code]);
 
   // Sync parameters when a new conversion result arrives
@@ -218,10 +220,15 @@ export default function MqlConverterPage() {
       return;
     }
 
-    const expertName = `${lastInputValues.symbol}_${lastInputValues.timeframe}_strategy`;
-    // Bridge-side convention — the worker resolves this against its
-    // MQL5/Experts directory. Keep in sync with mt5-bridge README.
-    const expertPath = `Experts/AdvisorTesting/${expertName}.ex5`;
+    // Match the EA name that Deploy uses (deriveDefaultEaName in SaveConversionSection).
+    // Falls back to symbol when no conversion was saved yet.
+    const expertName =
+      (savedConversionName.trim() || lastInputValues.symbol || "Strategy")
+        .replace(/\s+/g, "_")
+        .replace(/[^A-Za-z0-9_\-]/g, "")
+        .slice(0, 64) || "Strategy";
+    // MT5 Expert= path is relative to MQL5/ — Deploy writes to Experts/ root.
+    const expertPath = `Experts/${expertName}.ex5`;
 
     const params = hasParameters
       ? buildParamsDict(strategyParameters, parameterValues)
@@ -251,6 +258,7 @@ export default function MqlConverterPage() {
     strategyParameters,
     parameterValues,
     savedConversionId,
+    savedConversionName,
     mt5Symbol,
     mt5Run,
     toast,
@@ -329,6 +337,7 @@ export default function MqlConverterPage() {
 
       if (savedId) {
         setSavedConversionId(savedId);
+        setSavedConversionName(name);
         toast({
           title: "Conversion saved",
           description: `"${name}" has been saved to your conversions.`,

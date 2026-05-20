@@ -49,3 +49,10 @@ python/venv/
 python/__pycache__/
 python/**/__pycache__/
 *.pyc
+
+# Playwright / Test-Artefakte
+playwright-report/
+test-results/
+
+# Claude Code Laufzeit
+.claude/scheduled_tasks.lock
