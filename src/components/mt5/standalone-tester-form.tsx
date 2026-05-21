@@ -118,6 +118,7 @@ export function StandaloneTesterForm({
   const [eaFile, setEaFile] = useState<File | null>(null);
   const [compileState, setCompileState] = useState<"idle" | "compiling" | "error">("idle");
   const [compileErrors, setCompileErrors] = useState<string[]>([]);
+  const [compileLogExcerpt, setCompileLogExcerpt] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Initialise from mount-time values — no effect needed.
@@ -159,6 +160,7 @@ export function StandaloneTesterForm({
   function handleSourceModeChange(mode: EaSourceMode) {
     setEaSourceMode(mode);
     setCompileErrors([]);
+    setCompileLogExcerpt(null);
     setCompileState("idle");
     if (mode !== "file") {
       setEaFile(null);
@@ -240,7 +242,7 @@ export function StandaloneTesterForm({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ea_name: cleanName, mq5_content: mq5ContentToCompile, source: "mt5_hub" }),
         });
-        const deployData = await deployRes.json() as { status?: string; errors?: string[]; error?: string };
+        const deployData = await deployRes.json() as { status?: string; errors?: string[]; error?: string; log_excerpt?: string };
 
         if (!deployRes.ok || deployData.status === "compile_error" || deployData.status === "timeout") {
           if (eaSourceMode !== "none") {
@@ -254,6 +256,7 @@ export function StandaloneTesterForm({
               ? deployData.errors
               : ["Compilation failed — check your MQL5 code."];
             setCompileErrors(errs);
+            setCompileLogExcerpt(deployData.log_excerpt ?? null);
             return;
           }
           // Existing mode: compile failure is non-fatal — run with the existing .ex5.
@@ -468,6 +471,11 @@ export function StandaloneTesterForm({
                 {compileErrors.map((err, i) => (
                   <p key={i} className="text-xs text-red-300">{err}</p>
                 ))}
+                {compileLogExcerpt && (
+                  <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded border border-red-500/20 bg-black/30 p-2 text-[10px] text-red-200/70">
+                    {compileLogExcerpt}
+                  </pre>
+                )}
               </div>
             )}
           </div>
@@ -664,7 +672,7 @@ export function StandaloneTesterForm({
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => { mt5Run.reset(); setCompileState("idle"); setCompileErrors([]); }}
+              onClick={() => { mt5Run.reset(); setCompileState("idle"); setCompileErrors([]); setCompileLogExcerpt(null); }}
               className="border-white/20 bg-white/5 text-slate-300 hover:bg-white/10"
             >
               Reset
