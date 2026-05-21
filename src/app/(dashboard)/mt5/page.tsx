@@ -22,7 +22,7 @@ function runToFormValues(run: Mt5TesterRun): TesterFormValues {
   return {
     expertName: run.expert_name,
     symbol: run.symbol,
-    timeframe: run.timeframe ?? "M5",
+    timeframe: run.timeframe ?? "5m",
     fromDate: (run.from_date ?? "").slice(0, 10),
     toDate: (run.to_date ?? "").slice(0, 10),
     model: run.model ?? "EveryTickRealistic",

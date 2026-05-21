@@ -31,7 +31,15 @@ export interface TesterFormValues {
   parameters: Array<{ key: string; value: string }>;
 }
 
-const TIMEFRAMES = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"];
+const TIMEFRAMES = [
+  { value: "1m", label: "M1" },
+  { value: "5m", label: "M5" },
+  { value: "15m", label: "M15" },
+  { value: "30m", label: "M30" },
+  { value: "1h", label: "H1" },
+  { value: "4h", label: "H4" },
+  { value: "1d", label: "D1" },
+];
 
 const MODELS = [
   { value: "EveryTickRealistic", label: "Every tick based on real ticks" },
@@ -99,7 +107,7 @@ export function StandaloneTesterForm({
   // Initialise from mount-time values — no effect needed.
   const [expertName, setExpertName] = useState(initialValues?.expertName ?? "");
   const [symbol, setSymbol] = useState(initialValues?.symbol ?? "");
-  const [timeframe, setTimeframe] = useState(initialValues?.timeframe ?? "M5");
+  const [timeframe, setTimeframe] = useState(initialValues?.timeframe ?? "5m");
   const [fromDate, setFromDate] = useState(initialValues?.fromDate ?? "");
   const [toDate, setToDate] = useState(initialValues?.toDate ?? "");
   const [model, setModel] = useState(initialValues?.model ?? "EveryTickRealistic");
@@ -443,8 +451,8 @@ export function StandaloneTesterForm({
               </SelectTrigger>
               <SelectContent>
                 {TIMEFRAMES.map((tf) => (
-                  <SelectItem key={tf} value={tf}>
-                    {tf}
+                  <SelectItem key={tf.value} value={tf.value}>
+                    {tf.label}
                   </SelectItem>
                 ))}
               </SelectContent>
