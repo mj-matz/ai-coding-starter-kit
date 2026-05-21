@@ -3236,7 +3236,7 @@ class EaDeployRequest(BaseModel):
        overrides via `mql_param_replace.render_ea`, and ships the result.
     """
     ea_name: str = Field(min_length=1, max_length=64)
-    source: Literal["mql_converter", "mt5_optimizer"]
+    source: Literal["mql_converter", "mt5_optimizer", "mt5_hub"]
     mq5_content: Optional[str] = Field(default=None, max_length=_MAX_MQ5_BYTES)
     mql_conversion_id: Optional[str] = None
     optimizer_run_id: Optional[str] = None
@@ -3294,12 +3294,13 @@ async def mt5_ea_deploy(
     # ── Resolve mq5_content ────────────────────────────────────────────
     mq5_content: Optional[str] = None
 
-    if request.source == "mql_converter":
-        # Frontend already rendered the file via the PROJ-33 export path.
+    if request.source in ("mql_converter", "mt5_hub"):
+        # mql_converter: frontend rendered via PROJ-33 export path.
+        # mt5_hub: user pasted or uploaded code directly in the MT5 Hub Tester.
         if not request.mq5_content:
             raise HTTPException(
                 status_code=400,
-                detail="mq5_content is required for the mql_converter flow.",
+                detail="mq5_content is required for this flow.",
             )
         mq5_content = request.mq5_content
 
@@ -3515,6 +3516,16 @@ def _finalize_deploy(
         logger.exception(
             "Failed to update mt5_ea_deployments %s: %s", deployment_id, exc
         )
+
+
+@app.get("/mt5/ea/list")
+async def mt5_ea_list(_: dict = Depends(verify_jwt)):
+    """Return compiled EA names (.ex5) from the MT5 Experts folder."""
+    try:
+        eas = await mt5_bridge_client.list_eas()
+        return {"eas": eas}
+    except Exception:
+        return {"eas": []}
 
 
 @app.get("/mt5/ea/deployments")

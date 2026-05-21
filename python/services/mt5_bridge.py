@@ -263,6 +263,15 @@ async def run_status(bridge_job_id: str) -> dict:
 # Authentication via X-Bridge-Token (same shared secret as the tester endpoints).
 # Compile is *synchronous* — the bridge holds the request open until done.
 
+async def list_eas() -> list[str]:
+    """Return sorted list of compiled EA names (.ex5) from the Experts folder."""
+    resp = await _request_with_retry("GET", "/mt5/ea/list", timeout=10.0, retries=1)
+    body = resp.json_body
+    if isinstance(body, dict):
+        return body.get("eas", [])
+    return []
+
+
 async def deploy_ea(payload: dict) -> dict:
     """Deploy + compile an EA on the Bridge Worker (synchronous).
 
