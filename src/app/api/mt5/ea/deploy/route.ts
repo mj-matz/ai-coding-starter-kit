@@ -40,7 +40,7 @@ const EaDeployRequestSchema = z
         /^[A-Za-z0-9_\-]+$/,
         "ea_name may contain only letters, digits, underscore and hyphen.",
       ),
-    source: z.enum(["mql_converter", "mt5_optimizer"]),
+    source: z.enum(["mql_converter", "mt5_optimizer", "mt5_hub"]),
     mq5_content: z.string().max(MAX_MQ5_BYTES).optional(),
     mql_conversion_id: z.string().uuid().optional(),
     optimizer_run_id: z.string().uuid().optional(),
