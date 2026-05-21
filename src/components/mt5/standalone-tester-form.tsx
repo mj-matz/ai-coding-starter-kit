@@ -29,6 +29,22 @@ export interface TesterFormValues {
   toDate: string;
   model: string;
   parameters: Array<{ key: string; value: string }>;
+  initialCapital: number;
+}
+
+function parseMqlInputs(code: string): Array<{ key: string; value: string }> {
+  const results: Array<{ key: string; value: string }> = [];
+  const re = /\b(?:input|extern)\s+\w+\s+(\w+)\s*=\s*([^;]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code)) !== null) {
+    const key = m[1].trim();
+    let value = m[2].trim();
+    const commentIdx = value.indexOf("//");
+    if (commentIdx !== -1) value = value.slice(0, commentIdx).trim();
+    value = value.replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1").trim();
+    if (key) results.push({ key, value });
+  }
+  return results;
 }
 
 const TIMEFRAMES = [
@@ -111,9 +127,11 @@ export function StandaloneTesterForm({
   const [fromDate, setFromDate] = useState(initialValues?.fromDate ?? "");
   const [toDate, setToDate] = useState(initialValues?.toDate ?? "");
   const [model, setModel] = useState(initialValues?.model ?? "EveryTickRealistic");
+  const [initialCapital, setInitialCapital] = useState(initialValues?.initialCapital ?? 100000);
   const [parameters, setParameters] = useState<Array<{ key: string; value: string }>>(
     initialValues?.parameters ?? []
   );
+  const [isFetchingSource, setIsFetchingSource] = useState(false);
 
   // Notify parent when run reaches a terminal state (callback, not setState).
   const onRunCompleteRef = useRef(onRunComplete);
@@ -136,7 +154,7 @@ export function StandaloneTesterForm({
   }, [mt5Run.phase]);
 
   const isInProgress = mt5Run.phase === "submitting" || mt5Run.phase === "polling";
-  const isBusy = compileState === "compiling" || isInProgress;
+  const isBusy = isFetchingSource || compileState === "compiling" || isInProgress;
 
   function handleSourceModeChange(mode: EaSourceMode) {
     setEaSourceMode(mode);
@@ -149,12 +167,17 @@ export function StandaloneTesterForm({
     if (mode !== "code") setEaCode("");
   }
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null;
     setEaFile(file);
     if (file) {
       const baseName = file.name.replace(/\.mq5$/i, "");
       setExpertName(sanitizeEaName(baseName));
+      try {
+        const content = await file.text();
+        const parsed = parseMqlInputs(content);
+        if (parsed.length > 0) setParameters(parsed);
+      } catch { /* ignore read errors */ }
     }
     setCompileErrors([]);
     setCompileState("idle");
@@ -176,20 +199,38 @@ export function StandaloneTesterForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (isBusy) return;
     const cleanName = normalizeExpertName(expertName);
     if (!cleanName || !symbol.trim() || !fromDate || !toDate) return;
 
-    // Compile step — only when source code is provided
-    if (eaSourceMode !== "none") {
-      let mq5Content: string;
-      if (eaSourceMode === "file") {
-        if (!eaFile) return;
-        mq5Content = await eaFile.text();
-      } else {
-        mq5Content = eaCode.trim();
-        if (!mq5Content) return;
-      }
+    // Resolve MQL5 source to compile. For Existing mode, silently try to
+    // fetch the .mq5 from the bridge so we can inject the OnTester hook.
+    let mq5ContentToCompile: string | null = null;
 
+    if (eaSourceMode === "file") {
+      if (!eaFile) return;
+      mq5ContentToCompile = await eaFile.text();
+    } else if (eaSourceMode === "code") {
+      const trimmed = eaCode.trim();
+      if (!trimmed) return;
+      mq5ContentToCompile = trimmed;
+    } else {
+      // Existing mode: try to fetch source to inject the OnTester hook.
+      setIsFetchingSource(true);
+      try {
+        const srcRes = await fetch(`/api/mt5/ea/source/${encodeURIComponent(cleanName)}`);
+        if (srcRes.ok) {
+          const srcData = await srcRes.json() as { found?: boolean; content?: string };
+          if (srcData.found && srcData.content) {
+            mq5ContentToCompile = srcData.content;
+          }
+        }
+      } catch { /* Bridge offline — skip hook injection */ }
+      setIsFetchingSource(false);
+    }
+
+    // Compile + deploy step when we have source to send.
+    if (mq5ContentToCompile !== null) {
       setCompileState("compiling");
       setCompileErrors([]);
 
@@ -197,7 +238,7 @@ export function StandaloneTesterForm({
         const deployRes = await fetch("/api/mt5/ea/deploy", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ea_name: cleanName, mq5_content: mq5Content, source: "mt5_hub" }),
+          body: JSON.stringify({ ea_name: cleanName, mq5_content: mq5ContentToCompile, source: "mt5_hub" }),
         });
         const deployData = await deployRes.json() as { status?: string; errors?: string[]; error?: string };
 
@@ -239,6 +280,7 @@ export function StandaloneTesterForm({
       to_date: toDate,
       parameters: paramsObj,
       model,
+      initial_capital: initialCapital,
     });
   }
 
@@ -492,7 +534,7 @@ export function StandaloneTesterForm({
           </div>
 
           {/* Model */}
-          <div className="sm:col-span-2">
+          <div>
             <Label className="text-sm text-slate-300">Testing Model</Label>
             <Select value={model} onValueChange={setModel} disabled={isBusy}>
               <SelectTrigger className="mt-1">
@@ -506,6 +548,23 @@ export function StandaloneTesterForm({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Initial Capital */}
+          <div>
+            <Label htmlFor="initial-capital" className="text-sm text-slate-300">
+              Initial Capital (USD)
+            </Label>
+            <Input
+              id="initial-capital"
+              type="number"
+              min={1}
+              step={1000}
+              value={initialCapital}
+              onChange={(e) => setInitialCapital(Math.max(1, Number(e.target.value) || 100000))}
+              className="mt-1"
+              disabled={isBusy}
+            />
           </div>
         </div>
 
@@ -578,7 +637,12 @@ export function StandaloneTesterForm({
             }
             className="bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50"
           >
-            {compileState === "compiling" ? (
+            {isFetchingSource ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Checking…
+              </>
+            ) : compileState === "compiling" ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Compiling…
@@ -625,52 +689,46 @@ export function StandaloneTesterForm({
       {hasDoneMetrics && (
         <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-md">
           <h3 className="mb-4 text-base font-semibold text-white">MT5 Results</h3>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {[
+              { label: "Net Profit", value: formatProfit(mt5Run.metrics!.total_net_profit) },
+              { label: "Gross Profit", value: formatProfit(mt5Run.metrics!.gross_profit ?? null) },
+              { label: "Gross Loss", value: formatProfit(mt5Run.metrics!.gross_loss ?? null) },
               {
-                label: "Net Profit",
-                value: formatProfit(mt5Run.metrics!.total_net_profit),
+                label: "Profit Factor",
+                value: mt5Run.metrics!.profit_factor != null && Number.isFinite(mt5Run.metrics!.profit_factor)
+                  ? mt5Run.metrics!.profit_factor.toFixed(2) : "—",
+              },
+              {
+                label: "Recovery Factor",
+                value: mt5Run.metrics!.recovery_factor != null && Number.isFinite(mt5Run.metrics!.recovery_factor)
+                  ? mt5Run.metrics!.recovery_factor.toFixed(2) : "—",
               },
               {
                 label: "Sharpe Ratio",
-                value:
-                  mt5Run.metrics!.sharpe_ratio != null &&
-                  Number.isFinite(mt5Run.metrics!.sharpe_ratio)
-                    ? mt5Run.metrics!.sharpe_ratio.toFixed(2)
-                    : "—",
+                value: mt5Run.metrics!.sharpe_ratio != null && Number.isFinite(mt5Run.metrics!.sharpe_ratio)
+                  ? mt5Run.metrics!.sharpe_ratio.toFixed(2) : "—",
+              },
+              { label: "Max Drawdown (%)", value: formatPct(mt5Run.metrics!.max_drawdown_pct) },
+              { label: "Max Drawdown (abs)", value: formatProfit(mt5Run.metrics!.max_drawdown_abs) },
+              { label: "Avg Trade", value: formatProfit(mt5Run.metrics!.average_trade) },
+              { label: "Total Trades", value: formatInt(mt5Run.metrics!.total_trades) },
+              {
+                label: "Won Trades",
+                value: mt5Run.metrics!.won_trades != null && mt5Run.metrics!.total_trades
+                  ? `${mt5Run.metrics!.won_trades} (${((mt5Run.metrics!.won_trades / mt5Run.metrics!.total_trades) * 100).toFixed(1)}%)`
+                  : formatInt(mt5Run.metrics!.won_trades),
               },
               {
-                label: "Max Drawdown",
-                value: formatPct(mt5Run.metrics!.max_drawdown_pct),
-              },
-              {
-                label: "Profit Factor",
-                value:
-                  mt5Run.metrics!.profit_factor != null &&
-                  Number.isFinite(mt5Run.metrics!.profit_factor)
-                    ? mt5Run.metrics!.profit_factor.toFixed(2)
-                    : "—",
-              },
-              {
-                label: "Win Rate",
-                value:
-                  mt5Run.metrics!.total_trades &&
-                  mt5Run.metrics!.total_trades > 0 &&
-                  mt5Run.metrics!.won_trades != null
-                    ? `${((mt5Run.metrics!.won_trades / mt5Run.metrics!.total_trades) * 100).toFixed(1)}%`
-                    : "—",
-              },
-              {
-                label: "Total Trades",
-                value: formatInt(mt5Run.metrics!.total_trades),
+                label: "Lost Trades",
+                value: mt5Run.metrics!.lost_trades != null && mt5Run.metrics!.total_trades
+                  ? `${mt5Run.metrics!.lost_trades} (${((mt5Run.metrics!.lost_trades / mt5Run.metrics!.total_trades) * 100).toFixed(1)}%)`
+                  : formatInt(mt5Run.metrics!.lost_trades),
               },
             ].map(({ label, value }) => (
-              <div
-                key={label}
-                className="rounded-xl border border-white/10 bg-black/20 px-4 py-3"
-              >
+              <div key={label} className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
                 <p className="text-xs text-slate-400">{label}</p>
-                <p className="mt-1 text-base font-semibold text-slate-100">{value}</p>
+                <p className="mt-1 text-sm font-semibold text-slate-100">{value}</p>
               </div>
             ))}
           </div>

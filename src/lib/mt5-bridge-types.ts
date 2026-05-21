@@ -32,8 +32,11 @@ export type Mt5RunStatus =
 
 export interface Mt5TesterMetrics {
   total_net_profit: number | null;
+  gross_profit?: number | null;
+  gross_loss?: number | null;
   sharpe_ratio: number | null;
   profit_factor: number | null;
+  recovery_factor?: number | null;
   max_drawdown_abs: number | null;
   max_drawdown_pct: number | null;
   total_trades: number | null;

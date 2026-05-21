@@ -2700,6 +2700,7 @@ class MT5TesterRunRequest(BaseModel):
     to_date: str = Field(min_length=1)
     parameters: dict = Field(default_factory=dict)
     model: str = Field(default="EveryTickRealistic")
+    initial_capital: float = 100000.0
     mql_conversion_id: Optional[str] = None
 
 
@@ -2801,6 +2802,7 @@ async def mt5_tester_run(
         "to_date": request.to_date,
         "parameters": request.parameters,
         "model": request.model,
+        "initial_capital": request.initial_capital,
         # Pass our run_id so the bridge can echo it on completion callbacks.
         "callback_run_id": run_id,
     }
@@ -2977,8 +2979,10 @@ def _load_run_metrics(client, run_id: str) -> Optional[dict]:
         resp = (
             client.table("mt5_tester_metrics")
             .select(
-                "total_net_profit, sharpe_ratio, profit_factor, max_drawdown_abs, "
-                "max_drawdown_pct, total_trades, won_trades, lost_trades, average_trade"
+                "total_net_profit, gross_profit, gross_loss, "
+                "sharpe_ratio, profit_factor, recovery_factor, "
+                "max_drawdown_abs, max_drawdown_pct, "
+                "total_trades, won_trades, lost_trades, average_trade"
             )
             .eq("run_id", run_id)
             .limit(1)
@@ -2995,8 +2999,11 @@ def _upsert_run_metrics(client, run_id: str, metrics: dict) -> None:
     payload = {
         "run_id": run_id,
         "total_net_profit": metrics.get("total_net_profit"),
+        "gross_profit": metrics.get("gross_profit"),
+        "gross_loss": metrics.get("gross_loss"),
         "sharpe_ratio": metrics.get("sharpe_ratio"),
         "profit_factor": metrics.get("profit_factor"),
+        "recovery_factor": metrics.get("recovery_factor"),
         "max_drawdown_abs": metrics.get("max_drawdown_abs"),
         "max_drawdown_pct": metrics.get("max_drawdown_pct"),
         "total_trades": metrics.get("total_trades"),
@@ -3612,6 +3619,16 @@ async def mt5_ea_list(_: dict = Depends(verify_jwt)):
         return {"eas": eas}
     except Exception:
         return {"eas": []}
+
+
+@app.get("/mt5/ea/source/{ea_name}")
+async def mt5_ea_source(ea_name: str, _: dict = Depends(verify_jwt)):
+    """Return the .mq5 source for a compiled EA, or {"found": false} if absent."""
+    try:
+        result = await mt5_bridge_client.get_ea_source(ea_name)
+        return result
+    except Exception:
+        return {"found": False}
 
 
 @app.get("/mt5/ea/deployments")

@@ -272,6 +272,19 @@ async def list_eas() -> list[str]:
     return []
 
 
+async def get_ea_source(ea_name: str) -> dict:
+    """Fetch the .mq5 source for a compiled EA from the Experts folder.
+
+    Returns ``{"found": True, "content": "..."}`` or ``{"found": False}``.
+    """
+    resp = await _request_with_retry(
+        "GET", f"/mt5/ea/source/{ea_name}", timeout=10.0, retries=1
+    )
+    if isinstance(resp.json_body, dict):
+        return resp.json_body
+    return {"found": False}
+
+
 async def deploy_ea(payload: dict) -> dict:
     """Deploy + compile an EA on the Bridge Worker (synchronous).
 

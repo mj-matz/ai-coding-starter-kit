@@ -27,6 +27,7 @@ export interface Mt5TesterStartParams {
   to_date: string;
   parameters?: Record<string, unknown>;
   model?: string;
+  initial_capital?: number;
   mql_conversion_id?: string | null;
 }
 
@@ -187,6 +188,7 @@ export function useMt5TesterRun(): UseMt5TesterRunReturn {
             to_date: params.to_date,
             parameters: params.parameters ?? {},
             model: params.model ?? "EveryTickRealistic",
+            initial_capital: params.initial_capital ?? 100000,
             mql_conversion_id: params.mql_conversion_id ?? null,
           }),
         });

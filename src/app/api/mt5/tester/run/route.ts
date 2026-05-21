@@ -41,6 +41,7 @@ const TesterRunSchema = z.object({
   to_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   parameters: z.record(z.string(), z.unknown()).default({}),
   model: z.string().max(64).default("EveryTickRealistic"),
+  initial_capital: z.number().positive().default(100000),
   mql_conversion_id: z.string().uuid().optional().nullable(),
 });
 

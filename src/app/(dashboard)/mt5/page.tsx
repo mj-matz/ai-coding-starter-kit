@@ -27,6 +27,7 @@ function runToFormValues(run: Mt5TesterRun): TesterFormValues {
     toDate: (run.to_date ?? "").slice(0, 10),
     model: run.model ?? "EveryTickRealistic",
     parameters,
+    initialCapital: 100000,
   };
 }
 
