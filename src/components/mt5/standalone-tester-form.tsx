@@ -242,25 +242,29 @@ export function StandaloneTesterForm({
         });
         const deployData = await deployRes.json() as { status?: string; errors?: string[]; error?: string };
 
-        if (!deployRes.ok) {
-          setCompileState("error");
-          setCompileErrors([deployData.error ?? "Deploy failed."]);
-          return;
-        }
-        if (deployData.status === "compile_error") {
-          setCompileState("error");
-          setCompileErrors(deployData.errors?.length ? deployData.errors : ["Compilation failed — check your MQL5 code."]);
-          return;
-        }
-        if (deployData.status === "timeout") {
-          setCompileState("error");
-          setCompileErrors(["Compilation timed out. Please try again."]);
-          return;
+        if (!deployRes.ok || deployData.status === "compile_error" || deployData.status === "timeout") {
+          if (eaSourceMode !== "none") {
+            // User-provided code: compilation failure is fatal.
+            setCompileState("error");
+            const errs = !deployRes.ok
+              ? [deployData.error ?? "Deploy failed."]
+              : deployData.status === "timeout"
+              ? ["Compilation timed out. Please try again."]
+              : deployData.errors?.length
+              ? deployData.errors
+              : ["Compilation failed — check your MQL5 code."];
+            setCompileErrors(errs);
+            return;
+          }
+          // Existing mode: compile failure is non-fatal — run with the existing .ex5.
         }
       } catch {
-        setCompileState("error");
-        setCompileErrors(["Connection error — could not reach the bridge."]);
-        return;
+        if (eaSourceMode !== "none") {
+          setCompileState("error");
+          setCompileErrors(["Connection error — could not reach the bridge."]);
+          return;
+        }
+        // Existing mode: network error during recompile — fall through to run.
       }
 
       setCompileState("idle");
@@ -559,7 +563,6 @@ export function StandaloneTesterForm({
               id="initial-capital"
               type="number"
               min={1}
-              step={1000}
               value={initialCapital}
               onChange={(e) => setInitialCapital(Math.max(1, Number(e.target.value) || 100000))}
               className="mt-1"
