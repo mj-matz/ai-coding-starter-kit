@@ -1,5 +1,5 @@
 // PROJ-41: Shared display formatters for MT5 tester components.
-// Used by mt5-history-section, TesterHistoryTable, and RunDetailDrawer.
+// Used by mt5-history-section, TesterHistoryTable, and RunDetailView.
 
 export function formatDate(value: string | null): string {
   if (!value) return "—";

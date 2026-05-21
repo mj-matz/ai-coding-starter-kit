@@ -110,9 +110,7 @@ function Mt5Hub() {
 
         {/* Bridge tab */}
         <TabsContent value="bridge" className="mt-6">
-          <div className="max-w-xl">
-            <Mt5BridgeStatusCard />
-          </div>
+          <Mt5BridgeStatusCard />
         </TabsContent>
       </Tabs>
     </div>

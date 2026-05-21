@@ -297,4 +297,16 @@ All required packages are already installed:
 **Deployed:** 2026-05-20
 **Commit:** e0875b7
 **Branch:** main → Vercel auto-deploy
+
+---
+
+## UI Iteration — 2026-05-21
+
+User feedback after using the deployed page:
+
+1. **Bridge tab too narrow.** The `Mt5BridgeStatusCard` was wrapped in `max-w-xl` (~576 px), making the card feel cramped on normal monitors. Fix: removed the width cap so the card fills the available column. The card's own padding and grid keep it readable on ultra-wide screens. File: `src/app/(dashboard)/mt5/page.tsx`.
+
+2. **History drill-down too narrow / text too small.** Clicking a completed run opened a right-side `Sheet` drawer capped at `sm:max-w-2xl` (~672 px) with `text-xs` cells. Replaced the drawer with an **inline detail view** that mirrors the PROJ-9 backtest history pattern: it replaces the table in place, uses the full page width (starting at the sidebar), and shows a "Back to history" button. Trade table fonts bumped from `text-xs` to `text-sm`, parameter table rows from `text-xs` to `text-sm`, and metric cards split into a 3-column responsive grid on `lg+`. Files: `src/components/mt5/run-detail-view.tsx` (renamed from `run-detail-drawer.tsx`), `src/components/mt5/tester-history-table.tsx`.
+
+The `Sheet` shadcn dependency for this feature is no longer used — kept installed because other features rely on it.
 **Route:** `/mt5` (new top-level page)

@@ -34,7 +34,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { Mt5TesterRun } from "@/lib/mt5-bridge-types";
 import { formatDate, formatInt, formatPct, formatProfit } from "@/lib/mt5-format";
 import { Mt5StatusBadge } from "@/components/mt5/mt5-status-badge";
-import { RunDetailDrawer } from "@/components/mt5/run-detail-drawer";
+import { RunDetailView } from "@/components/mt5/run-detail-view";
 
 interface TesterHistoryTableProps {
   refreshKey?: number;
@@ -48,7 +48,6 @@ export function TesterHistoryTable({ refreshKey = 0, onUseSettings }: TesterHist
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<Mt5TesterRun | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const fetchRuns = useCallback(async () => {
     setIsLoading(true);
@@ -95,7 +94,21 @@ export function TesterHistoryTable({ refreshKey = 0, onUseSettings }: TesterHist
   function handleRowClick(run: Mt5TesterRun) {
     if (run.status !== "done") return;
     setSelectedRun(run);
-    setDrawerOpen(true);
+  }
+
+  // Detail view replaces the list when a completed run is selected, so the
+  // trades table uses the full page width.
+  if (selectedRun) {
+    return (
+      <RunDetailView
+        run={selectedRun}
+        onBack={() => setSelectedRun(null)}
+        onUseSettings={(fullRun) => {
+          setSelectedRun(null);
+          onUseSettings?.(fullRun);
+        }}
+      />
+    );
   }
 
   if (isLoading && runs.length === 0) {
@@ -145,8 +158,7 @@ export function TesterHistoryTable({ refreshKey = 0, onUseSettings }: TesterHist
   }
 
   return (
-    <>
-      <div className="space-y-3">
+    <div className="space-y-3">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-sm text-slate-300">
@@ -283,17 +295,6 @@ export function TesterHistoryTable({ refreshKey = 0, onUseSettings }: TesterHist
             </TableBody>
           </Table>
         </div>
-      </div>
-
-      <RunDetailDrawer
-        run={selectedRun}
-        open={drawerOpen}
-        onOpenChange={setDrawerOpen}
-        onUseSettings={(fullRun) => {
-          setDrawerOpen(false);
-          onUseSettings?.(fullRun);
-        }}
-      />
-    </>
+    </div>
   );
 }
