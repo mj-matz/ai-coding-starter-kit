@@ -3209,6 +3209,90 @@ _EA_NAME_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 # before they cross the network.
 _MAX_MQ5_BYTES: int = 2_000_000
 
+# MQL5 OnTester() hook injected into mt5_hub EAs that don't already have one.
+# The input variable is appended at file scope; MQL5 allows global declarations
+# anywhere in the file so this is safe even when placed at the end.
+_TESTER_HOOK_MQL5 = r"""
+//+------------------------------------------------------------------+
+//| Bridge reporting hook — injected automatically by the MT5 Hub.   |
+//| Do not edit; this block is overwritten on each deploy.           |
+//+------------------------------------------------------------------+
+input string report_uuid = "";   // set by bridge via [TesterInputs]
+
+double OnTester()
+{
+   if(StringLen(report_uuid) == 0) return 0.0;
+   double net_profit   = TesterStatistics(STAT_PROFIT);
+   double gross_profit = TesterStatistics(STAT_GROSS_PROFIT);
+   double gross_loss   = TesterStatistics(STAT_GROSS_LOSS);
+   double dd_abs       = TesterStatistics(STAT_MAX_DRAWDOWN);
+   double dd_pct       = TesterStatistics(STAT_MAX_DRAWDOWN_PERCENT);
+   double sharpe       = TesterStatistics(STAT_SHARPE_RATIO);
+   double pf           = TesterStatistics(STAT_PROFIT_FACTOR);
+   double ep           = TesterStatistics(STAT_EXPECTED_PAYOFF);
+   double rf           = TesterStatistics(STAT_RECOVERY_FACTOR);
+   int total_trades    = (int)TesterStatistics(STAT_TRADES);
+   int won_trades      = (int)TesterStatistics(STAT_PROFIT_TRADES);
+   int lost_trades     = (int)TesterStatistics(STAT_LOSS_TRADES);
+   HistorySelect(0, TimeCurrent());
+   int deal_count = HistoryDealsTotal();
+   string trades_json = "[";
+   bool first_trade = true;
+   for(int i = 0; i < deal_count; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0) continue;
+      long deal_type = HistoryDealGetInteger(ticket, DEAL_TYPE);
+      if(deal_type != DEAL_TYPE_BUY && deal_type != DEAL_TYPE_SELL) continue;
+      datetime open_time = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+      double   volume    = HistoryDealGetDouble(ticket, DEAL_VOLUME);
+      double   price     = HistoryDealGetDouble(ticket, DEAL_PRICE);
+      double   profit    = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+      string   comment   = HistoryDealGetString(ticket, DEAL_COMMENT);
+      string   direction = (deal_type == DEAL_TYPE_BUY) ? "buy" : "sell";
+      if(!first_trade) trades_json += ",";
+      first_trade = false;
+      trades_json += StringFormat(
+         "{\"ticket\":%llu,\"open_time\":\"%s\",\"close_time\":\"%s\","
+         "\"direction\":\"%s\",\"volume\":%.5f,\"open_price\":%.5f,"
+         "\"close_price\":%.5f,\"profit\":%.2f,\"comment\":\"%s\"}",
+         ticket,
+         TimeToString(open_time, TIME_DATE|TIME_SECONDS),
+         TimeToString(open_time, TIME_DATE|TIME_SECONDS),
+         direction, volume, price, price, profit, comment);
+   }
+   trades_json += "]";
+   string json = StringFormat(
+      "{\"schema_version\":1,\"job_uuid\":\"%s\",\"ea_name\":\"%s\","
+      "\"symbol\":\"%s\",\"timeframe\":\"%s\",\"generated_at\":\"%s\","
+      "\"metrics\":{"
+         "\"total_net_profit\":%.2f,\"gross_profit\":%.2f,\"gross_loss\":%.2f,"
+         "\"max_drawdown_abs\":%.2f,\"max_drawdown_pct\":%.4f,"
+         "\"sharpe_ratio\":%.4f,\"profit_factor\":%.4f,\"expected_payoff\":%.4f,"
+         "\"recovery_factor\":%.4f,\"total_trades\":%d,"
+         "\"won_trades\":%d,\"lost_trades\":%d"
+      "},\"trades\":%s}",
+      report_uuid, MQLInfoString(MQL_PROGRAM_NAME), Symbol(),
+      EnumToString(Period()), TimeToString(TimeGMT(), TIME_DATE|TIME_SECONDS),
+      net_profit, gross_profit, gross_loss, dd_abs, dd_pct,
+      sharpe, pf, ep, rf, total_trades, won_trades, lost_trades, trades_json);
+   string filename = "bridge_report_" + report_uuid + ".json";
+   int fh = FileOpen(filename, FILE_WRITE|FILE_COMMON|FILE_TXT|FILE_ANSI);
+   if(fh == INVALID_HANDLE) { Print("[Bridge] OnTester: failed to open ", filename); return 0.0; }
+   FileWriteString(fh, json);
+   FileClose(fh);
+   Print("[Bridge] OnTester: wrote ", filename);
+   return 0.0;
+}
+"""
+
+
+def _inject_tester_hook(mq5_content: str) -> str:
+    """Append the bridge OnTester() hook if the EA doesn't already have one."""
+    if "OnTester" in mq5_content:
+        return mq5_content
+    return mq5_content.rstrip() + "\n" + _TESTER_HOOK_MQL5
+
 
 class EaDeployParameter(BaseModel):
     """One parameter override sent by the optimizer flow.
@@ -3303,6 +3387,8 @@ async def mt5_ea_deploy(
                 detail="mq5_content is required for this flow.",
             )
         mq5_content = request.mq5_content
+        if request.source == "mt5_hub":
+            mq5_content = _inject_tester_hook(mq5_content)
 
     elif request.source == "mt5_optimizer":
         # Backend renders by re-applying parameters to the saved EA source.
