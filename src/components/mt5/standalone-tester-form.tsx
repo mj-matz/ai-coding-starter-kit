@@ -18,8 +18,9 @@ import {
 } from "@/components/ui/select";
 
 import { useMt5TesterRun } from "@/hooks/use-mt5-tester-run";
+import type { TesterTradeSummary } from "@/hooks/use-mt5-tester-run";
 import { Mt5ResultPanel } from "@/components/mql-converter/mt5-result-panel";
-import { formatInt, formatPct, formatProfit } from "@/lib/mt5-format";
+import type { Mt5TesterMetrics } from "@/lib/mt5-bridge-types";
 
 export interface TesterFormValues {
   expertName: string;
@@ -81,11 +82,15 @@ interface StandaloneTesterFormProps {
   /** Applied once at mount. Parent uses `key` to force re-mount with new values. */
   initialValues?: TesterFormValues | null;
   onRunComplete?: () => void;
+  onRunDone?: (data: { metrics: Mt5TesterMetrics; trades: TesterTradeSummary[]; initialCapital: number }) => void;
+  onReset?: () => void;
 }
 
 export function StandaloneTesterForm({
   initialValues,
   onRunComplete,
+  onRunDone,
+  onReset,
 }: StandaloneTesterFormProps) {
   const mt5Run = useMt5TesterRun();
 
@@ -140,6 +145,11 @@ export function StandaloneTesterForm({
     onRunCompleteRef.current = onRunComplete;
   });
 
+  const onRunDoneRef = useRef(onRunDone);
+  useEffect(() => {
+    onRunDoneRef.current = onRunDone;
+  });
+
   const prevPhaseRef = useRef(mt5Run.phase);
   useEffect(() => {
     const prev = prevPhaseRef.current;
@@ -152,7 +162,14 @@ export function StandaloneTesterForm({
     ) {
       onRunCompleteRef.current?.();
     }
-  }, [mt5Run.phase]);
+    if (mt5Run.phase === "done" && mt5Run.metrics) {
+      onRunDoneRef.current?.({
+        metrics: mt5Run.metrics,
+        trades: mt5Run.trades ?? [],
+        initialCapital,
+      });
+    }
+  }, [mt5Run.phase, mt5Run.metrics, mt5Run.trades, initialCapital]);
 
   const isInProgress = mt5Run.phase === "submitting" || mt5Run.phase === "polling";
   const isBusy = isFetchingSource || compileState === "compiling" || isInProgress;
@@ -292,7 +309,6 @@ export function StandaloneTesterForm({
   }
 
   const showResult = mt5Run.phase !== "idle";
-  const hasDoneMetrics = mt5Run.phase === "done" && mt5Run.metrics;
 
   return (
     <div className="space-y-6">
@@ -672,7 +688,7 @@ export function StandaloneTesterForm({
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => { mt5Run.reset(); setCompileState("idle"); setCompileErrors([]); setCompileLogExcerpt(null); }}
+              onClick={() => { mt5Run.reset(); setCompileState("idle"); setCompileErrors([]); setCompileLogExcerpt(null); onReset?.(); }}
               className="border-white/20 bg-white/5 text-slate-300 hover:bg-white/10"
             >
               Reset
@@ -696,55 +712,6 @@ export function StandaloneTesterForm({
         />
       )}
 
-      {/* Final metrics card — standalone display without the Python comparison */}
-      {hasDoneMetrics && (
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-md">
-          <h3 className="mb-4 text-base font-semibold text-white">MT5 Results</h3>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {[
-              { label: "Net Profit", value: formatProfit(mt5Run.metrics!.total_net_profit) },
-              { label: "Gross Profit", value: formatProfit(mt5Run.metrics!.gross_profit ?? null) },
-              { label: "Gross Loss", value: formatProfit(mt5Run.metrics!.gross_loss ?? null) },
-              {
-                label: "Profit Factor",
-                value: mt5Run.metrics!.profit_factor != null && Number.isFinite(mt5Run.metrics!.profit_factor)
-                  ? mt5Run.metrics!.profit_factor.toFixed(2) : "—",
-              },
-              {
-                label: "Recovery Factor",
-                value: mt5Run.metrics!.recovery_factor != null && Number.isFinite(mt5Run.metrics!.recovery_factor)
-                  ? mt5Run.metrics!.recovery_factor.toFixed(2) : "—",
-              },
-              {
-                label: "Sharpe Ratio",
-                value: mt5Run.metrics!.sharpe_ratio != null && Number.isFinite(mt5Run.metrics!.sharpe_ratio)
-                  ? mt5Run.metrics!.sharpe_ratio.toFixed(2) : "—",
-              },
-              { label: "Max Drawdown (%)", value: formatPct(mt5Run.metrics!.max_drawdown_pct) },
-              { label: "Max Drawdown (abs)", value: formatProfit(mt5Run.metrics!.max_drawdown_abs) },
-              { label: "Avg Trade", value: formatProfit(mt5Run.metrics!.average_trade) },
-              { label: "Total Trades", value: formatInt(mt5Run.metrics!.total_trades) },
-              {
-                label: "Won Trades",
-                value: mt5Run.metrics!.won_trades != null && mt5Run.metrics!.total_trades
-                  ? `${mt5Run.metrics!.won_trades} (${((mt5Run.metrics!.won_trades / mt5Run.metrics!.total_trades) * 100).toFixed(1)}%)`
-                  : formatInt(mt5Run.metrics!.won_trades),
-              },
-              {
-                label: "Lost Trades",
-                value: mt5Run.metrics!.lost_trades != null && mt5Run.metrics!.total_trades
-                  ? `${mt5Run.metrics!.lost_trades} (${((mt5Run.metrics!.lost_trades / mt5Run.metrics!.total_trades) * 100).toFixed(1)}%)`
-                  : formatInt(mt5Run.metrics!.lost_trades),
-              },
-            ].map(({ label, value }) => (
-              <div key={label} className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
-                <p className="text-xs text-slate-400">{label}</p>
-                <p className="mt-1 text-sm font-semibold text-slate-100">{value}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

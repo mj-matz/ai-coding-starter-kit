@@ -7,7 +7,10 @@ import type {
   Mt5RunStatus,
   Mt5RunStatusResponse,
   Mt5TesterMetrics,
+  Mt5TesterTrade,
 } from "@/lib/mt5-bridge-types";
+
+export type TesterTradeSummary = Omit<Mt5TesterTrade, "id" | "run_id">;
 
 // PROJ-37: Submit a Strategy Tester run and follow it to completion.
 //
@@ -39,6 +42,7 @@ export interface UseMt5TesterRunReturn {
   jobId: string | null;
   queuePosition: number | null;
   metrics: Mt5TesterMetrics | null;
+  trades: TesterTradeSummary[] | null;
   errorMessage: string | null;
   /** Seconds since the run reached the "running" status — null while queued/idle. */
   runningElapsedSec: number | null;
@@ -61,6 +65,7 @@ export function useMt5TesterRun(): UseMt5TesterRunReturn {
   const [jobId, setJobId] = useState<string | null>(null);
   const [queuePosition, setQueuePosition] = useState<number | null>(null);
   const [metrics, setMetrics] = useState<Mt5TesterMetrics | null>(null);
+  const [trades, setTrades] = useState<TesterTradeSummary[] | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const [finishedAt, setFinishedAt] = useState<string | null>(null);
@@ -94,6 +99,7 @@ export function useMt5TesterRun(): UseMt5TesterRunReturn {
     setJobId(null);
     setQueuePosition(null);
     setMetrics(null);
+    setTrades(null);
     setErrorMessage(null);
     setStartedAt(null);
     setFinishedAt(null);
@@ -107,6 +113,7 @@ export function useMt5TesterRun(): UseMt5TesterRunReturn {
       setQueuePosition(data.queue_position ?? null);
       setErrorMessage(data.error_message ?? null);
       setMetrics(data.metrics ?? null);
+      setTrades(data.trades ?? null);
       setStartedAt(data.started_at ?? null);
       setFinishedAt(data.finished_at ?? null);
 
@@ -233,6 +240,7 @@ export function useMt5TesterRun(): UseMt5TesterRunReturn {
     jobId,
     queuePosition,
     metrics,
+    trades,
     errorMessage,
     runningElapsedSec,
     startedAt,

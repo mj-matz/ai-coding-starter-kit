@@ -9,7 +9,10 @@ import { Mt5BridgeStatusCard } from "@/components/settings/mt5-bridge-status-car
 import { StandaloneTesterForm } from "@/components/mt5/standalone-tester-form";
 import type { TesterFormValues } from "@/components/mt5/standalone-tester-form";
 import { TesterHistoryTable } from "@/components/mt5/tester-history-table";
-import type { Mt5TesterRun } from "@/lib/mt5-bridge-types";
+import { TesterResultsPanel } from "@/components/mt5/tester-results-panel";
+import { TesterRunTrades } from "@/components/mt5/tester-run-trades";
+import type { TesterTradeSummary } from "@/hooks/use-mt5-tester-run";
+import type { Mt5TesterMetrics, Mt5TesterRun } from "@/lib/mt5-bridge-types";
 
 function runToFormValues(run: Mt5TesterRun): TesterFormValues {
   const parameters = run.parameters
@@ -49,14 +52,33 @@ function Mt5Hub() {
   const [prefilledKey, setPrefilledKey] = useState(0);
   const [prefilledValues, setPrefilledValues] = useState<TesterFormValues | null>(null);
 
+  const [runResult, setRunResult] = useState<{
+    metrics: Mt5TesterMetrics;
+    trades: TesterTradeSummary[];
+    initialCapital: number;
+  } | null>(null);
+
   function handleUseSettings(run: Mt5TesterRun) {
     setPrefilledValues(runToFormValues(run));
     setPrefilledKey((k) => k + 1);
+    setRunResult(null);
     setActiveTab("tester");
   }
 
   function handleRunComplete() {
     setHistoryRefreshKey((k) => k + 1);
+  }
+
+  function handleRunDone(data: {
+    metrics: Mt5TesterMetrics;
+    trades: TesterTradeSummary[];
+    initialCapital: number;
+  }) {
+    setRunResult(data);
+  }
+
+  function handleRunReset() {
+    setRunResult(null);
   }
 
   return (
@@ -92,13 +114,27 @@ function Mt5Hub() {
 
         {/* Tester tab */}
         <TabsContent value="tester" className="mt-6">
-          <div className="max-w-2xl">
+          <div className={runResult ? "grid gap-6 xl:grid-cols-[480px_1fr]" : "max-w-2xl"}>
             <StandaloneTesterForm
               key={prefilledKey}
               initialValues={prefilledValues}
               onRunComplete={handleRunComplete}
+              onRunDone={handleRunDone}
+              onReset={handleRunReset}
             />
+            {runResult && (
+              <TesterResultsPanel
+                metrics={runResult.metrics}
+                trades={runResult.trades}
+                initialCapital={runResult.initialCapital}
+              />
+            )}
           </div>
+          {runResult && runResult.trades.length > 0 && (
+            <div className="mt-6">
+              <TesterRunTrades trades={runResult.trades} />
+            </div>
+          )}
         </TabsContent>
 
         {/* History tab */}
