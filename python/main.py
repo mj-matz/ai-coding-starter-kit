@@ -3232,8 +3232,8 @@ double OnTester()
    double net_profit   = TesterStatistics(STAT_PROFIT);
    double gross_profit = TesterStatistics(STAT_GROSS_PROFIT);
    double gross_loss   = TesterStatistics(STAT_GROSS_LOSS);
-   double dd_abs       = TesterStatistics(STAT_MAX_DRAWDOWN);
-   double dd_pct       = TesterStatistics(STAT_MAX_DRAWDOWN_PERCENT);
+   double dd_abs       = TesterStatistics(STAT_BALANCE_DD);
+   double dd_pct       = TesterStatistics(STAT_BALANCEDD_PERCENT);
    double sharpe       = TesterStatistics(STAT_SHARPE_RATIO);
    double pf           = TesterStatistics(STAT_PROFIT_FACTOR);
    double ep           = TesterStatistics(STAT_EXPECTED_PAYOFF);
